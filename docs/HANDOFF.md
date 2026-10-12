@@ -27,6 +27,9 @@ browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (ba
 - `frontend/src/logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls`,
   `consoleView`, `audioPlayer`, `soundLabel`. All markup goes through `h()`; buttons are NVIDIA Elements
   `nve-button` via `button(label, action, disabled, id, title, {emphasis, tone, key, size})`.
+- Models and endpoints are environment-driven (`ORANGE_LLM_MODEL`, `ORANGE_CALLER_MODEL`, `ORANGE_TTS_MODEL`,
+  `ORANGE_STT_MODELS`, `ORANGE_TTS_VOICES`, `ORANGE_*_URL`, `ORANGE_*_LABEL`); `/api/health` publishes them under
+  `models` and the console derives every displayed model name from it (`labels()`), so the UI never hard-codes a model.
 - `backend/server.py` validates every model output (facts must quote the caller, replies pass a deterministic speech
   guard that forbids dispatch claims and medical gestures, one guarded rewrite, one anti-repetition rewrite).
 

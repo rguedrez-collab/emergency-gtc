@@ -432,12 +432,12 @@ class GatewayTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.httpd.shutdown(); cls.httpd.server_close(); cls.thread.join()
 
-    def request(self, path, payload=None, headers=None, auth=True):
+    def request(self, path, payload=None, headers=None, auth=True, raw=None):
         hdr = {"Content-Type": "application/json"}
         if auth:
             hdr["Authorization"] = self.httpd.expected_auth
         hdr.update(headers or {})
-        req = Request(self.base+path, data=json.dumps(payload).encode() if payload is not None else None, headers=hdr)
+        req = Request(self.base+path, data=raw if raw is not None else (json.dumps(payload).encode() if payload is not None else None), headers=hdr)
         try:
             with urlopen(req, timeout=3) as resp:
                 return resp.status, resp.read()
@@ -457,6 +457,20 @@ class GatewayTests(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(data["known_presets"], ["fr_female", "fr_male"])
         self.assertIn("models", data["service"])
+
+    def test_models_come_from_the_environment(self):
+        # Module constants read ORANGE_LLM_MODEL / ORANGE_CALLER_MODEL / ORANGE_TTS_MODEL / ORANGE_STT_MODELS at import; patching them
+        # here shows every consumer follows them: health, the LLM payload, STT validation.
+        with patch.object(server, "MODEL", "org/other-llm"), patch.object(server, "CALLER_MODEL", "org/caller-llm"), \
+                patch.object(server, "STT_MODELS", ("whisper",)), patch.object(server, "LLM_LABEL", "Other"), \
+                patch.object(server, "request_model", return_value=(b'{"loaded": ["whisper"]}', {})):
+            data = server.health()
+            self.assertEqual((data["models"]["llm"], data["models"]["caller"], data["models"]["llm_label"], data["stt"]), ("org/other-llm", "org/caller-llm", "Other", ["whisper"]))
+            self.assertEqual(self.request("/api/transcribe", headers={"Content-Type": "application/octet-stream", "X-Model": "nemotron", "Content-Length": "4"}, raw=b"RIFF")[0], 400)
+        analysis = {"summary": "Fumée.", "facts": [], "signals": [], "question": "location", "reply": "Où êtes-vous ?"}
+        with patch.object(server, "MODEL", "org/other-llm"), patch.object(server, "request_model", return_value=(json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(analysis)}}]}).encode(), {})) as request:
+            server.analyze({"messages": [{"role": "caller", "text": "Il y a de la fumée."}]})
+        self.assertEqual(request.call_args.args[1]["model"], "org/other-llm")
 
     def test_vacation_persistence_roundtrip_and_lease(self):
         import tempfile

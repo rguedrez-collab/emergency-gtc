@@ -24,8 +24,22 @@ ROOT = Path(__file__).resolve().parent          # backend/
 REPO = ROOT.parent                              # repository root (secrets, state, frontend/dist)
 # The page served at /: the frontend build output. Containers and tests may point elsewhere.
 STATIC_FILE = Path(os.environ.get("ORANGE_STATIC_FILE", str(REPO / "frontend" / "dist" / "urgence.html")))
-MODEL = "google/gemma-4-26b-a4b-it"
-TTS_MODEL = "mistralai/Voxtral-4B-TTS-2603"
+# Models: identifiers sent to the OpenAI-compatible services, all overridable through the environment. The labels
+# are what the console shows: the demo names for the default models, otherwise the identifier's last path segment.
+DEFAULT_MODEL = "google/gemma-4-26b-a4b-it"
+MODEL = os.environ.get("ORANGE_LLM_MODEL", DEFAULT_MODEL)
+CALLER_MODEL = os.environ.get("ORANGE_CALLER_MODEL", MODEL)  # the simulated caller may run on another model
+DEFAULT_TTS_MODEL = "mistralai/Voxtral-4B-TTS-2603"
+TTS_MODEL = os.environ.get("ORANGE_TTS_MODEL", DEFAULT_TTS_MODEL)
+STT_MODELS = tuple(m.strip() for m in os.environ.get("ORANGE_STT_MODELS", "nemotron,parakeet").split(",") if m.strip()) or ("nemotron",)
+
+
+def _label(model, default_id, default_label):
+    return default_label if model == default_id else model.split("/")[-1]
+
+
+LLM_LABEL = os.environ.get("ORANGE_LLM_LABEL") or _label(MODEL, DEFAULT_MODEL, "Gemma 4")
+TTS_LABEL = os.environ.get("ORANGE_TTS_LABEL") or _label(TTS_MODEL, DEFAULT_TTS_MODEL, "Voxtral")
 # Model endpoints: localhost by default (the services run next to the gateway); overridable for containers.
 GEMMA_DIRECT = os.environ.get("ORANGE_GEMMA_URL", "http://127.0.0.1:8000/v1/chat/completions")
 STT_BASE = os.environ.get("ORANGE_STT_URL", "http://127.0.0.1:8098").rstrip("/")
@@ -384,7 +398,7 @@ STYLE_NOTES = {
 }
 
 
-VOICES = ("fr_female", "fr_male")
+VOICES = tuple(v.strip() for v in os.environ.get("ORANGE_TTS_VOICES", "fr_female,fr_male").split(",") if v.strip()) or ("fr_female", "fr_male")
 # AI/operator pace: "posé" keeps the calm 1.0 delivery; "vif" is a slightly brisker read.
 PACES = {"posé": 1.0, "vif": 1.08}
 
@@ -548,7 +562,7 @@ def chat_json(messages, temperature, max_tokens, simulation=False, headers=None)
     guarded = llm_url() != GEMMA_DIRECT and not simulation
     try:
         body, headers = request_model(llm_url(simulation), {
-            "model": MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
+            "model": CALLER_MODEL if simulation else MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}, "chat_template_kwargs": {"enable_thinking": False}},
             headers or {"Content-Type": "application/json"})
     except HTTPError as exc:
@@ -602,7 +616,7 @@ def caller_turn(payload):
         except ModelOutputError:
             if attempt:
                 raise
-    return {"text":text,"model":MODEL,"ms":round((time.monotonic()-start)*1000),"source":"generated_caller","retries":attempt}
+    return {"text":text,"model":CALLER_MODEL,"ms":round((time.monotonic()-start)*1000),"source":"generated_caller","retries":attempt}
 
 
 def request_model(url, payload=None, headers=None, timeout=120):
@@ -750,7 +764,7 @@ def health():
             data, _ = request_model(url, timeout=3)
             detail = json.loads(data)
             if name == "stt":
-                ok = all(x in detail.get("loaded", []) for x in ("nemotron", "parakeet"))
+                ok = all(x in detail.get("loaded", []) for x in STT_MODELS)
             else:
                 ok = True
             return name, {"ready": ok}
@@ -772,7 +786,8 @@ def health():
         except Exception:
             services["guardrail"] = {"ready": False}
     return {"ready": all(s["ready"] for s in services.values()), "services": services,
-            "model": MODEL, "stt": ["nemotron", "parakeet"], "tts": TTS_MODEL,
+            "model": MODEL, "stt": list(STT_MODELS), "tts": TTS_MODEL,
+            "models": {"llm": MODEL, "llm_label": LLM_LABEL, "caller": CALLER_MODEL, "tts": TTS_MODEL, "tts_label": TTS_LABEL, "stt": list(STT_MODELS)},
             "guardrail": {"configured": guardrail_active(), "name": GUARDRAIL_NAME, "path": "/api/analyze",
                           "mode": (cfg["mode"] + " · hors bande") if cfg else ("proxy" if llm_url() != GEMMA_DIRECT else None),
                           "caller_simulation_guarded": llm_url(True) != GEMMA_DIRECT},
@@ -901,8 +916,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def model_route(self, path, body):
         if path == "/api/transcribe":
-            model = self.headers.get("X-Model", "nemotron")
-            if model not in ("nemotron", "parakeet"):
+            model = self.headers.get("X-Model", STT_MODELS[0])
+            if model not in STT_MODELS:
                 raise ValueError("unsupported STT model")
             filename = self.headers.get("X-Filename", "input.webm")
             ext = Path(filename).suffix.lower()

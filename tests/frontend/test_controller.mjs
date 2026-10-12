@@ -411,8 +411,13 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(shown.includes('Dernier verdict : signalé')&&!shown.includes('sur le chemin LLM'),'folded: verdict only');
   app.state.more={guard:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
   for(const expected of ['F5 AI Guardrails · enforce · hors bande sur le chemin LLM','propos de l’appelant : signalé · 0195-top','réponse de l’IA : conforme'])assert.ok(shown.includes(expected),expected);
-  context.fetch=async()=>({ok:true,json:async()=>({ready:true,services:{guardrail:{ready:true}},guardrail:{configured:true,name:'F5 AI Guardrails',mode:'enforce · hors bande'}})});context.AbortSignal={timeout:()=>undefined};
-  await app.refreshHealth();assert.match(app.state.health,/garde-fou F5 AI Guardrails actif \(enforce · hors bande\)/);delete context.fetch;
+  context.fetch=async()=>({ok:true,json:async()=>({ready:true,services:{guardrail:{ready:true}},guardrail:{configured:true,name:'F5 AI Guardrails',mode:'enforce · hors bande'},
+    models:{llm:'org/llama-3',llm_label:'Llama 3',tts:'org/kokoro',tts_label:'Kokoro',stt:['whisper']}})});context.AbortSignal={timeout:()=>undefined};
+  await app.refreshHealth();assert.match(app.state.health,/garde-fou F5 AI Guardrails actif \(enforce · hors bande\)/);
+  // Model names follow the gateway's configuration: labels, health text, STT choice, footnote.
+  assert.equal(app.labels().llm,'Llama 3');assert.equal(app.state.stt,'whisper');assert.match(app.state.health,/STT \/ Llama 3 \/ Kokoro/);
+  assert.ok(JSON.stringify(app.servicesChip()).includes('Analyse et dialogue · Llama 3'));app.state.more={note:true};assert.ok(texts(app.footnote()).join('').includes('STT : Whisper · Analyse : Llama 3 · Voix : Kokoro'));
+  app.state.models=null;app.state.stt='nemotron';app.state.more={};delete context.fetch;
 }
 // Secondary text is folded by default: model log, footnote, guardrail details and the mode explanation open on demand.
 {

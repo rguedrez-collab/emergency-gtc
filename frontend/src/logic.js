@@ -25,7 +25,8 @@ const initialStyle = () => {
   try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'sober'; } catch (e) { return 'sober'; }
 };
 // SCENARIOS is injected from samples.mjs: 100 synthetic caller-only test calls.
-const FOOTNOTE='Signal IA ≠ gravité clinique. Éléments déclarés vérifiés par correspondance textuelle ; interprétation et synthèse à valider par l’opérateur. Aucun diagnostic ni consigne médicale. STT : Nemotron / Parakeet · Analyse : Gemma 4 · Voix : Voxtral.';
+// Model names in the footnote follow the gateway's configuration (see labels()).
+const footnoteText=L=>'Signal IA ≠ gravité clinique. Éléments déclarés vérifiés par correspondance textuelle ; interprétation et synthèse à valider par l’opérateur. Aucun diagnostic ni consigne médicale. STT : '+L.sttLabel+' · Analyse : '+L.llm+' · Voix : '+L.tts+'.';
 
 class Component extends DCLogic {
   state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0}};
@@ -117,15 +118,23 @@ class Component extends DCLogic {
   async refreshHealth() {
     try {const r=await fetch('/api/health',{signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Connexion refusée');
       const h=await r.json();const g=h.guardrail||{};const guard=g.configured?(h.services?.guardrail?.ready===false?' · garde-fou injoignable':' · garde-fou '+(g.name||'')+' actif'+(g.mode?' ('+g.mode+')':'')):'';
-      if(!this.disposed)this.setState({guardrail:g,services:h.services||{},health:(h.ready?'Modèles connectés · STT / Gemma / Voxtral':'Modèle indisponible')+guard});
+      const m=h.models||{},stt=Array.isArray(m.stt)&&m.stt.length?m.stt:['nemotron','parakeet'];
+      if(!this.disposed)this.setState({guardrail:g,services:h.services||{},models:m,stt:stt.includes(this.state.stt)?this.state.stt:stt[0],
+        health:(h.ready?'Modèles connectés · STT / '+(m.llm_label||'Gemma 4')+' / '+(m.tts_label||'Voxtral'):'Modèle indisponible')+guard});
     } catch(e) {if(!this.disposed)this.setState({services:{stt:{ready:false},gemma:{ready:false},voxtral:{ready:false}},health:'Connexion indisponible'});}
+  }
+  // Model names come from the gateway's health payload (environment-configured); the defaults are the demo's set-up.
+  labels() {
+    const m=this.state.models||{},stt=Array.isArray(m.stt)&&m.stt.length?m.stt:['nemotron','parakeet'];
+    return {llm:m.llm_label||'Gemma 4',tts:m.tts_label||'Voxtral',stt,sttLabel:stt.map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' / ')};
   }
   // One compact status chip: a dot per service (transcription, analysis, voice, guardrail); the health text is the tooltip.
   servicesChip() {
+    const L=this.labels();
     const svc=this.state.services,g=this.state.guardrail||{},ok=/connectés/.test(this.state.health);
     const ready=key=>svc?svc[key]?.ready:ok?true:undefined; // before the first health answer: grey
     const dot=(key,label,state,title)=>h('span',{key,className:'oc-svc oc-svc-'+(state===false?'warn':state?'ok':'off'),title},label);
-    const core=[['stt','STT','Transcription · Nemotron / Parakeet'],['gemma','Analyse','Analyse et dialogue · Gemma 4'],['voxtral','Voix','Synthèse vocale · Voxtral']];
+    const core=[['stt','STT','Transcription · '+L.sttLabel],['gemma','Analyse','Analyse et dialogue · '+L.llm],['voxtral','Voix','Synthèse vocale · '+L.tts]];
     const states=core.map(([key])=>ready(key));
     // Exception-based status: one quiet dot while everything is up; one dot per service as soon as one is unknown or down.
     const dots=states.every(x=>x===true)?[dot('all','Services',true,'STT, analyse et voix opérationnels'+(g.configured?'':' · Garde-fou IA non configuré'))]
@@ -282,7 +291,7 @@ class Component extends DCLogic {
   }
   async tts(c,text,speaker='assistant') {
     const opts=this.voiceOptions(c,speaker);
-    const t=this.tool(c,'Voxtral TTS',speaker==='caller'?`${c.voice} · ${c.voiceStyle}`:`${opts.voice} · ${speaker==='assistant'?this.state.aiPace:'opérateur'}`);
+    const t=this.tool(c,this.labels().tts+' TTS',speaker==='caller'?`${c.voice} · ${c.voiceStyle}`:`${opts.voice} · ${speaker==='assistant'?this.state.aiPace:'opérateur'}`);
     try{
       const r=await this.api(c,'/api/tts',{text,speaker,...opts});const blob=await r.blob();
       this.done(t,blob.size+' octets · '+r.headers.get('X-TTS-MS')+' ms');return blob;
@@ -450,7 +459,7 @@ class Component extends DCLogic {
     return [all[0],...out];
   }
   async analyzeCall(c,beforeSpeech=Promise.resolve()) {
-    this.setPhase(c,'think');const t=this.tool(c,'Gemma 4','extraction + résumé');
+    this.setPhase(c,'think');const t=this.tool(c,this.labels().llm,'extraction + résumé');
     const r=await this.api(c,'/api/analyze',{messages:this.analysisContext(c),call:c.id,turn:c.ti});const d=await r.json();
     if(c.ended)return;
     const verdict=d.guardrail?.configured?' · garde-fou : '+this.guardLabel(d.guardrail):'';
@@ -694,7 +703,7 @@ class Component extends DCLogic {
       ...(this.state.tools?[h('span',{key:'sep',className:'oc-vsep'}),
         this.button('Appel de test · saisie / micro',()=>this.createCall(false),false,'orange-new'),
         this.button('Scénario de test',()=>this.createCall(true),false,'orange-scenario'),
-        this.button('STT : '+this.state.stt,()=>this.setState({stt:this.state.stt==='nemotron'?'parakeet':'nemotron'}),!!this.recording,'orange-stt'),
+        this.button('STT : '+this.state.stt,()=>{const L=this.labels(),i=L.stt.indexOf(this.state.stt);this.setState({stt:L.stt[(i+1)%L.stt.length]});},!!this.recording||this.labels().stt.length<2,'orange-stt'),
         this.button('Réinitialiser le poste',()=>this.resetAll(),false,'orange-reset')]:[])):null;
     return h('div',{className:'oc-bar'},
       h('div',{key:'top',className:'oc-bartop'},h('div',{key:'actions',className:'oc-bargroup'},...actions),h('div',{key:'status',className:'oc-bargroup oc-barstatus'},...status)),settings);
@@ -973,7 +982,7 @@ class Component extends DCLogic {
       this.footnote());
   }
   footnote() {
-    return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?FOOTNOTE:'Signal IA ≠ gravité clinique · validation humaine requise'),this.moreButton('note'));
+    return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?footnoteText(this.labels()):'Signal IA ≠ gravité clinique · validation humaine requise'),this.moreButton('note'));
   }
   audioPlayer() {
     const p=this.state.playback,rec=this.recording;

@@ -9,6 +9,10 @@ services:
     network_mode: host
     environment:
       ORANGE_BIND: 127.0.0.1   # host network: keep the gateway on loopback and expose it through your HTTPS front end
+      # Models (defaults = the demonstration set-up); endpoints: ORANGE_GEMMA_URL / ORANGE_STT_URL / ORANGE_TTS_URL
+      # ORANGE_LLM_MODEL: google/gemma-4-26b-a4b-it
+      # ORANGE_TTS_MODEL: mistralai/Voxtral-4B-TTS-2603
+      # ORANGE_STT_MODELS: nemotron,parakeet
     env_file:
       - path: backend/.env     # optional guardrail settings (see backend/env.example)
         required: false

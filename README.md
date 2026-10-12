@@ -55,6 +55,9 @@ make run                              # python3 backend/server.py -> 127.0.0.1:8
 Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE` (default `.access-password` at the repo root), `ORANGE_STATE_DIR` (default `state/`), `ORANGE_DB_PATH` (SQLite file, default `state/orange.db`), `ORANGE_STATIC_FILE` (page to serve, default `frontend/dist/urgence.html`),
 `ORANGE_LLM_URL` / `ORANGE_CALLER_LLM_URL` (LLM endpoints; point the first at the tee proxy for option B),
 `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`, `ORANGE_TTS_URL` (model service bases), `ORANGE_BIND` (listen address),
+`ORANGE_LLM_MODEL`, `ORANGE_CALLER_MODEL`, `ORANGE_TTS_MODEL`, `ORANGE_STT_MODELS` (comma-separated, first = default),
+`ORANGE_TTS_VOICES`, `ORANGE_LLM_LABEL`, `ORANGE_TTS_LABEL` (model identifiers and the names the console shows;
+the console reads them from `/api/health`),
 `F5_GUARDRAILS_*` (option A). Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets
 from jsDelivr and talks only to this gateway.
 
