@@ -1,0 +1,18 @@
+# Build artifact: generated/urgence.html embeds the mockup bundle; rebuild with prepare_ui.mjs.
+generated/
+# Runtime state, logs, test receipts
+state/
+logs/
+receipts/
+__pycache__/
+*.pyc
+# Secrets and local configuration: never commit
+.env
+tee-proxy.env
+.access-password
+.acr-password
+.preview-password
+# Third-party sources dropped in locally (tee proxy image contents)
+vendor/
+node_modules/
+.DS_Store
