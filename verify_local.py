@@ -25,8 +25,6 @@ import time
 from unittest.mock import patch
 import wave
 
-from playwright.sync_api import sync_playwright
-
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import tempfile  # noqa: E402
@@ -367,6 +365,7 @@ def arrived(page):
 
 
 def main():
+    from playwright.sync_api import sync_playwright  # lazy: preview_local imports this module without a browser
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=HERE, help="directory containing generated/urgence.html")
     parser.add_argument("--gaps-only", action="store_true")

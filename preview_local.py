@@ -25,6 +25,7 @@ import verify_local as v  # noqa: E402  reads --guarded/--oob/--realproxy from s
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8093)
+    parser.add_argument("--bind", default="127.0.0.1", help="0.0.0.0 inside a container")
     parser.add_argument("--password-file", type=Path, required=True, help="file holding the Basic auth password for user demo")
     parser.add_argument("--guarded", action="store_true", help="fake F5 tee proxy on the LLM path (verdict headers, one block)")
     args = parser.parse_args()
@@ -37,10 +38,10 @@ def main():
         sys.exit("empty password file")
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True
-    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", args.port), v.server.Handler)
+    httpd = socketserver.ThreadingTCPServer((args.bind, args.port), v.server.Handler)
     httpd.expected_auth = "Basic " + base64.b64encode(("demo:" + password).encode()).decode()
     with patch.object(v.server, "request_model", v.fake_request_model):
-        print(f"Preview of {v.server.ROOT / 'generated' / 'urgence.html'} on http://127.0.0.1:{args.port} (user demo); "
+        print(f"Preview of {v.server.ROOT / 'generated' / 'urgence.html'} on http://{args.bind}:{args.port} (user demo); "
               f"fake models{' + fake tee proxy verdicts' if args.guarded else ''}; Ctrl-C stops.", flush=True)
         httpd.serve_forever()
 

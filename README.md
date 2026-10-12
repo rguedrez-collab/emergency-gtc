@@ -16,6 +16,8 @@ Everything is synthetic: no real call, no dispatch, no transmission to emergency
 | `preview_local.py` | Serves the built page locally with in-process fake models (no GPU) for UI review. |
 | `test_server.py`, `test_controller.mjs` | Backend tests (unittest) and controller tests (Node, vm). |
 | `verify_local.py` | Headless-browser acceptance harness against the real gateway code with fake models (`--guarded`, `--oob`, `--realproxy`, `--soak`, `--gaps-only`). |
+| `Dockerfile`, `docker-compose.yml` | Gateway and preview images (the UI mockup is supplied at build time from `mockup/`). |
+| `HANDOFF.md` | Handoff for the next engineer or AI agent: architecture, flows, invariants, how to verify, open items. |
 | `env.example`, `tee-proxy.env.example`, `guardrail_proxy.sh` | Guardrail configuration templates and the script that runs F5's tee proxy next to the LLM. |
 
 ## What is deliberately *not* here
@@ -47,8 +49,22 @@ python3 server.py     # 127.0.0.1:8092, user demo
 ```
 Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE`, `ORANGE_STATE_DIR` (saved vacation, default `state/`),
 `ORANGE_LLM_URL` / `ORANGE_CALLER_LLM_URL` (LLM endpoints; point the first at the tee proxy for option B),
+`ORANGE_GEMMA_URL`, `ORANGE_STT_URL`, `ORANGE_TTS_URL` (model service bases), `ORANGE_BIND` (listen address),
 `F5_GUARDRAILS_*` (option A). Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets
 from jsDelivr and talks only to this gateway.
+
+## Docker
+
+```bash
+mkdir -p mockup && cp /path/to/urgence.html mockup/        # the mockup stays out of git
+echo 'a-strong-password' > .access-password && chmod 600 .access-password
+docker compose up -d gateway                                # host network; models on the host's localhost
+docker compose --profile preview up -d                      # UI review with fake models on :8093
+docker compose exec preview cat /app/state/.preview-password
+```
+The `Dockerfile` has two targets (`gateway`, `preview`) built from the same UI stage. Without host
+networking, point the gateway at the model services with `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`,
+`ORANGE_TTS_URL` (and `ORANGE_LLM_URL` for a guardrail proxy); `ORANGE_BIND` controls the listen address.
 
 ## Tests
 

@@ -1,0 +1,15 @@
+.git
+.gitignore
+receipts
+state
+generated
+vendor
+node_modules
+__pycache__
+*.pyc
+.env
+tee-proxy.env
+.access-password
+.acr-password
+.preview-password
+*.md

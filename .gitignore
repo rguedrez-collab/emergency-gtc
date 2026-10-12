@@ -1,3 +1,5 @@
+# The UI mockup is placed here for local and Docker builds; it is not committed.
+mockup/
 # Build artifact: generated/urgence.html embeds the mockup bundle; rebuild with prepare_ui.mjs.
 generated/
 # Runtime state, logs, test receipts

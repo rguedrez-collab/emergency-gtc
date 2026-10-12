@@ -21,7 +21,10 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 MODEL = "google/gemma-4-26b-a4b-it"
 TTS_MODEL = "mistralai/Voxtral-4B-TTS-2603"
-GEMMA_DIRECT = "http://127.0.0.1:8000/v1/chat/completions"
+# Model endpoints: localhost by default (the services run next to the gateway); overridable for containers.
+GEMMA_DIRECT = os.environ.get("ORANGE_GEMMA_URL", "http://127.0.0.1:8000/v1/chat/completions")
+STT_BASE = os.environ.get("ORANGE_STT_URL", "http://127.0.0.1:8098").rstrip("/")
+TTS_BASE = os.environ.get("ORANGE_TTS_URL", "http://127.0.0.1:8011").rstrip("/")
 GEMMA_URL = GEMMA_DIRECT  # kept for callers that import it; the live path is llm_url()
 # The F5 AI Guardrails "tee proxy" is inserted on the application's LLM path only (ORANGE_LLM_URL,
 # same OpenAI-compatible API). The simulated caller is a demo artefact and stays on the direct
@@ -650,7 +653,7 @@ def analyze(payload):
 def voices():
     """Diagnostics: what the deployed speech service reports about models and voices."""
     found = {}
-    for name, url in (("models", "http://127.0.0.1:8011/v1/models"), ("voices", "http://127.0.0.1:8011/v1/audio/voices")):
+    for name, url in (("models", TTS_BASE + "/v1/models"), ("voices", TTS_BASE + "/v1/audio/voices")):
         try:
             data, _ = request_model(url, timeout=5)
             found[name] = json.loads(data)
@@ -672,7 +675,7 @@ def health():
             return name, {"ready": ok}
         except Exception:
             return name, {"ready": False}
-    probes = [("gemma", "http://127.0.0.1:8000/v1/health/ready"), ("stt", "http://127.0.0.1:8098/"), ("voxtral", "http://127.0.0.1:8011/v1/models")]
+    probes = [("gemma", GEMMA_DIRECT.replace("/v1/chat/completions", "/v1/health/ready")), ("stt", STT_BASE + "/"), ("voxtral", TTS_BASE + "/v1/models")]
     if llm_url() != GEMMA_DIRECT:
         origin = urlsplit(llm_url())
         probes.append(("guardrail", f"{origin.scheme}://{origin.netloc}/v1/models"))
@@ -824,7 +827,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ext = Path(filename).suffix.lower()
             if ext not in (".wav", ".webm", ".ogg", ".mp3", ".m4a", ".mp4"):
                 raise ValueError("unsupported audio container")
-            data, _ = request_model("http://127.0.0.1:8098/transcribe", body,
+            data, _ = request_model(STT_BASE + "/transcribe", body,
                 {"Content-Type": "application/octet-stream", "X-Model": model, "X-Filename": "test" + ext})
             result = json.loads(data)
             if not isinstance(result.get("text"), str) or not result["text"].strip():
@@ -847,7 +850,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise ValueError("TTS requires 1 to 1200 characters")
             start = time.monotonic()
             voice_options, delivery = speech_options(payload)
-            data, _ = request_model("http://127.0.0.1:8011/v1/audio/speech", {
+            data, _ = request_model(TTS_BASE + "/v1/audio/speech", {
                 "input": text, "model": TTS_MODEL, "response_format": "wav",
                 "language": "fr", **voice_options,
             })
@@ -865,12 +868,13 @@ def serve():
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True
     port = int(os.environ.get("ORANGE_PORT", "8092"))
-    with socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler) as server:
+    bind = os.environ.get("ORANGE_BIND", "127.0.0.1")  # 0.0.0.0 only inside a container or behind a trusted reverse proxy
+    with socketserver.ThreadingTCPServer((bind, port), Handler) as server:
         server.expected_auth = "Basic " + base64.b64encode(("demo:" + password).encode()).decode()
         cfg = f5_config()
         guard = (f"{GUARDRAIL_NAME} out-of-band ({cfg['mode']}) on /api/analyze" if cfg else
                  f"{GUARDRAIL_NAME} proxy on /api/analyze via {llm_url()}" if llm_url() != GEMMA_DIRECT else "no guardrail configured (direct model)")
-        print(f"Orange demonstration listening on 127.0.0.1:{port}; no dispatch integration; {guard}", flush=True)
+        print(f"Orange demonstration listening on {bind}:{port}; no dispatch integration; {guard}", flush=True)
         server.serve_forever()
 
 
