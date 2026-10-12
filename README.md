@@ -52,27 +52,78 @@ echo 'a-strong-password' > .access-password && chmod 600 .access-password
 cp backend/env.example backend/.env   # optional: guardrail settings
 make run                              # python3 backend/server.py -> 127.0.0.1:8092, user demo
 ```
-Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE` (default `.access-password` at the repo root), `ORANGE_STATE_DIR` (default `state/`), `ORANGE_DB_PATH` (SQLite file, default `state/orange.db`), `ORANGE_STATIC_FILE` (page to serve, default `frontend/dist/urgence.html`),
-`ORANGE_LLM_URL` / `ORANGE_CALLER_LLM_URL` (LLM endpoints; point the first at the tee proxy for option B),
-`ORANGE_GEMMA_URL`, `ORANGE_STT_URL`, `ORANGE_TTS_URL` (model service bases), `ORANGE_BIND` (listen address),
-`ORANGE_LLM_MODEL`, `ORANGE_CALLER_MODEL`, `ORANGE_TTS_MODEL`, `ORANGE_STT_MODELS` (comma-separated, first = default),
-`ORANGE_TTS_VOICES`, `ORANGE_LLM_LABEL`, `ORANGE_TTS_LABEL` (model identifiers and the names the console shows;
-the console reads them from `/api/health`),
-`F5_GUARDRAILS_*` (option A). Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets
-from jsDelivr and talks only to this gateway.
+Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets from jsDelivr and talks only
+to this gateway. Everything below is configured through environment variables (or `backend/.env`).
+
+## Configuration
+
+### Models
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ORANGE_LLM_MODEL` | `google/gemma-4-26b-a4b-it` | Model id sent to the LLM endpoint for analysis and the AI operator's replies. |
+| `ORANGE_CALLER_MODEL` | *= `ORANGE_LLM_MODEL`* | Model id for the simulated caller (can be a different, cheaper model). |
+| `ORANGE_TTS_MODEL` | `mistralai/Voxtral-4B-TTS-2603` | Model id sent to the speech endpoint. |
+| `ORANGE_STT_MODELS` | `nemotron,parakeet` | Accepted STT models, comma-separated; the first is the default. |
+| `ORANGE_TTS_VOICES` | `fr_female,fr_male` | Voice presets the gateway accepts. |
+| `ORANGE_LLM_LABEL`, `ORANGE_TTS_LABEL` | `Gemma 4`, `Voxtral` | Names the console shows (default: demo names, otherwise the id's last segment). |
+
+`/api/health` publishes the active set under `models`; the console builds every displayed model name from it.
+
+### Endpoints and runtime
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ORANGE_GEMMA_URL` | `http://127.0.0.1:8000/v1/chat/completions` | LLM endpoint (OpenAI-compatible). |
+| `ORANGE_LLM_URL` | *= `ORANGE_GEMMA_URL`* | Where `/api/analyze` sends the AI operator's turn — point it at the guardrail proxy for option B. |
+| `ORANGE_CALLER_LLM_URL` | *= `ORANGE_GEMMA_URL`* | Where the simulated caller's turn is sent. |
+| `ORANGE_STT_URL` | `http://127.0.0.1:8098` | STT service base (`/transcribe`). |
+| `ORANGE_TTS_URL` | `http://127.0.0.1:8011` | Speech service base (`/v1/audio/speech`, `/v1/models`). |
+| `ORANGE_BIND`, `ORANGE_PORT` | `127.0.0.1`, `8092` | Listen address and port (`0.0.0.0` inside a container). |
+| `ORANGE_PASSWORD_FILE` | `.access-password` | File holding the Basic-auth password of user `demo`. |
+| `ORANGE_STATE_DIR`, `ORANGE_DB_PATH` | `state/`, `state/orange.db` | Runtime state and the SQLite database. |
+| `ORANGE_STATIC_FILE` | `frontend/dist/urgence.html` | The page served at `/`. |
+| `F5_GUARDRAILS_*` | unset | Option A guardrails (see `backend/env.example`). |
 
 ## Docker
+
+The `Dockerfile` has two targets built from the same UI stage: `gateway` (real model services) and
+`preview` (fake models, for UI review). The commands work the same with `nerdctl`.
 
 ```bash
 mkdir -p frontend/mockup && cp /path/to/urgence.html frontend/mockup/   # the mockup stays out of git
 echo 'a-strong-password' > .access-password && chmod 600 .access-password
-docker compose up -d gateway                                # host network; models on the host's localhost
+
+# With compose (gateway on the host network, models on the host's localhost):
+docker compose up -d gateway
 docker compose --profile preview up -d                      # UI review with fake models on :8093
 docker compose exec preview cat /app/state/.preview-password
+
+# Or build and run by hand:
+docker build --target gateway -t emergency-gtc/gateway .
+docker build --target preview -t emergency-gtc/preview .
+
+docker run -d --name orange-gateway --restart unless-stopped --network host \
+  -e ORANGE_BIND=127.0.0.1 \
+  -e ORANGE_LLM_MODEL=google/gemma-4-26b-a4b-it \
+  -e ORANGE_CALLER_MODEL=google/gemma-4-26b-a4b-it \
+  -e ORANGE_TTS_MODEL=mistralai/Voxtral-4B-TTS-2603 \
+  -e ORANGE_STT_MODELS=nemotron,parakeet \
+  -e ORANGE_GEMMA_URL=http://127.0.0.1:8000/v1/chat/completions \
+  -e ORANGE_STT_URL=http://127.0.0.1:8098 \
+  -e ORANGE_TTS_URL=http://127.0.0.1:8011 \
+  -v "$PWD/state:/app/state" \
+  -v "$PWD/.access-password:/run/secrets/access-password:ro" \
+  emergency-gtc/gateway
+
+docker run -d --name orange-preview --restart unless-stopped -p 127.0.0.1:8093:8093 \
+  -v orange-preview-state:/app/state emergency-gtc/preview
+docker exec orange-preview cat /app/state/.preview-password
 ```
-The `Dockerfile` has two targets (`gateway`, `preview`) built from the same UI stage. Without host
-networking, point the gateway at the model services with `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`,
-`ORANGE_TTS_URL` (and `ORANGE_LLM_URL` for a guardrail proxy); `ORANGE_BIND` controls the listen address.
+Without host networking, point `ORANGE_GEMMA_URL` / `ORANGE_STT_URL` / `ORANGE_TTS_URL` at the model
+services' addresses and publish the port with `-p` (the image already listens on `0.0.0.0`). Add
+`-e ORANGE_LLM_URL=http://<proxy>:8100/v1/chat/completions` to route the AI operator's turns through the
+F5 tee proxy. Every variable from the Configuration section can be passed the same way.
 
 ## Storage
 
