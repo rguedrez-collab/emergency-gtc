@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {samples} from './samples.mjs';
+import {samples} from '../../frontend/src/samples.mjs';
 class Logic {
   props={};
   setState(value,callback){Object.assign(this.state,value);callback?.();}
@@ -12,7 +12,7 @@ const context={DCLogic:Logic,React:{createRef:()=>({current:null}),createElement
   window:{confirm:()=>true,alert:()=>{}},setTimeout,clearTimeout,setInterval,clearInterval,
   Date,performance,AbortController,URL:{createObjectURL:()=>'blob:test',revokeObjectURL:()=>{}},console};
 // The controller under test is logic.js with the scenarios injected, exactly as prepare_ui.mjs embeds it.
-const controller=fs.readFileSync(new URL('./logic.js',import.meta.url),'utf8').replace('// SCENARIOS is injected',()=>'const SCENARIOS = '+JSON.stringify(samples)+';\n// SCENARIOS is injected')  // same splice as prepare_ui.mjs; function form so `$` in the data is never special;
+const controller=fs.readFileSync(new URL('../../frontend/src/logic.js',import.meta.url),'utf8').replace('// SCENARIOS is injected',()=>'const SCENARIOS = '+JSON.stringify(samples)+';\n// SCENARIOS is injected')  // same splice as prepare_ui.mjs; function form so `$` in the data is never special;
 vm.runInNewContext(controller+'\nglobalThis.TestComponent=Component;globalThis.SAMPLES=SCENARIOS;globalThis.AI_CALLS=AI_CALLS;',context);
 const make=()=>{const app=new context.TestComponent();app.stopAudio=()=>{};return app;};
 const result={summary:'Compte rendu de test',facts:[],signals:[],reply:'Question de test',ms:10};

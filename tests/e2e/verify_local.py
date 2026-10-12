@@ -6,7 +6,7 @@ scheduling and audio hand-offs, not model quality or real inference latency.
 
   python3 verify_local.py                 # full lifecycle checks
   python3 verify_local.py --gaps-only     # turn-gap measurement only
-  python3 verify_local.py --gaps-only --root DIR   # serve DIR/generated/urgence.html
+  python3 verify_local.py --gaps-only --root DIR   # serve DIR/urgence.html instead of frontend/dist
 """
 import argparse
 import base64
@@ -25,13 +25,14 @@ import time
 from unittest.mock import patch
 import wave
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+HERE = Path(__file__).resolve().parent          # tests/e2e
+REPO = HERE.parents[1]
+sys.path.insert(0, str(REPO / "backend"))
 import tempfile  # noqa: E402
 os.environ.setdefault("ORANGE_STATE_DIR", tempfile.mkdtemp(prefix="orange-state-"))  # the saved vacation stays out of the repo
 import server  # noqa: E402
 
-AI_CALLS = int(re.search(r"AI_CALLS = (\d+)", (HERE / "logic.js").read_text()).group(1))
+AI_CALLS = int(re.search(r"AI_CALLS = (\d+)", (REPO / "frontend" / "src" / "logic.js").read_text()).group(1))
 CHROMIUM = os.environ.get("ORANGE_CHROMIUM")  # optional: a specific Chromium build; otherwise Playwright's own
 DELAY_S = {"caller": 0.9, "analyze": 1.6, "rewrite": 0.5, "tts": 0.7, "stt": 0.3}
 CHARS_PER_SECOND = 15  # Synthetic speech length, close to French TTS pace.
@@ -101,7 +102,7 @@ spoken, counters, lock = {}, {"wav": 0, "analyze": 0, "caller": 0, "rewrite": 0,
 GUARDED = "--guarded" in sys.argv or "--oob" in sys.argv or "--realproxy" in sys.argv
 OOB = "--oob" in sys.argv
 REALPROXY = "--realproxy" in sys.argv
-PROXY_SRC = Path(os.environ.get("TEE_PROXY_SRC", str(HERE / "vendor" / "tee-proxy")))  # the proxy sources, if you have them
+PROXY_SRC = Path(os.environ.get("TEE_PROXY_SRC", str(REPO / "vendor" / "tee-proxy")))  # the proxy sources, if you have them
 REAL_URLOPEN = server.request_model  # kept for calls that must really go on the wire (the real proxy)
 if REALPROXY:
     # Laurent's actual tee proxy code (pulled from the image), mock scanner, enforce mode, in front of a fake OpenAI upstream.
@@ -367,7 +368,7 @@ def arrived(page):
 def main():
     from playwright.sync_api import sync_playwright  # lazy: preview_local imports this module without a browser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=HERE, help="directory containing generated/urgence.html")
+    parser.add_argument("--root", type=Path, default=REPO / "frontend" / "dist", help="directory containing the built urgence.html")
     parser.add_argument("--gaps-only", action="store_true")
     parser.add_argument("--soak", type=int, default=0, help="seconds to leave a session running, then check it")
     parser.add_argument("--guarded", action="store_true", help="fake F5 tee proxy on the LLM path: verdicts, one block")
@@ -384,7 +385,7 @@ def main():
     proxy_proc = start_real_proxy() if REALPROXY else None
     receipt = {"mode": "local fake models; scheduling and audio hand-off only", "root": str(args.root),
                "fake_delays_s": DELAY_S, "synthetic_speech_chars_per_second": CHARS_PER_SECOND, "checks": {}}
-    with patch.object(server, "request_model", fake_request_model), patch.object(server, "ROOT", args.root.resolve()), \
+    with patch.object(server, "request_model", fake_request_model), patch.object(server, "STATIC_FILE", args.root.resolve() / "urgence.html"), \
             sync_playwright() as p:
         browser = p.chromium.launch(**({"executable_path": CHROMIUM} if CHROMIUM else {}), headless=True, args=["--no-sandbox"])
         context = browser.new_context(http_credentials={"username": "demo", "password": "local-only"},

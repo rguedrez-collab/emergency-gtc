@@ -13,7 +13,7 @@ them. Nothing is real: no telephony, no dispatch, no transmission to emergency s
 ## Architecture in one screen
 
 ```
-browser (generated/urgence.html = UI mockup shell + logic.js)        gateway (server.py, stdlib http.server)
+browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (backend/server.py, stdlib http.server)
   scheduler: 100 calls, 6 handled by the AI at once, 1 arrival / 6 s   Basic auth · per-service gates (2 slots each)
   audio hand-off: only the selected call is audible                   POST /api/caller   simulated caller line (LLM)
   console: list · call pane · copilot · situation board               POST /api/analyze  extraction + spoken reply (LLM)
@@ -22,12 +22,12 @@ browser (generated/urgence.html = UI mockup shell + logic.js)        gateway (se
                                                                        optional F5 AI Guardrails (Scans API or tee proxy)
 ```
 
-- `prepare_ui.mjs` embeds `logic.js` (with `samples.mjs` spliced in) and the `.oc-*` CSS into the mockup's
-  template; every patch asserts it applied. The mockup is an external asset (`ORANGE_MOCKUP`).
-- `logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls`,
+- `frontend/build.mjs` embeds `src/logic.js` (with `src/samples.mjs` spliced in) and the `.oc-*` CSS into the mockup's
+  template; every patch asserts it applied. The mockup is an external asset (`frontend/mockup/urgence.html` or `ORANGE_MOCKUP`).
+- `frontend/src/logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls`,
   `consoleView`, `audioPlayer`, `soundLabel`. All markup goes through `h()`; buttons are NVIDIA Elements
   `nve-button` via `button(label, action, disabled, id, title, {emphasis, tone, key, size})`.
-- `server.py` validates every model output (facts must quote the caller, replies pass a deterministic speech
+- `backend/server.py` validates every model output (facts must quote the caller, replies pass a deterministic speech
   guard that forbids dispatch claims and medical gestures, one guarded rewrite, one anti-repetition rewrite).
 
 ## Invariants the scripts and tests rely on
@@ -41,7 +41,7 @@ browser (generated/urgence.html = UI mockup shell + logic.js)        gateway (se
   end labels keep the suffix `· à revoir`; the guardrail summary says `Dernier verdict : …`; the overview keeps
   the words `Sélectionnez un appel`.
 - List DOM: alert items are `.oc-card[data-call]` (with `.oc-cardtoggle`, `.oc-title`), AI/ended items are
-  `.oc-row[data-call]`; the harness helpers `orangeCards()/orangeRows()/orangeOpenFirst()` live in `verify_local.py`.
+  `.oc-row[data-call]`; the harness helpers `orangeCards()/orangeRows()/orangeOpenFirst()` live in `tests/e2e/verify_local.py`.
 - Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`.
 
 ## Behaviour worth knowing before changing anything
@@ -64,13 +64,12 @@ browser (generated/urgence.html = UI mockup shell + logic.js)        gateway (se
 ## How to verify
 
 ```bash
-node test_controller.mjs                      # 45 lifecycle checks (vm, stubbed React/Audio)
-python3 -m unittest discover -p 'test_*.py'    # 50 backend tests (one skips until a build exists)
-ORANGE_MOCKUP=/path/to/urgence.html node prepare_ui.mjs
-python3 verify_local.py                        # 12 headless checks with fake models (needs Playwright + Chromium)
-python3 verify_local.py --guarded | --oob | --realproxy | --soak 300
+make test                                      # 45 controller checks (vm, stubbed React/Audio) + 50 backend tests
+make build MOCKUP=/path/to/urgence.html        # frontend/dist/urgence.html (one backend test skips until it exists)
+make e2e                                       # 12 headless checks with fake models (needs Playwright + Chromium)
+python3 tests/e2e/verify_local.py --guarded | --oob | --realproxy | --soak 300
 ```
-The fake models (`verify_local.py`) follow an intake protocol so the preview reads like a real call, but
+The fake models (`tests/e2e/verify_local.py`) follow an intake protocol so the preview reads like a real call, but
 dialogue quality can only be judged with the real models.
 
 ## Open items
@@ -78,4 +77,4 @@ dialogue quality can only be judged with the real models.
 - Deploy this build to the demonstration host and run the real-model scripts there (kept with the deployment).
 - F5 AI Guardrails: real tenant credentials, the tenant region, a joint test; confirm non-cleared outcome strings.
 - Decide the « À traiter » policy (every call vs signal-only) with the product owner.
-- The mockup's redistribution status before publishing `generated/` or `mockup/` anywhere.
+- The mockup's redistribution status before publishing `frontend/dist/` or `frontend/mockup/` anywhere.

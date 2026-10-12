@@ -18,7 +18,10 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent          # backend/
+REPO = ROOT.parent                              # repository root (secrets, state, frontend/dist)
+# The page served at /: the frontend build output. Containers and tests may point elsewhere.
+STATIC_FILE = Path(os.environ.get("ORANGE_STATIC_FILE", str(REPO / "frontend" / "dist" / "urgence.html")))
 MODEL = "google/gemma-4-26b-a4b-it"
 TTS_MODEL = "mistralai/Voxtral-4B-TTS-2603"
 # Model endpoints: localhost by default (the services run next to the gateway); overridable for containers.
@@ -234,7 +237,7 @@ ROUTE_GATES = {"/api/analyze": "gemma", "/api/caller": "gemma", "/api/tts": "tts
 
 # The running vacation (session counters + calls, synthetic data only) is kept on the gateway so a page reload
 # restores it. One browser tab owns it; another tab may take over once the owner has been silent for the lease.
-STATE_DIR = Path(os.environ.get("ORANGE_STATE_DIR", str(ROOT / "state")))
+STATE_DIR = Path(os.environ.get("ORANGE_STATE_DIR", str(REPO / "state")))
 STATE_FILE = STATE_DIR / "vacation.json"
 STATE_MAX = 6_000_000  # bytes; a complete 100-call vacation stays well under 1 MB
 STATE_LEASE_S = 15.0
@@ -735,7 +738,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         if path in ("/", "/urgence.html", "/index.html"):
-            self.reply(200, (ROOT / "generated" / "urgence.html").read_bytes(), "text/html; charset=utf-8")
+            self.reply(200, STATIC_FILE.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/health":
             self.reply(200, health())
         elif path == "/api/voices":
@@ -862,7 +865,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def serve():
     load_env_file(ROOT / ".env")
-    password = Path(os.environ.get("ORANGE_PASSWORD_FILE", str(ROOT / ".access-password"))).read_text().strip()
+    password = Path(os.environ.get("ORANGE_PASSWORD_FILE", str(REPO / ".access-password"))).read_text().strip()
     if not password:
         raise RuntimeError("Password is required")
     socketserver.ThreadingTCPServer.allow_reuse_address = True

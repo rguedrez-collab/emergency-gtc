@@ -1,6 +1,6 @@
 # docker compose up -d gateway            -> gateway on 127.0.0.1:8092 (host network: the model services are the host's)
 # docker compose --profile preview up -d   -> UI preview with fake models on :8093
-# Before building: copy the UI mockup to mockup/urgence.html and write the Basic-auth password to .access-password.
+# Before building: copy the UI mockup to frontend/mockup/urgence.html and write the Basic-auth password to .access-password.
 services:
   gateway:
     build:
@@ -10,7 +10,7 @@ services:
     environment:
       ORANGE_BIND: 127.0.0.1   # host network: keep the gateway on loopback and expose it through your HTTPS front end
     env_file:
-      - path: .env             # optional guardrail settings (see env.example)
+      - path: backend/.env     # optional guardrail settings (see backend/env.example)
         required: false
     volumes:
       - ./state:/app/state

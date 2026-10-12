@@ -1,16 +1,18 @@
-# The UI mockup is placed here for local and Docker builds; it is not committed.
-mockup/
-# Build artifact: generated/urgence.html embeds the mockup bundle; rebuild with prepare_ui.mjs.
-generated/
+# Frontend: the UI mockup goes in frontend/mockup/ (not committed); dist/ is the build output
+frontend/mockup/
+frontend/dist/
 # Runtime state, logs, test receipts
 state/
 logs/
 receipts/
+tests/e2e/receipts/
 __pycache__/
 *.pyc
 # Secrets and local configuration: never commit
 .env
+backend/.env
 tee-proxy.env
+backend/guardrails/tee-proxy.env
 .access-password
 .acr-password
 .preview-password

@@ -7,8 +7,11 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+import sys
+from pathlib import Path
 
-import server
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+import server  # noqa: E402
 
 
 class ExtractionTests(unittest.TestCase):
@@ -480,8 +483,8 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(self.request("/api/session")[0], 404)
 
     def test_original_html_is_served(self):
-        if not (server.ROOT / "generated" / "urgence.html").exists():
-            self.skipTest("build generated/urgence.html with prepare_ui.mjs first")
+        if not server.STATIC_FILE.exists():
+            self.skipTest("build the frontend first: make build")
         status, body = self.request("/")
         self.assertEqual(status, 200)
         self.assertIn(b"Orange", body)

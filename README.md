@@ -5,49 +5,53 @@ endpoint) handles synthetic incoming calls — transcription (Nemotron / Parakee
 Voxtral speech — while a human operator supervises, listens in, takes calls over, reviews and files them.
 Everything is synthetic: no real call, no dispatch, no transmission to emergency services.
 
-## What is in this repository
+## Layout
 
-| File | Role |
-| --- | --- |
-| `server.py` | Gateway (stdlib `http.server`, Basic auth). Routes: `/api/analyze`, `/api/caller`, `/api/transcribe`, `/api/tts`, `/api/health`, `/api/voices`, `/api/session` (vacation persistence). Per-service concurrency gates, speech guard, optional F5 AI Guardrails (out-of-band Scans API or tee proxy). |
-| `logic.js` | Browser controller (React, embedded into the mockup's template engine): scheduler for 100 synthetic calls, audio hand-off, console UI, case lifecycle, persistence, themes. |
-| `prepare_ui.mjs` | Build step: embeds `logic.js` and the console styles into the UI mockup and writes `generated/urgence.html` (+ `build.json` with hashes). |
-| `samples.mjs` | 100 synthetic caller-only scenarios (20 incident families). |
-| `preview_local.py` | Serves the built page locally with in-process fake models (no GPU) for UI review. |
-| `test_server.py`, `test_controller.mjs` | Backend tests (unittest) and controller tests (Node, vm). |
-| `verify_local.py` | Headless-browser acceptance harness against the real gateway code with fake models (`--guarded`, `--oob`, `--realproxy`, `--soak`, `--gaps-only`). |
-| `Dockerfile`, `docker-compose.yml` | Gateway and preview images (the UI mockup is supplied at build time from `mockup/`). |
-| `HANDOFF.md` | Handoff for the next engineer or AI agent: architecture, flows, invariants, how to verify, open items. |
-| `env.example`, `tee-proxy.env.example`, `guardrail_proxy.sh` | Guardrail configuration templates and the script that runs F5's tee proxy next to the LLM. |
+```
+backend/            gateway (Python, standard library only)
+  server.py           routes, model orchestration, speech guard, guardrails, vacation persistence
+  env.example         guardrail settings template (copy to backend/.env)
+  guardrails/         F5 tee-proxy runner and its env template
+frontend/           browser application
+  src/logic.js        controller (React through the mockup's template engine): scheduler, audio, console, themes
+  src/samples.mjs     100 synthetic scenarios
+  build.mjs           embeds the controller and styles into the UI mockup -> frontend/dist/urgence.html
+  mockup/             put urgence.html here (git-ignored)      dist/   build output (git-ignored)
+tests/
+  frontend/           controller lifecycle tests (Node, vm)
+  backend/            gateway tests (unittest)
+  e2e/                headless-browser harness with fake models (--guarded, --oob, --realproxy, --soak)
+tools/preview_local.py   serves the built page with fake models for UI review
+docs/HANDOFF.md     handoff for the next engineer or AI agent
+Dockerfile, docker-compose.yml, Makefile
+```
 
 ## What is deliberately *not* here
 
-- **The UI mockup** (`urgence.html`, ~2.6 MB bundle). The build needs it: pass its path to `prepare_ui.mjs`
-  or set `ORANGE_MOCKUP`. It embeds third-party UI libraries — check its redistribution terms before
-  adding it or the generated page to any shared repository. `generated/` is git-ignored for that reason.
+- **The UI mockup** (`urgence.html`, ~2.6 MB bundle). The build needs it: put it in `frontend/mockup/`,
+  or pass `ORANGE_MOCKUP`. It embeds third-party UI libraries — check its redistribution terms before
+  adding it or the built page to any shared repository. `frontend/mockup/` and `frontend/dist/` are git-ignored for that reason.
 - **Deployment details** (hosts, SSH, tunnel URLs, VM scripts) and **credentials** (Basic-auth password,
   registry pull password, F5 token/project). Keep them in your private operations notes and in the
-  git-ignored files `.access-password`, `.acr-password`, `.env`, `tee-proxy.env`.
+  git-ignored files `.access-password`, `.acr-password`, `backend/.env`, `backend/guardrails/tee-proxy.env`.
 - Model services. The gateway expects local OpenAI-compatible endpoints: LLM on `127.0.0.1:8000`,
-  TTS on the Voxtral port, STT on `127.0.0.1:8098` (see `server.py`).
+  TTS on the Voxtral port, STT on `127.0.0.1:8098` (see `backend/server.py`).
 
 ## Run locally (UI review, fake models)
 
 ```bash
-export ORANGE_MOCKUP=/path/to/urgence.html
-node prepare_ui.mjs                       # -> generated/urgence.html
-python3 preview_local.py --password-file .preview-password   # user demo; the file is created if missing
-# open http://127.0.0.1:8093
+mkdir -p frontend/mockup && cp /path/to/urgence.html frontend/mockup/   # or: make build MOCKUP=/path/to/urgence.html
+make preview          # builds, then serves on http://127.0.0.1:8093 (user demo; .preview-password is created)
 ```
 
 ## Run the gateway (real models)
 
 ```bash
 echo 'a-strong-password' > .access-password && chmod 600 .access-password
-cp env.example .env   # optional: guardrail settings
-python3 server.py     # 127.0.0.1:8092, user demo
+cp backend/env.example backend/.env   # optional: guardrail settings
+make run                              # python3 backend/server.py -> 127.0.0.1:8092, user demo
 ```
-Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE`, `ORANGE_STATE_DIR` (saved vacation, default `state/`),
+Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE` (default `.access-password` at the repo root), `ORANGE_STATE_DIR` (saved vacation, default `state/`), `ORANGE_STATIC_FILE` (page to serve, default `frontend/dist/urgence.html`),
 `ORANGE_LLM_URL` / `ORANGE_CALLER_LLM_URL` (LLM endpoints; point the first at the tee proxy for option B),
 `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`, `ORANGE_TTS_URL` (model service bases), `ORANGE_BIND` (listen address),
 `F5_GUARDRAILS_*` (option A). Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets
@@ -56,7 +60,7 @@ from jsDelivr and talks only to this gateway.
 ## Docker
 
 ```bash
-mkdir -p mockup && cp /path/to/urgence.html mockup/        # the mockup stays out of git
+mkdir -p frontend/mockup && cp /path/to/urgence.html frontend/mockup/   # the mockup stays out of git
 echo 'a-strong-password' > .access-password && chmod 600 .access-password
 docker compose up -d gateway                                # host network; models on the host's localhost
 docker compose --profile preview up -d                      # UI review with fake models on :8093
@@ -69,11 +73,10 @@ networking, point the gateway at the model services with `ORANGE_GEMMA_URL`, `OR
 ## Tests
 
 ```bash
-node test_controller.mjs
-python3 -m unittest discover -p 'test_*.py'
+make test                                   # controller + gateway unit tests
 pip install -r requirements-dev.txt && python3 -m playwright install chromium
-python3 verify_local.py            # ORANGE_CHROMIUM=/path/to/chrome to use a specific build
-python3 verify_local.py --guarded  # fake F5 tee proxy on the LLM path
+make e2e                                    # ORANGE_CHROMIUM=/path/to/chrome to use a specific build
+python3 tests/e2e/verify_local.py --guarded # fake F5 tee proxy on the LLM path
 ```
 
 ## Safety boundaries (by design)

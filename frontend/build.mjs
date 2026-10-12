@@ -7,11 +7,11 @@ import crypto from 'node:crypto';
 import vm from 'node:vm';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {samples} from './samples.mjs';
+import {samples} from './src/samples.mjs';
 const HERE=path.dirname(fileURLToPath(import.meta.url));
-// The mockup (urgence.html) is a separate asset kept outside this repository: pass its path or set ORANGE_MOCKUP.
-const sourcePath=process.argv[2]||process.env.ORANGE_MOCKUP;
-if(!sourcePath||!fs.existsSync(sourcePath))throw Error('Mockup not found: pass the path to urgence.html as the first argument or set ORANGE_MOCKUP.');
+// The mockup (urgence.html) is a separate asset: frontend/mockup/urgence.html (git-ignored), the ORANGE_MOCKUP variable or the first argument.
+const sourcePath=process.argv[2]||process.env.ORANGE_MOCKUP||path.join(HERE,'mockup','urgence.html');
+if(!fs.existsSync(sourcePath))throw Error('Mockup not found at '+sourcePath+': copy urgence.html to frontend/mockup/ or set ORANGE_MOCKUP.');
 const source=fs.readFileSync(sourcePath,'utf8');
 const pattern=/(<script type="__bundler\/template">)([\s\S]*?)(<\/script>)/;
 const original=JSON.parse(source.match(pattern)[2]);
@@ -22,7 +22,7 @@ const swap=(text,from,to)=>{const next=text.replace(from,typeof to==='function'?
 let template=swap(original,'<html>', '<html lang="fr" nve-theme="dark">');
 const scriptPattern=/(<script type="text\/x-dc"[^>]*>)([\s\S]*?)(<\/script>)/;
 const scenarios=samples;
-const logic=swap(fs.readFileSync(path.join(HERE,'logic.js'),'utf8'),'// SCENARIOS is injected', 'const SCENARIOS = '+JSON.stringify(scenarios)+';\n// SCENARIOS is injected');
+const logic=swap(fs.readFileSync(path.join(HERE,'src','logic.js'),'utf8'),'// SCENARIOS is injected', 'const SCENARIOS = '+JSON.stringify(scenarios)+';\n// SCENARIOS is injected');
 new vm.Script(logic); // Syntax only; DCLogic is supplied by the preserved bundle.
 template=swap(template,scriptPattern,(_,a,b,c)=>a+logic+c);
 // Floor and call views -> the console. The gradient bar and the shell's closing tags stay.
@@ -335,7 +335,7 @@ for(const needed of ['{{ liveControls }}','{{ consoleView }}','{{ audioPlayer }}
   if(!template.includes(needed))throw Error('Binding not mounted: '+needed);
 }
 if(/\{\{ (isFloor|isCall|alerts|aiRows|historyRows|sideGroups) \}\}/.test(template))throw Error('Mockup floor or call view still mounted');
-const out=path.join(HERE,'generated');
+const out=path.join(HERE,'dist');
 fs.mkdirSync(out,{recursive:true});
 fs.writeFileSync(path.join(out,'urgence.html'),output);
 fs.writeFileSync(path.join(out,'controller.js'),logic);

@@ -3,7 +3,7 @@ verify_local.py, so the layout and flow can be inspected in a real browser
 (directly or through a tunnel) without the VM, SSH or a GPU. Dialogue is
 scripted and voices are placeholder tones; nothing here touches the VM.
 
-  python3 preview_local.py --password-file PATH [--port 8093] [--guarded]
+  python3 tools/preview_local.py --password-file PATH [--port 8093] [--guarded]
 
 Basic auth user: demo. A missing password file is created with a random
 password (mode 600); the password is never printed by this script.
@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "tests" / "e2e"))
+sys.path.insert(0, str(REPO / "backend"))
 import verify_local as v  # noqa: E402  reads --guarded/--oob/--realproxy from sys.argv at import
 
 
@@ -41,7 +43,7 @@ def main():
     httpd = socketserver.ThreadingTCPServer((args.bind, args.port), v.server.Handler)
     httpd.expected_auth = "Basic " + base64.b64encode(("demo:" + password).encode()).decode()
     with patch.object(v.server, "request_model", v.fake_request_model):
-        print(f"Preview of {v.server.ROOT / 'generated' / 'urgence.html'} on http://{args.bind}:{args.port} (user demo); "
+        print(f"Preview of {v.server.STATIC_FILE} on http://{args.bind}:{args.port} (user demo); "
               f"fake models{' + fake tee proxy verdicts' if args.guarded else ''}; Ctrl-C stops.", flush=True)
         httpd.serve_forever()
 
