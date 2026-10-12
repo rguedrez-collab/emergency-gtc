@@ -53,8 +53,11 @@ browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (ba
   dossier » files them under « Dossiers clos ».
 - Every analysed call lands in « À traiter » by design (absence of signal ≠ absence of danger). Changing that
   to signal-only is an open product decision, not a bug.
-- Persistence: `snapshot()`/`persist()`/`restore()`; one owner tab (id in `sessionStorage`), 15 s lease on the
-  gateway, explicit takeover from « Reprendre ». Live microphone calls do not survive a reload.
+- Persistence: `snapshot()`/`persist()`/`restore()` on the browser side; the gateway stores the snapshot and the
+  relational `vacations` / `calls` / `turns` tables in SQLite (`state/orange.db`, `ORANGE_DB_PATH`, schema created on
+  first use, WAL). One owner tab (id in `sessionStorage`), 15 s lease, explicit takeover from « Reprendre ».
+  Live microphone calls do not survive a reload. Clearing the poste deletes the snapshot only; history stays
+  (`tools/db_report.py`).
 - Themes are classes on `<html>` (`sober`, `dark`, `glass`, plus `flat` for the first two) and a swap of the
   mockup's ThemeProvider class; speaker colours are CSS variables resolved when the waveform is drawn.
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the

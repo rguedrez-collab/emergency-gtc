@@ -13,7 +13,7 @@ services:
       - path: backend/.env     # optional guardrail settings (see backend/env.example)
         required: false
     volumes:
-      - ./state:/app/state
+      - ./state:/app/state   # SQLite database (vacation, calls, transcripts)
     secrets:
       - access-password
     restart: unless-stopped

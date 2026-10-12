@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 import hmac
 import http.server
 import json
+import sqlite3
+from contextlib import closing
 import os
 import re
 from pathlib import Path
@@ -235,47 +237,123 @@ class Gate:
 GATES = {"gemma": Gate(2), "tts": Gate(2), "stt": Gate(2)}
 ROUTE_GATES = {"/api/analyze": "gemma", "/api/caller": "gemma", "/api/tts": "tts", "/api/transcribe": "stt"}
 
-# The running vacation (session counters + calls, synthetic data only) is kept on the gateway so a page reload
-# restores it. One browser tab owns it; another tab may take over once the owner has been silent for the lease.
+# The running vacation (session counters, calls, transcripts — synthetic data only) is kept on the gateway in a
+# SQLite database so a page reload restores it and every call and its transcript stays queryable afterwards:
+#   snapshot   the current vacation as the browser saved it (one row; what GET /api/session returns)
+#   vacations  one row per vacation (base = the browser's time base, id = vacation number in that browser)
+#   calls      one row per call with its summary, facts, signals, guardrail verdict, audit trail
+#   turns      the transcript, one row per turn
+# One browser tab owns the vacation; another tab may take over once the owner has been silent for the lease.
 STATE_DIR = Path(os.environ.get("ORANGE_STATE_DIR", str(REPO / "state")))
-STATE_FILE = STATE_DIR / "vacation.json"
+DB_PATH = Path(os.environ.get("ORANGE_DB_PATH", str(STATE_DIR / "orange.db")))
 STATE_MAX = 6_000_000  # bytes; a complete 100-call vacation stays well under 1 MB
 STATE_LEASE_S = 15.0
 state_lock = threading.Lock()
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), owner TEXT NOT NULL, saved_at REAL NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS vacations (base INTEGER NOT NULL, id INTEGER NOT NULL, owner TEXT, status TEXT, launched INTEGER, finished INTEGER,
+  failed INTEGER, total INTEGER, started_at REAL, updated_at REAL NOT NULL, PRIMARY KEY (base, id));
+CREATE TABLE IF NOT EXISTS calls (base INTEGER NOT NULL, id TEXT NOT NULL, vacation_id INTEGER, n INTEGER, sample_id TEXT, category TEXT,
+  place TEXT, auto INTEGER, live_caller INTEGER, taken_over INTEGER, started_at REAL, ended INTEGER, ended_at REAL, end_label TEXT,
+  reviewed INTEGER, reviewed_at REAL, phase TEXT, score INTEGER, summary TEXT, facts TEXT, signals TEXT, guardrail TEXT, audit TEXT,
+  turns INTEGER, revision INTEGER, updated_at REAL NOT NULL, PRIMARY KEY (base, id));
+CREATE TABLE IF NOT EXISTS turns (base INTEGER NOT NULL, call_id TEXT NOT NULL, idx INTEGER NOT NULL, who TEXT, text TEXT, ts TEXT,
+  source TEXT, said TEXT, PRIMARY KEY (base, call_id, idx));
+CREATE INDEX IF NOT EXISTS calls_started ON calls (started_at);
+"""
+_written = {}  # (base, call id) -> fingerprint of the last version written, so unchanged calls are not rewritten every 2 s
+
+
+def db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(SCHEMA)
+    return conn
 
 
 def load_state():
     try:
-        return json.loads(STATE_FILE.read_text())
-    except (FileNotFoundError, ValueError):
+        with closing(db()) as conn:
+            row = conn.execute("SELECT body FROM snapshot WHERE id = 1").fetchone()
+        return json.loads(row[0]) if row else None
+    except (sqlite3.Error, ValueError):
         return None
 
 
+def _epoch(base_ms, shift_ms):
+    """Browser stamps are milliseconds since the vacation's time base; store them as epoch seconds."""
+    return (base_ms + shift_ms) / 1000 if isinstance(base_ms, (int, float)) and isinstance(shift_ms, (int, float)) else None
+
+
+def _json(value):
+    return json.dumps(value, ensure_ascii=False) if value not in (None, [], {}) else None
+
+
 def save_state(snapshot):
-    """Store the snapshot atomically. Returns the save time, or None when another live owner holds the vacation."""
+    """Store the snapshot and update the call/transcript tables in one transaction.
+    Returns the save time, or None when another live owner holds the vacation."""
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("owner"), str) or not snapshot["owner"] \
             or not isinstance(snapshot.get("session"), dict) or not isinstance(snapshot.get("calls"), list):
         raise ValueError("snapshot must carry owner, session and calls")
-    with state_lock:
-        current = load_state()
-        if current and current.get("owner") != snapshot["owner"] and not snapshot.get("takeover") \
-                and time.time() - float(current.get("savedAt") or 0) < STATE_LEASE_S:
+    with state_lock, closing(db()) as conn:
+        current = conn.execute("SELECT owner, saved_at FROM snapshot WHERE id = 1").fetchone()
+        if current and current[0] != snapshot["owner"] and not snapshot.get("takeover") \
+                and time.time() - float(current[1] or 0) < STATE_LEASE_S:
             return None
         snapshot = {k: v for k, v in snapshot.items() if k != "takeover"}
-        snapshot["savedAt"] = time.time()
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(snapshot, ensure_ascii=False))
-        tmp.replace(STATE_FILE)
-        return snapshot["savedAt"]
+        now = snapshot["savedAt"] = time.time()
+        base = int(snapshot.get("startedAt") or 0)
+        s = snapshot["session"]
+        with conn:
+            conn.execute("INSERT INTO snapshot (id, owner, saved_at, body) VALUES (1, ?, ?, ?) "
+                         "ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, saved_at = excluded.saved_at, body = excluded.body",
+                         (snapshot["owner"], now, json.dumps(snapshot, ensure_ascii=False)))
+            conn.execute("INSERT INTO vacations (base, id, owner, status, launched, finished, failed, total, started_at, updated_at) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(base, id) DO UPDATE SET owner = excluded.owner, status = excluded.status, "
+                         "launched = excluded.launched, finished = excluded.finished, failed = excluded.failed, total = excluded.total, updated_at = excluded.updated_at",
+                         (base, int(s.get("id") or 0), snapshot["owner"], s.get("status"), s.get("launched"), s.get("finished"), s.get("failed"),
+                          s.get("total"), base / 1000 if base else None, now))
+            for c in snapshot["calls"]:
+                if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+                    continue
+                fingerprint = json.dumps(c, sort_keys=True, ensure_ascii=False)
+                if _written.get((base, c["id"])) == fingerprint:
+                    continue
+                _written[(base, c["id"])] = fingerprint
+                sc = c.get("sc") if isinstance(c.get("sc"), dict) else {}
+                turns = [x for x in (c.get("tr") or []) if isinstance(x, dict)]
+                started = c.get("started")
+                conn.execute(
+                    "INSERT INTO calls (base, id, vacation_id, n, sample_id, category, place, auto, live_caller, taken_over, started_at, ended, "
+                    "ended_at, end_label, reviewed, reviewed_at, phase, score, summary, facts, signals, guardrail, audit, turns, revision, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(base, id) DO UPDATE SET vacation_id = excluded.vacation_id, category = excluded.category, place = excluded.place, "
+                    "taken_over = excluded.taken_over, ended = excluded.ended, ended_at = excluded.ended_at, end_label = excluded.end_label, "
+                    "reviewed = excluded.reviewed, reviewed_at = excluded.reviewed_at, phase = excluded.phase, score = excluded.score, "
+                    "summary = excluded.summary, facts = excluded.facts, signals = excluded.signals, guardrail = excluded.guardrail, "
+                    "audit = excluded.audit, turns = excluded.turns, revision = excluded.revision, updated_at = excluded.updated_at",
+                    (base, c["id"], c.get("sessionId"), c.get("n"), c.get("sampleId"), sc.get("cat"), sc.get("place"), int(bool(c.get("auto"))),
+                     int(bool(c.get("liveCaller"))), int(bool(c.get("takenOver"))), started / 1000 if isinstance(started, (int, float)) else None,
+                     int(bool(c.get("ended"))), _epoch(base, c.get("endedAt")), c.get("endLabel"), int(bool(c.get("reviewed"))),
+                     _epoch(base, c.get("reviewedAt")), c.get("phase"), c.get("score"), c.get("summary"), _json(c.get("facts")),
+                     _json((c.get("lastAnalysis") or {}).get("signals") if isinstance(c.get("lastAnalysis"), dict) else None),
+                     _json(c.get("guardrail")), _json(c.get("audit")), len(turns), c.get("revision"), now))
+                conn.execute("DELETE FROM turns WHERE base = ? AND call_id = ? AND idx >= ?", (base, c["id"], len(turns)))
+                conn.executemany(
+                    "INSERT INTO turns (base, call_id, idx, who, text, ts, source, said) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(base, call_id, idx) DO UPDATE SET who = excluded.who, text = excluded.text, ts = excluded.ts, source = excluded.source, said = excluded.said",
+                    [(base, c["id"], i, x.get("who"), x.get("text"), x.get("ts"), x.get("source"), x.get("said")) for i, x in enumerate(turns)])
+        return now
 
 
 def clear_state():
-    with state_lock:
-        try:
-            STATE_FILE.unlink()
-        except FileNotFoundError:
-            pass
+    """Forget the current vacation (the start screen comes back); archived calls and transcripts stay in the database."""
+    with state_lock, closing(db()) as conn, conn:
+        conn.execute("DELETE FROM snapshot")
+        _written.clear()
+
+
 QUESTIONS = {
     "location": "Quelle est l'adresse exacte et la ville de l'incident ?",
     "callback": "À quel numéro pouvons-nous vous rappeler si la communication coupe ?",

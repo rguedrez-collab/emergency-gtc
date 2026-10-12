@@ -17,6 +17,7 @@ FROM python:3.12-slim AS gateway
 WORKDIR /app
 RUN useradd --create-home --uid 10001 orange && mkdir -p /app/state && chown -R orange:orange /app
 COPY --chown=orange:orange backend/server.py ./backend/
+COPY --chown=orange:orange tools/db_report.py ./tools/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
 USER orange
 # Inside the container the gateway must listen on all interfaces; publish or proxy it as you see fit.
@@ -32,7 +33,7 @@ WORKDIR /app
 RUN useradd --create-home --uid 10001 orange && mkdir -p /app/state && chown -R orange:orange /app
 COPY --chown=orange:orange backend/server.py ./backend/
 COPY --chown=orange:orange tests/e2e/verify_local.py ./tests/e2e/
-COPY --chown=orange:orange tools/preview_local.py ./tools/
+COPY --chown=orange:orange tools/preview_local.py tools/db_report.py ./tools/
 COPY --chown=orange:orange frontend/src/logic.js ./frontend/src/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
 USER orange

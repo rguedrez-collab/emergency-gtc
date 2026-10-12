@@ -460,10 +460,16 @@ class GatewayTests(unittest.TestCase):
 
     def test_vacation_persistence_roundtrip_and_lease(self):
         import tempfile
-        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "STATE_DIR", server.Path(tmp)), \
-                patch.object(server, "STATE_FILE", server.Path(tmp) / "vacation.json"):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"), \
+                patch.dict(server._written, clear=True):
             self.assertEqual(self.request("/api/session")[0], 404)
-            snap = {"owner": "tab-a", "startedAt": 1, "session": {"status": "running", "launched": 2}, "calls": [{"id": "TEST-1"}]}
+            snap = {"owner": "tab-a", "startedAt": 1_700_000_000_000, "session": {"id": 1, "status": "running", "launched": 2},
+                    "calls": [{"id": "TEST-1", "n": 1, "sc": {"cat": "Malaise", "place": "Lieu non renseigné"}, "auto": True, "started": 1_700_000_005_000,
+                               "ended": True, "endedAt": 150_000, "endLabel": "Appel terminé · à revoir", "summary": "Chute signalée.",
+                               "facts": [{"k": "Incident", "v": "il est tombé"}], "revision": 3,
+                               "tr": [{"who": "Appelant", "text": "Il est tombé.", "ts": "00:01", "source": "scenario_audio_stt"},
+                                      {"who": "Agent IA", "text": "Où êtes-vous ?", "ts": "00:02", "source": "contextual_gemma"}]},
+                              {"id": "TEST-2"}]}
             status, body = self.request("/api/session", snap)
             self.assertEqual(status, 200)
             self.assertTrue(json.loads(body)["saved"])
@@ -479,8 +485,19 @@ class GatewayTests(unittest.TestCase):
             self.assertNotIn("takeover", after)
             self.assertEqual(self.request("/api/session", {"owner": "x"})[0], 400)
             self.assertEqual(self.request("/api/session", snap, auth=False)[0], 401)
+            # Calls and transcripts land in the relational tables; a changed call is rewritten, an unchanged one is not.
+            import sqlite3
+            with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:
+                self.assertEqual(conn.execute("SELECT count(*) FROM calls").fetchone()[0], 2)
+                self.assertEqual(conn.execute("SELECT count(*) FROM turns WHERE call_id = 'TEST-1'").fetchone()[0], 2)
+                row = conn.execute("SELECT category, ended, end_label, turns, summary, ended_at, started_at FROM calls WHERE id = 'TEST-1'").fetchone()
+                self.assertEqual(row[:5], ("Malaise", 1, "Appel terminé · à revoir", 2, "Chute signalée."))
+                self.assertAlmostEqual(row[5], 1_700_000_150, places=0); self.assertAlmostEqual(row[6], 1_700_000_005, places=0)
+                self.assertEqual(conn.execute("SELECT status, launched FROM vacations").fetchone(), ("running", 2))
             self.assertEqual(self.request("/api/session/clear", {})[0], 200)
             self.assertEqual(self.request("/api/session")[0], 404)
+            with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:  # history survives a reset of the poste
+                self.assertEqual(conn.execute("SELECT count(*) FROM calls").fetchone()[0], 2)
 
     def test_original_html_is_served(self):
         if not server.STATIC_FILE.exists():

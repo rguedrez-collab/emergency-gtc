@@ -22,6 +22,7 @@ tests/
   backend/            gateway tests (unittest)
   e2e/                headless-browser harness with fake models (--guarded, --oob, --realproxy, --soak)
 tools/preview_local.py   serves the built page with fake models for UI review
+tools/db_report.py       lists vacations, calls and transcripts from the SQLite database
 docs/HANDOFF.md     handoff for the next engineer or AI agent
 Dockerfile, docker-compose.yml, Makefile
 ```
@@ -51,7 +52,7 @@ echo 'a-strong-password' > .access-password && chmod 600 .access-password
 cp backend/env.example backend/.env   # optional: guardrail settings
 make run                              # python3 backend/server.py -> 127.0.0.1:8092, user demo
 ```
-Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE` (default `.access-password` at the repo root), `ORANGE_STATE_DIR` (saved vacation, default `state/`), `ORANGE_STATIC_FILE` (page to serve, default `frontend/dist/urgence.html`),
+Environment: `ORANGE_PORT`, `ORANGE_PASSWORD_FILE` (default `.access-password` at the repo root), `ORANGE_STATE_DIR` (default `state/`), `ORANGE_DB_PATH` (SQLite file, default `state/orange.db`), `ORANGE_STATIC_FILE` (page to serve, default `frontend/dist/urgence.html`),
 `ORANGE_LLM_URL` / `ORANGE_CALLER_LLM_URL` (LLM endpoints; point the first at the tee proxy for option B),
 `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`, `ORANGE_TTS_URL` (model service bases), `ORANGE_BIND` (listen address),
 `F5_GUARDRAILS_*` (option A). Serve it behind HTTPS (e.g. a tunnel); the page loads NVIDIA Elements assets
@@ -69,6 +70,15 @@ docker compose exec preview cat /app/state/.preview-password
 The `Dockerfile` has two targets (`gateway`, `preview`) built from the same UI stage. Without host
 networking, point the gateway at the model services with `ORANGE_GEMMA_URL`, `ORANGE_STT_URL`,
 `ORANGE_TTS_URL` (and `ORANGE_LLM_URL` for a guardrail proxy); `ORANGE_BIND` controls the listen address.
+
+## Storage
+
+The gateway keeps everything in a SQLite database, `state/orange.db` (`ORANGE_DB_PATH`; in Docker the
+`state` volume). It is created on first use: `snapshot` (the running vacation, restored on reload),
+`vacations`, `calls` (summary, facts, signals, guardrail verdict, audit trail) and `turns` (every transcript
+line). The browser saves every 2 s while something changed. « Réinitialiser le poste » forgets the running
+vacation only; calls and transcripts stay. `python3 tools/db_report.py` lists them (`--transcript TEST-3`,
+`--csv calls.csv`). All of it is synthetic data.
 
 ## Tests
 
