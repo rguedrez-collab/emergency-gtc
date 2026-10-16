@@ -124,7 +124,9 @@ class ExtractionTests(unittest.TestCase):
             result = server.analyze({"messages": messages})
         self.assertEqual(result["reply"], "Y a-t-il quelqu'un dans la pièce enfumée ? Restez à distance de la fumée.")
         self.assertEqual(result["reply_retries"], 1)
-        self.assertTrue(request.call_args.args[1]["messages"][-1]["content"].startswith(server.REPEAT_RETRY))
+        reprise = json.loads(request.call_args.args[1]["messages"][-1]["content"])["reprise"]  # the nudge rides inside the normal JSON message
+        self.assertTrue(reprise["consigne"].startswith(server.REPEAT_RETRY)); self.assertTrue(reprise["réplique_refusée"], "the refused line travels with the nudge")
+        self.assertEqual(len(request.call_args.args[1]["messages"]), 2, "no bare instruction appended after an assistant turn")
         self.assertIn("recueil", request.call_args.args[1]["messages"][1]["content"], "the model is told what is known and what to ask next")
         # The rewrite is held to the same guard: a blocked rewrite gives way to the checklist's own question, never the repeated line.
         with patch.object(server, "request_model", side_effect=[self.completion(analysis), self.completion({"reply": "Les secours arrivent."})]):
@@ -239,7 +241,7 @@ class ExtractionTests(unittest.TestCase):
         with patch.object(server, "request_model", side_effect=[self.completion(misdirected), self.completion({"reply": "Restez à l'écart de la fumée, n'ouvrez pas cette porte."})]) as request:
             result = server.analyze({"messages": smoke})
         self.assertEqual((result["reply"], result["reply_retries"], result["reply_source"]), ("Restez à l'écart de la fumée, n'ouvrez pas cette porte.", 1, "contextual_gemma"))
-        self.assertEqual(request.call_args.args[1]["messages"][-1]["content"], server.CALLS_US_RETRY)
+        self.assertEqual(json.loads(request.call_args.args[1]["messages"][-1]["content"])["reprise"]["consigne"], server.CALLS_US_RETRY)
         # The AI never reads the caller's words back as its whole turn.
         self.assertTrue(server.echoes("La fumée vient de l'appartement du dessus, personne ne répond, et j'essaie d'ouvrir la porte.",
                                       [{"role": "caller", "text": "Oui. La fumée vient de l'appartement du dessus, personne ne répond, et j'essaie d'ouvrir la porte."}]))
@@ -276,7 +278,7 @@ class ExtractionTests(unittest.TestCase):
         with patch.object(server, "request_model", side_effect=[self.completion(pile), self.completion({"reply": "Il respire ?"})]) as request:
             result = server.analyze({"messages": fall})
         self.assertEqual((result["reply"], result["reply_retries"], result["reply_source"]), ("Il respire ?", 1, "contextual_gemma"))
-        self.assertEqual(request.call_args.args[1]["messages"][-1]["content"], server.OVERLOAD_RETRY)
+        self.assertEqual(json.loads(request.call_args.args[1]["messages"][-1]["content"])["reprise"]["consigne"], server.OVERLOAD_RETRY)
         analysis = {"summary": "Chute à domicile.", "facts": [{"field": "Lieu", "quote": "12 rue des Lilas"}], "signals": [], "question": "access", "reply": "C'est à quel étage ?"}
         actions = [{"tool": "dispatch_ambulance", "status": "done"}, {"tool": "lookup_address", "status": "done", "label": "12 Rue des Lilas 91160 Longjumeau"},
                    {"tool": "dispatch_police", "status": "declined"}, "junk"]
@@ -299,7 +301,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(result["reply_retries"], 1)
         rewrite_prompt = request.call_args.args[1]["messages"]
         self.assertEqual(rewrite_prompt[0]["content"], server.SYSTEM)
-        self.assertEqual(rewrite_prompt[-1]["content"], server.REPLY_RETRY)
+        self.assertEqual(json.loads(rewrite_prompt[-1]["content"])["reprise"], {"réplique_refusée": "Je préviens les secours.", "consigne": server.REPLY_RETRY})
 
     def test_twice_blocked_reply_is_explicit_failure(self):
         analysis = {"summary": "Fumée signalée.", "facts": [], "signals": [], "question": "location", "reply": "Les secours arrivent."}

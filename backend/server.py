@@ -657,6 +657,9 @@ haut-parleur, ne pas la déplacer, faire ouvrir l'entrée) et au plus une questi
 d'observation. Si « prochaine_question » est breathing ou response_check, donne cette
 consigne d'observation, en tes mots et en une phrase, au lieu d'une question. Ne pose
 jamais de question sur un élément absent de « manquant ».
+Si le message contient « reprise », ta réplique précédente (« réplique_refusée ») ne
+convient pas pour le motif donné dans « consigne » : propose-en une autre qui suit cette
+consigne, et réponds alors uniquement en JSON {"reply":"..."}.
 Quand « phase » vaut accompagnement (l'essentiel est connu, les secours déclenchés), tu
 accompagnes en attendant l'équipe : à tour de rôle, une vérification de l'état (une
 observation précise), la préparation de l'arrivée (porte ouverte, lumière, quelqu'un en
@@ -665,11 +668,10 @@ de l'appelant, ce qui a changé. Chaque tour apporte quelque chose de nouveau ; 
 deux fois la même consigne, jamais « restez près d'elle » seul.
 """
 # The simulated caller's character prompt (CALLER_SYSTEM) is caller/simulation.py's, shared with the caller service.
-REPLY_RETRY = """La réplique proposée a été bloquée par le filtre de sécurité : elle affirmait
-une action externe (transmission, contact, transfert, envoi, arrivée ou prise en
-charge par des secours ou un opérateur), un geste médical, ou citait une
-démonstration. Propose une autre réplique orale naturelle, 1 à 2 phrases courtes,
-sans aucune de ces affirmations. Réponds uniquement en JSON {"reply":"..."}."""
+REPLY_RETRY = """La réplique précédente ne convient pas : elle affirmait une action externe (transmission,
+contact, transfert, envoi, arrivée ou prise en charge par des secours ou un opérateur), un geste
+médical, ou citait une démonstration. Propose une autre réplique orale naturelle, 1 à 2 phrases
+courtes, sans aucune de ces affirmations. Réponds uniquement en JSON {"reply":"..."}."""
 CALLS_US_RETRY = """Ta réplique dit à l'appelant d'appeler ou de prévenir les secours : il est déjà en ligne avec le service
 d'urgence, c'est toi. Donne plutôt UNE consigne de sécurité adaptée au danger décrit (s'éloigner de la fumée, ne pas
 ouvrir ou fermer la porte, sortir si c'est possible, ne pas déplacer la personne) ou pose UNE question courte.
@@ -726,7 +728,7 @@ CRITICAL = re.compile(r"ne respire (?:pas|plus)|plus de respiration|respire (?:p
                       r"beaucoup de sang|saigne (?:beaucoup|énormément|abondamment)|se vide de son sang|ne se réveille pas|arrêt cardiaque|s'étouffe|étouffe|"
                       r"coincée?|bloquée? (?:sous|dans)|en feu|les flammes|fumée partout", re.I)
 # What makes the danger and the number-of-people questions relevant; the callback number is the line's own.
-DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|brûl\w*|gaz|odeur|explos\w*|électri\w*|câble|étincelle|canal|rivière|noy\w*|accident|voitures?|moto|camion|carrefour|circulation|"
+DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|brûl\w*|gaz|explos\w*|électri\w*|câble|étincelle|canal|rivière|noy\w*|accident|voitures?|moto|camion|carrefour|circulation|"
                          r"autoroute|arme|couteau|tirs?|tiré|agress\w*|menac\w*|frapp\w*|violen\w*|bagarre|effondr\w*|inond\w*|coincée?|bloquée?)\b", re.I)
 VICTIM_CUES = re.compile(r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûlée?s?|noy\w*|évanou\w*|"
                          r"perdu connaissance|agress\w*|frappée?s?|accident|percut\w*|renvers\w*|heurt\w*|électrocut\w*|intox\w*|overdose|allerg\w*|piq\w*|mord\w*|coincée?|victimes?|"
@@ -1269,6 +1271,13 @@ def analyze(payload):
     prompt = [{"role": "system", "content": SYSTEM},
               {"role": "user", "content": json.dumps({"test_dialogue": messages, "recueil": recueil}, ensure_ascii=False)}]
     raw, meta = chat_json(prompt, 0.2, 1200, headers=correlation_headers(payload))
+
+    def retry_prompt(nudge):
+        # The refused line and the instruction travel inside the same JSON message as the dialogue: a bare instruction
+        # appended after the model's turn reads as a prompt injection to a guardrail that scans the last user message.
+        return [{"role": "system", "content": SYSTEM},
+                {"role": "user", "content": json.dumps({"test_dialogue": messages, "recueil": recueil,
+                                                        "reprise": {"réplique_refusée": raw.get("reply"), "consigne": nudge}}, ensure_ascii=False)}]
     try:
         result = validate_analysis(raw, messages)
     except ValueError as exc:
@@ -1286,8 +1295,7 @@ def analyze(payload):
         # A blocked line gets one rewrite, checked by the same guard. A second
         # block is an explicit failure, never a canned substitute.
         retries = 1
-        rewrite, again = chat_json(prompt + [{"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)},
-                                             {"role": "user", "content": REPLY_RETRY}], 0.5, 200, headers=correlation_headers(payload))
+        rewrite, again = chat_json(retry_prompt(REPLY_RETRY), 0.5, 200, headers=correlation_headers(payload))
         if again["guardrail"].get("outcome"):  # keep the first verdict when the rewrite carries none
             meta["guardrail"] = again["guardrail"]
         try:
@@ -1303,11 +1311,10 @@ def analyze(payload):
         if CALL_US.search(reply):
             nudge = CALLS_US_RETRY
         elif stalled(reply, previous, result["facts"], messages):
-            nudge = REPEAT_RETRY + "\nRépliques déjà dites : " + json.dumps(previous, ensure_ascii=False) + f"\nProchaine question à poser : {state['next']}."
+            nudge = REPEAT_RETRY + f" Prochaine question à poser : {state['next']}."
         else:
             nudge = OVERLOAD_RETRY
-        rewrite, _ = chat_json(prompt + [{"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)},
-                                         {"role": "user", "content": nudge}], 0.7, 200, headers=correlation_headers(payload))
+        rewrite, _ = chat_json(retry_prompt(nudge), 0.7, 200, headers=correlation_headers(payload))
         try:
             candidate = spoken_reply(rewrite.get("reply"), bool(dispatched))
         except ValueError:

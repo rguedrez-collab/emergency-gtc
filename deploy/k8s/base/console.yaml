@@ -39,6 +39,7 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        fsGroup: 10001  # the state volume is mounted root-owned; the gateway (uid 10001) must write its database there
       containers:
         - name: gateway
           image: REGISTRY/emergency-gtc-gateway:latest
