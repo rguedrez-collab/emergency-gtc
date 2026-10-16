@@ -31,9 +31,17 @@ const initialStyle = () => {
 // Model names in the footnote follow the gateway's configuration (see labels()).
 const footnoteText=L=>'Signal IA ≠ gravité clinique. Éléments déclarés vérifiés par correspondance textuelle ; interprétation et synthèse à valider par l’opérateur. Aucun diagnostic ni consigne médicale. STT : '+L.sttLabel+' · Analyse : '+L.llm+' · Voix : '+L.tts+'.';
 
+// Transcript avatars: line icons drawn inline (no icon font, no emoji), coloured by the avatar's background.
+const svg = (...shapes) => h('svg', {viewBox:'0 0 24 24', width:12, height:12, fill:'none', stroke:'currentColor', strokeWidth:2.2, strokeLinecap:'round', strokeLinejoin:'round', 'aria-hidden':'true'}, ...shapes);
+const ICONS = {
+  robot: svg(h('rect', {key:'head', x:4, y:9, width:16, height:11, rx:2.5}), h('path', {key:'antenna', d:'M12 9V5M9 5h6'}),
+    h('circle', {key:'l', cx:9, cy:14.5, r:1.1, fill:'currentColor', stroke:'none'}), h('circle', {key:'r', cx:15, cy:14.5, r:1.1, fill:'currentColor', stroke:'none'}), h('path', {key:'mouth', d:'M9.5 17.5h5'})),
+  human: svg(h('circle', {key:'head', cx:12, cy:8, r:3.6}), h('path', {key:'body', d:'M4.5 20.5a7.5 7.5 0 0 1 15 0'})),
+};
+
 class Component extends DCLogic {
   state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
-    callers:[], latency:null, sitePolicy:'auto'};
+    callers:[], latency:null, sitePolicy:'auto', analytics:false};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
   componentDidMount() {
@@ -156,20 +164,21 @@ class Component extends DCLogic {
     return {llm:m.llm_label||'Gemma 4',tts:m.tts_label||'Voxtral',stt,sttLabel:stt.map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' / ')};
   }
   // One compact status chip: a dot per service (transcription, analysis, voice, guardrail); the health text is the tooltip.
+  // Service status as exceptions only: nothing while every service is up; one dot per service as soon as one is down
+  // (or the gateway is unreachable), the guardrail when one is configured, the caller sites when one is unreachable.
+  // The health text is the tooltip.
   servicesChip() {
     const L=this.labels();
-    const svc=this.state.services,g=this.state.guardrail||{},ok=/connectés/.test(this.state.health);
-    const ready=key=>svc?svc[key]?.ready:ok?true:undefined; // before the first health answer: grey
+    const svc=this.state.services,g=this.state.guardrail||{};
+    const ready=key=>svc?svc[key]?.ready:undefined; // before the first health answer: unknown, nothing to report
     const dot=(key,label,state,title)=>h('span',{key,className:'oc-svc oc-svc-'+(state===false?'warn':state?'ok':'off'),title},label);
     const core=[['stt','STT','Transcription · '+L.sttLabel],['gemma','Analyse','Analyse et dialogue · '+L.llm],['voxtral','Voix','Synthèse vocale · '+L.tts]];
     const states=core.map(([key])=>ready(key));
-    // Exception-based status: one quiet dot while everything is up; one dot per service as soon as one is unknown or down.
-    const dots=states.every(x=>x===true)?[dot('all','Services',true,'STT, analyse et voix opérationnels'+(g.configured?'':' · Garde-fou IA non configuré'))]
-      :core.map(([key,label,title],i)=>dot(key,label,states[i],title));
+    const dots=states.some(x=>x===false)?core.map(([key,label,title],i)=>dot(key,label,states[i],title)):[];
     if(g.configured)dots.push(dot('guard','Garde-fou · '+(g.name||'IA'),svc?.guardrail?.ready??true,`${g.name||'Garde-fou IA'} actif${g.mode?' · '+g.mode:''}`));
     // Caller sites are not a console outage (the built-in caller takes over), so they only appear when one is down.
     if(svc?.callers?.ready===false)dots.push(dot('sites','Sites appelants',false,'Un site appelant est injoignable · appelant intégré de la passerelle en repli'));
-    return h('span',{key:'services',className:'oc-chip oc-services',role:'status',title:this.state.health},...dots);
+    return dots.length?h('span',{key:'services',className:'oc-chip oc-services',role:'status',title:this.state.health},...dots):null;
   }
   touch() {if(!this.disposed)this.forceUpdate();}
   sel() {return this.state.calls.find(c=>c.id===this.state.selId);}
@@ -729,27 +738,27 @@ class Component extends DCLogic {
   controls() {
     const s=this.state.session,active=['running','paused'].includes(s.status);
     const chip=(key,text,tone,title)=>h('span',{key,className:'oc-chip oc-chip-'+tone,title:title||text,role:'status'},text);
-    // The environment tag states the boundary once; the detail is its tooltip (also on the decision button and its system line).
-    const demo=h('span',{key:'demo',className:'oc-chip oc-chip-demo',role:'note',
-      title:'Environnement de démonstration · données fictives uniquement · aucun appel réel · aucune transmission aux secours · la vacation en cours est conservée sur la passerelle'},'Démonstration');
+    const services=this.servicesChip(); // null unless something needs attention (the demonstration boundary is stated on the decision action)
     if(s.status==='idle'&&!this.state.calls.length)return h('div',{className:'oc-bar'},h('div',{className:'oc-bartop'},
-      h('div',{className:'oc-bargroup'},demo),h('div',{className:'oc-bargroup oc-barstatus'},this.servicesChip(),this.themeButton())));
+      h('div',{className:'oc-bargroup'}),h('div',{className:'oc-bargroup oc-barstatus'},services,this.themeButton())));
     const words={running:'en cours',paused:'en pause',completed:'terminée',stopped:'arrêtée'};
-    // Counters as figures with quiet labels; the text content stays "n/100 arrivés · n terminés · n échecs · état" for the scripts.
+    // Counters as figures with quiet labels, behind « Analytique »; the text content stays "n/100 arrivés · n terminés · n échecs · état" for the scripts.
     const kpi=(key,value,label)=>h('span',{key,className:'oc-kpi'},h('b',null,String(value)),label);
     const progress=h('span',{key:'progress',id:'orange-session-progress',role:'status',className:'oc-chip oc-chip-plain oc-kpis'+(s.failed?' oc-chip-warn':'')},
       kpi('a',`${s.launched}/${s.total}`,' arrivés · '),kpi('f',s.finished,' terminés · '),kpi('e',s.failed,' échecs · '),
       h('span',{key:'state',className:'oc-kpistate oc-kpistate-'+s.status},words[s.status]||s.status));
     // Two groups: a narrow window wraps the status group under the actions instead of truncating chips.
     // One dominant action per state (open, or pause/close); unavailable actions are hidden rather than greyed, and
-    // everything secondary (theme, voice, export, test calls) sits behind « Réglages » — actions on demand.
-    const actions=[...(active?[this.button(s.status==='paused'?'Reprendre':'Pause',()=>this.toggleSession(),false,'orange-pause-session'),
+    // everything secondary sits behind two toggles — « Analytique » (counters, latencies) and « Réglages » (theme, voice,
+    // export, test calls) — actions on demand.
+    const actions=active?[this.button(s.status==='paused'?'Reprendre':'Pause',()=>this.toggleSession(),false,'orange-pause-session'),
         this.button('Clore la vacation',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})]
       :[this.button(s.status==='idle'?'Ouvrir la vacation':'Nouvelle vacation',()=>this.startSession(),false,'orange-start-session'),
-        this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call',undefined,{tone:'quiet'})]),
-      progress];
-    const status=[...(this.state.notice?[chip('notice',this.state.notice,'warn')]:[]),demo,this.servicesChip(),
+        this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call',undefined,{tone:'quiet'})];
+    const status=[...(this.state.notice?[chip('notice',this.state.notice,'warn')]:[]),services,
+      this.button(this.state.analytics?'Analytique ▴':'Analytique ▾',()=>this.setState({analytics:!this.state.analytics}),false,'orange-analytics','Compteurs de la vacation et latences',{tone:'quiet'}),
       this.button(this.state.settings?'Réglages ▴':'Réglages ▾',()=>this.setState({settings:!this.state.settings}),false,'orange-settings',undefined,{tone:'quiet'})];
+    const analytics=this.state.analytics?this.analyticsPanel(progress):null;
     const settings=this.state.settings?h('div',{key:'settings',className:'oc-settings'},
       h('span',{key:'l',className:'oc-h'},'Réglages'),
       this.themeButton(),
@@ -766,7 +775,18 @@ class Component extends DCLogic {
         this.button('STT : '+this.state.stt,()=>{const L=this.labels(),i=L.stt.indexOf(this.state.stt);this.setState({stt:L.stt[(i+1)%L.stt.length]});},!!this.recording||this.labels().stt.length<2,'orange-stt'),
         this.button('Réinitialiser le poste',()=>this.resetAll(),false,'orange-reset')]:[])):null;
     return h('div',{className:'oc-bar'},
-      h('div',{key:'top',className:'oc-bartop'},h('div',{key:'actions',className:'oc-bargroup'},...actions),h('div',{key:'status',className:'oc-bargroup oc-barstatus'},...status)),settings);
+      h('div',{key:'top',className:'oc-bartop'},h('div',{key:'actions',className:'oc-bargroup'},...actions),h('div',{key:'status',className:'oc-bargroup oc-barstatus'},...status)),settings,analytics);
+  }
+  // « Analytique » (bar toggle): the vacation counters and the latency medians (caller per site, console steps), one row.
+  analyticsPanel(progress) {
+    const lat=this.state.latency,sites=this.state.callers||[];
+    const names=[...sites.map(s=>s.name),...(lat?.sites||[]).map(s=>s.name).filter(n=>!sites.some(s=>s.name===n))];
+    const perSite=names.map(n=>{const st=(lat?.sites||[]).find(x=>x.name===n);return this.siteName(n)+' '+(st?.caller_ms?fmtMs(st.caller_ms.median):'—');});
+    const con=lat?.console,steps=con?[['STT',con.stt_ms],['analyse',con.analyze_ms],['voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
+    const figure=(key,text,title)=>h('span',{key,className:'oc-chip oc-chip-plain oc-kpis',title},text);
+    return h('div',{key:'analytics',className:'oc-settings oc-analytics'},h('span',{key:'l',className:'oc-h'},'Analytique'),progress,
+      names.length?figure('sites','Appelant · '+perSite.join(' · '),'Latence médiane de l’appelant simulé par site, derniers tours'):null,
+      steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null);
   }
   entry() {
     return h('div',{style:{minHeight:'calc(100vh - 180px)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'32px'}},
@@ -847,7 +867,12 @@ class Component extends DCLogic {
     const stop=e=>e.stopPropagation();
     const card=d=>{const key='card:'+d.id,open=key in this.state.more?this.state.more[key]:d.selected;
       const signal=!d.c.takenOver&&(d.c.phase==='error'||d.c.phase==='blocked'||!!d.c.lastAnalysis?.signals?.length);
-      const status=h('span',{key:'status',className:'oc-status'},this.voiceMark(d.c)||h('span',{className:'oc-dot oc-pulse',style:{background:d.c.takenOver?OP:'var(--color-green-400)'}}),h('span',{className:'oc-ellipsis'},(d.c.takenOver?'':'IA · ')+d.status));
+      // No processing chatter on cards (« tour n · transcription STT »…): the line under the title carries the signal to
+      // check, or « en ligne · opérateur » for a call the operator holds; the per-call latency and the primary action
+      // share the last line, with a quiet live dot while no latency is measured yet.
+      const live=this.voiceMark(d.c)||h('span',{className:'oc-dot oc-pulse',style:{background:d.c.takenOver?OP:'var(--color-green-400)'}});
+      const lead=signal?h('div',{key:'lead',className:'oc-cardline'},h('span',{className:'oc-signal oc-ellipsis'},this.voiceMark(d.c),d.headline))
+        :d.c.takenOver?h('div',{key:'lead',className:'oc-cardline'},h('span',{className:'oc-status'},live,h('span',{className:'oc-ellipsis'},d.status))):null;
       const primary=d.c.liveCaller?this.button('Reprendre mon appel',()=>this.open(d.id),false,'orange-resume-'+d.id)
         :d.c.takenOver?this.button("Rendre à l'IA",()=>this.handBackCall(d.c),false,undefined,undefined,{tone:'quiet'})
         :this.button("Prendre l'appel",()=>{this.takeOverCall(d.c);this.open(d.id);},false,undefined,undefined,{emphasis:true});
@@ -855,11 +880,10 @@ class Component extends DCLogic {
         h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-title'},d.category),h('span',{className:'oc-mono oc-right',title:'Durée de l’appel'},d.dur),
           h('button',{type:'button',className:'oc-cardtoggle','aria-expanded':String(open),'aria-label':open?'Réduire':'Détails',title:open?'Réduire':'Détails',
             onClick:e=>{stop(e);this.setState({more:{...this.state.more,[key]:!open}});}},open?'▴':'▾')),
-        h('div',{className:'oc-cardline'},signal?h('span',{className:'oc-signal oc-ellipsis'},this.voiceMark(d.c),d.headline):status,h('span',{className:'oc-cardact',onClick:stop},primary)),
-        this.callLatency(d.c),
+        lead,
+        h('div',{className:'oc-cardline'},this.callLatency(d.c)||h('span',{className:'oc-status'},lead?null:live),h('span',{className:'oc-cardact',onClick:stop},primary)),
         open?h('div',{className:'oc-cardmore'},
           h('div',{className:'oc-quote'},this.latestWords(d.c)),
-          signal?status:null,
           h('div',{className:'oc-muted'},d.id+(/non renseigné/.test(d.place)?'':' · '+d.place)),
           d.c.liveCaller||d.c.takenOver?null:h('div',{className:'oc-actions',onClick:stop},
             this.button(d.selected?'En écoute':"Écouter d'abord",()=>this.open(d.id),false,undefined,undefined,{tone:'quiet',key:'listen'}),
@@ -908,9 +932,10 @@ class Component extends DCLogic {
     // Each speaker's look lives in CSS (.oc-turn-caller/-ai/-op/-sys) so the style toggle can restyle the bubbles.
     const kind=who=>who==='Agent IA'?'ai':who==='Vous'?'op':who==='Système'?'sys':'caller';
     const p=this.state.playback,playing=!!p&&p.callId===c.id&&!p.paused,spoken=playing?c.tr.map(t=>t.who).lastIndexOf(SPEAKER_ROW[p.speaker]):-1;
-    const initials={ai:'IA',op:'Op',caller:'A'};
+    // Avatars: a robot for the AI, a person for the caller and the operator (monochrome icons, no initials).
+    const icon=k=>k==='sys'?null:h('span',{className:'oc-avatar','aria-hidden':'true'},k==='ai'?ICONS.robot:ICONS.human);
     const transcript=h('div',{className:'oc-tr',ref:this.trRef},...c.tr.map((t,i)=>{const k=kind(t.who);return h('div',{key:i,className:'oc-turn oc-turn-'+k},
-        h('div',{className:'oc-turnhead'},initials[k]?h('span',{className:'oc-avatar','aria-hidden':'true'},initials[k]):null,h('span',{className:'oc-who'},t.who),h('span',{className:'oc-mono'},t.ts)),
+        h('div',{className:'oc-turnhead'},icon(k),h('span',{className:'oc-who'},t.who),h('span',{className:'oc-mono'},t.ts)),
         h('div',{className:'oc-bubble'},t.text,i===spoken?h('span',{className:'oc-cursor'},' ▍'):null));}));
     if(!this.waveEl)this.waveEl=h('canvas',{ref:this.waveRef,width:640,height:28,style:{width:'100%',height:'28px',display:'block',borderRadius:'6px'}});
     const live=this.waveMode.amp>0.5;
@@ -958,7 +983,7 @@ class Component extends DCLogic {
         h('span',{className:'oc-svc oc-svc-'+state,title:s?(s.ready?'Site joignable':'Site injoignable · repli sur la passerelle'):'Appelant intégré de la passerelle'},this.siteName(name)+(s?.label&&s.label!==name?' · '+s.label:'')),
         h('span',{className:'oc-mono'},s?(s.rtt_ms!=null?'aller-retour '+fmtMs(s.rtt_ms):'injoignable'):'sur place'),
         h('span',{className:'oc-mono'},st?.caller_ms?'appelant '+fmtMs(st.caller_ms.median)+' · p95 '+fmtMs(st.caller_ms.p95):'aucune mesure'),
-        h('span',{className:'oc-mono oc-right'},(st?.n||0)+(st?.n===1?' tour':' tours')+(st?.fallbacks?' · '+st.fallbacks+' repli'+(st.fallbacks>1?'s':''):'')));};
+        st?.fallbacks?h('span',{className:'oc-mono oc-right oc-site-warn',title:'Tours repris par l’appelant intégré de la passerelle, ce site étant injoignable'},st.fallbacks+' repli'+(st.fallbacks>1?'s':'')):null);};
     const con=lat?.console,steps=con?[['Transcription',con.stt_ms],['Analyse',con.analyze_ms],['Voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
     return h('div',{className:'oc-sites'},h('div',{className:'oc-feedhead'},'Sites appelants · latence'),...names.map(row),
       steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null);
@@ -980,7 +1005,7 @@ class Component extends DCLogic {
     const last=c.lastCaller;if(!c.callerFacts||!last||last.caller_ms==null)return null;
     const rows=(c.latency||[]).map(r=>r.caller_ms).filter(v=>v!=null).sort((a,b)=>a-b),median=rows.length?rows[Math.floor(rows.length/2)]:null;
     const title='Appelant simulé · '+this.siteName(last.location)+' · dernier tour '+fmtMs(last.caller_ms)+(last.network_ms!=null?' dont réseau '+fmtMs(last.network_ms):'')
-      +(rows.length>1?' · médiane '+fmtMs(median)+' sur '+rows.length+' tours':'')+(last.fallback?' · repli sur la passerelle':'');
+      +(rows.length>1?' · médiane '+fmtMs(median):'')+(last.fallback?' · repli sur la passerelle':'');
     return h('div',{key:'lat',className:'oc-callmeta oc-latency'+(last.fallback?' oc-site-warn':''),title},this.siteName(last.location)+' · appelant '+fmtMs(last.caller_ms));
   }
   // Latency of the last turn in the copilot: one line folded, the breakdown and the call's medians behind Détails.
@@ -993,7 +1018,7 @@ class Component extends DCLogic {
       const kv=[['Site',this.siteName(last.location)+(last.fallback?' · repli (site demandé : '+this.siteName(last.requested)+')':'')],
         ['Appelant',fmtMs(last.caller_ms)+(last.llm_ms!=null?' · modèle '+fmtMs(last.llm_ms):'')+(last.tts_ms!=null?' · voix '+fmtMs(last.tts_ms):'')+(last.network_ms!=null?' · réseau '+fmtMs(last.network_ms):'')],
         ['Transcription',fmtMs(last.stt_ms)],['Analyse',fmtMs(last.analyze_ms)],['Voix IA',fmtMs(last.reply_tts_ms)],
-        ['Médianes',fmtMs(median('caller_ms'))+' appelant · '+fmtMs(median('analyze_ms'))+' analyse · '+rows.length+(rows.length>1?' tours':' tour')]];
+        ['Médianes',fmtMs(median('caller_ms'))+' appelant · '+fmtMs(median('analyze_ms'))+' analyse']];
       body.push(h('div',{key:'kv',className:'oc-kv'},...kv.flatMap(([k,v],i)=>[h('span',{key:'k'+i,className:'oc-muted'},k),h('span',{key:'v'+i},v)])));
     }
     return h('div',{key:'Latence',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Latence · dernier tour'),this.moreButton('latency')),...body);
@@ -1073,7 +1098,6 @@ class Component extends DCLogic {
     const fold=(title,key,...body)=>h('div',{key:title,className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},title),this.moreButton(key)),...body);
     if(!show)return h('div',{className:'oc-col oc-side'},
       block('Assistance IA',h('span',{className:'oc-muted'},'Synthèse, éléments déclarés et signaux de l’appel sélectionné.')),
-      block('Vacation',h('span',{className:'oc-muted'},`${s.launched}/${s.total} arrivés · ${s.finished} terminés · ${s.failed} échecs`),h('span',{className:'oc-muted'},m.arrival)),
       this.guardBlock(null),
       this.footnote());
     const signals=c.lastAnalysis?.signals||[],tools=[...c.tools].reverse();
@@ -1129,7 +1153,6 @@ class Component extends DCLogic {
     const c=this.sel(),p=this.state.playback,playing=!!c&&!!p&&p.callId===c.id&&!p.paused;
     // Waveform colour and amplitude follow what is actually audible.
     this.waveMode=this.state.mic?{amp:1,color:OP}:playing?{amp:1,color:WAVE[p.speaker]}:{amp:c?.busy?0.12:0.06,color:'var(--oc-idle)'};
-    return {density:this.props.density??'standard',liveControls:this.controls(),consoleView:this.consoleView(),audioPlayer:this.audioPlayer(),
-      soundLabel:p&&!p.paused?'Son · '+p.callId:'Silencieux · sélectionnez un appel'};
+    return {density:this.props.density??'standard',liveControls:this.controls(),consoleView:this.consoleView(),audioPlayer:this.audioPlayer()};
   }
 }

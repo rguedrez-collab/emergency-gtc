@@ -44,12 +44,18 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
 
 ## Invariants the scripts and tests rely on
 
-- Element ids: `#orange-start-session`, `#orange-pause-session`, `#orange-stop-session`, `#orange-session-progress`,
+- Element ids: `#orange-start-session`, `#orange-pause-session`, `#orange-stop-session`, `#orange-analytics`,
+  `#orange-session-progress` (inside the Analytique panel: open it first, see the harness's `open_analytics`),
   `#orange-settings`, `#orange-tools`, `#orange-new`, `#orange-scenario`, `#orange-stt`, `#orange-export`,
   `#orange-user-call`, `#orange-theme`, `#orange-site` (only with caller sites), `#orange-close`, `#orange-retry`,
   `#orange-next`, `#orange-decision`, `#orange-close-case`, `#orange-more-*` (incl. `latency`), `#orange-audio-player`
   (always in the DOM, hidden on the overview, `data-speaker`/`data-playing`/`data-call`), `#orange-player-toggle`,
   `#orange-player-seek`, `#orange-speaker-label`.
+- Bar: actions on the left (open / pause / close), on the right the read-only notice when any, the services chip
+  **only as an exception** (a service down, a guardrail configured, a caller site unreachable; nothing otherwise),
+  « Analytique » (counter + latency medians) and « Réglages ». The « Démonstration » tag, the mockup's header shift
+  clock (« Vacation … ») and its sound label were removed on request; the AI's transcript bubbles are black with
+  white text in every theme.
 - Text formats: the counter reads exactly `n/100 arrivés · n terminés · n échecs · en cours|en pause|arrêtée`;
   end labels keep the suffix `· à revoir`; the guardrail summary says `Dernier verdict : …`; the overview keeps
   the words `Sélectionnez un appel`; the copilot's latency block is titled `Latence · dernier tour`, the board's
@@ -57,9 +63,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   separator; the built-in caller is named `passerelle` on screen and `local` in payloads and the database.
 - Tool log names: `Appelant · <site>` for a caller line (result `<ms> ms`, `· repli sur la passerelle` on fallback),
   `<LLM label>` for analysis, `<TTS label> TTS`, `STT`.
-- Per-call latency line: `.oc-callmeta.oc-latency` under the status of every live card and row, text
-  `<site> · appelant <ms>` (`oc-site-warn` on fallback), tooltip with the median and the network share; absent until
-  the first generated caller line, and on ended rows.
+- Per-call latency line: `.oc-callmeta.oc-latency`, text `<site> · appelant <ms>` (`oc-site-warn` on fallback), tooltip
+  with the median and the network share; absent until the first generated caller line, and on ended rows. On cards it
+  shares the last line with the primary action; cards show no processing status (« IA · tour n · … » was removed on
+  request), only the signal to check or « en ligne · opérateur ». AI rows keep `id · tour n · state`.
 - List DOM: alert items are `.oc-card[data-call]` (with `.oc-cardtoggle`, `.oc-title`), AI/ended items are
   `.oc-row[data-call]`; the harness helpers `orangeCards()/orangeRows()/orangeOpenFirst()` live in `tests/e2e/verify_local.py`.
 - Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`, `location`,

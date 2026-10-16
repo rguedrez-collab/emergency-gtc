@@ -349,7 +349,7 @@ def soak(page, seconds, receipt, errors):
 
 def guarded(page, receipt, errors):
     """With the fake proxy on the LLM path: verdicts show, one block holds a call for a human, nothing closes."""
-    wait_for(page, "document.querySelector('#orange-session-progress')!==null", 30000)
+    open_analytics(page)
     # The services strip names the guardrail product in its label; the mode lives in the chip's tooltip.
     wait_for(page, "/Garde-fou · F5 AI Guardrails/.test(document.body.innerText)", 40000)
     wait_for(page, "/F5 AI Guardrails actif/.test(document.querySelector('.oc-services')?.title||'')", 10000)
@@ -376,6 +376,13 @@ def guarded(page, receipt, errors):
                           "session": data["session"], "page_errors": errors}
     receipt["status"] = "PASS"
     page.screenshot(path=str(HERE / "receipts" / "local-guardrail.png"), full_page=True)
+
+
+def open_analytics(page):
+    """The counter sits behind « Analytique »; the scripts read it, so open the panel (idempotent)."""
+    if page.locator("#orange-session-progress").count() == 0:
+        page.locator("#orange-analytics").click()
+    page.locator("#orange-session-progress").wait_for(timeout=10000)
 
 
 def arrived(page):
@@ -422,6 +429,7 @@ def main():
         box = start.bounding_box()
         assert abs(box["x"] + box["width"] / 2 - 800) < 30 and box["height"] >= 40, box
         start.click()
+        open_analytics(page)
         if GUARDED:
             if REALPROXY:
                 receipt["real_proxy"] = {"source": str(PROXY_SRC), "scanner": "F5_AIS_MOCK", "mode": "enforce",
@@ -561,7 +569,8 @@ def main():
         ids = set(page.evaluate("[...document.querySelectorAll('[data-call]')].map(e=>e.dataset.call)"))
         page.wait_for_timeout(2500)  # the save cadence is 2 s
         page.reload(wait_until="networkidle")
-        wait_for(page, "document.querySelector('#orange-session-progress')!==null", 30000)
+        page.locator("#orange-analytics").wait_for(timeout=30000)
+        open_analytics(page)
         progress = page.locator("#orange-session-progress").inner_text()
         assert progress.split("/")[0] == launched and "arrêtée" in progress, progress
         restored = set(page.evaluate("[...document.querySelectorAll('[data-call]')].map(e=>e.dataset.call)"))

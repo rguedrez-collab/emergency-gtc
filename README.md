@@ -220,5 +220,5 @@ python3 tests/e2e/verify_local.py --guarded # fake F5 tee proxy on the LLM path
 
 No diagnosis, no medical gesture, no claim that help is on its way; the AI asks observation questions,
 gives general safety instructions and hands over to a human on any guardrail block. Every call is
-archived as requiring human review. The page states the demonstration boundary once (header tag) and
-on the decision action.
+archived as requiring human review. The demonstration boundary is stated on the decision action and in
+the system line it writes (the header tag was removed to keep the console sober).

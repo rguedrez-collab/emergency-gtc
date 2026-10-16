@@ -312,8 +312,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.match(card(quiet.id).status,/^tour 2 · /);assert.equal(m.alerts[0].id,flagged.id,'signal calls first');
   const row=m.ai.find(r=>r.id===ringing.id);assert.equal(row.status,'décroché en cours');assert.equal(row.sev,'Entrant');assert.equal(row.category,'Nouvel appel · évaluation en cours');
   const shown=texts(app.consoleView()).join(' ');
-  for(const expected of ['tour 2 · ',"Prendre l'appel",'Signal à vérifier : « il ne respire plus »','absence de signal ≠ absence de danger','Sélectionnez un appel'])
+  for(const expected of ["Prendre l'appel",'Signal à vérifier : « il ne respire plus »','absence de signal ≠ absence de danger','Sélectionnez un appel','TEST-3 · décroché en cours'])
     assert.ok(shown.includes(expected),expected);
+  assert.ok(!shown.includes('tour 2 · ')&&!shown.includes('IA · '),'cards carry no processing status (« IA · tour n · … »); rows keep their state');
+  quiet.takenOver=true;assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('en ligne · opérateur'),'a call the operator holds says so');quiet.takenOver=false;
   // Progressive disclosure: collapsed cards hold back the quote, the id and the secondary actions until the chevron (or selection).
   assert.ok(!shown.includes('« il y a de la fumée dans le hall »')&&!shown.includes("Laisser l'IA continuer")&&!shown.includes(quiet.id),'collapsed card');
   app.state.more={['card:'+quiet.id]:true};const opened=texts(app.consoleView()).join(' ');
@@ -329,8 +331,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.playback={callId:c.id,speaker:'caller',paused:false,current:0,duration:1,text:'Allô ?',category:''};
   const v=app.renderVals(),shown=texts(v.consoleView);
   assert.equal(shown.filter(t=>t===' ▍').length,1);assert.equal(shown[shown.indexOf(' ▍')-1],'Allô ?');
-  assert.equal(app.waveMode.color,'var(--oc-caller)');assert.equal(app.waveMode.amp,1);assert.equal(v.soundLabel,'Son · '+c.id);
-  app.state.playback=null;assert.equal(app.renderVals().soundLabel,'Silencieux · sélectionnez un appel');
+  assert.equal(app.waveMode.color,'var(--oc-caller)');assert.equal(app.waveMode.amp,1);assert.ok(!('soundLabel' in v),'the header sound label is gone');
+  app.state.playback=null;app.renderVals();
   app.goFloor();assert.ok(texts(app.consoleView()).join(' ').includes('Sélectionnez un appel'));
 }
 // Arrival tones are opt-in and the phone-line graph degrades to plain playback without Web Audio.
@@ -418,7 +420,9 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.refreshHealth();assert.match(app.state.health,/garde-fou F5 AI Guardrails actif \(enforce · hors bande\)/);
   // Model names follow the gateway's configuration: labels, health text, STT choice, footnote.
   assert.equal(app.labels().llm,'Llama 3');assert.equal(app.state.stt,'whisper');assert.match(app.state.health,/STT \/ Llama 3 \/ Kokoro/);
-  assert.ok(JSON.stringify(app.servicesChip()).includes('Analyse et dialogue · Llama 3'));app.state.more={note:true};assert.ok(texts(app.footnote()).join('').includes('STT : Whisper · Analyse : Llama 3 · Voix : Kokoro'));
+  assert.deepEqual(texts(app.servicesChip()),['Garde-fou · F5 AI Guardrails'],'only the guardrail dot while no service is down');
+  app.state.services={...app.state.services,gemma:{ready:false}};assert.ok(JSON.stringify(app.servicesChip()).includes('Analyse et dialogue · Llama 3'),'service dots name the configured model');
+  app.state.services={};app.state.more={note:true};assert.ok(texts(app.footnote()).join('').includes('STT : Whisper · Analyse : Llama 3 · Voix : Kokoro'));
   app.state.models=null;app.state.stt='nemotron';app.state.more={};delete context.fetch;
 }
 // Secondary text is folded by default: model log, footnote, guardrail details and the mode explanation open on demand.
@@ -493,15 +497,22 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.health='Modèles connectés · STT / Gemma / Voxtral · garde-fou F5 AI Guardrails actif (proxy · enforce)';
   const ids=el=>texts([el]).length>=0&&JSON.stringify(el).match(/"id":"orange-[a-z-]+"/g).map(x=>x.slice(6,-1));
   let bar=app.controls();const top=ids(bar.children[0]);
-  // While a vacation runs the top row carries only pause/close, the counter, the status and « Réglages ».
-  for(const id of ['orange-pause-session','orange-stop-session','orange-session-progress','orange-settings'])assert.ok(top.includes(id),id);
-  for(const id of ['orange-start-session','orange-user-call','orange-export','orange-theme','orange-ai-voice','orange-tones','orange-tools','orange-new'])assert.ok(!top.includes(id),id+' hidden until Réglages (or until the vacation stops)');
-  const shown=texts(bar).join('');assert.ok(shown.includes('3/100 arrivés · 1 terminés · 0 échecs · en cours'),'counter text keeps the parsed format');
-  // Services chip: one dot per service, the health text as tooltip; the environment tag states the boundary once.
-  const services=JSON.stringify(bar.children[0].children[1]);
-  assert.ok(services.includes('oc-svc-ok')&&services.includes('"title":"Modèles connectés · STT / Gemma / Voxtral')&&shown.includes('Démonstration'),services.slice(0,200));
+  // While a vacation runs the top row carries only pause/close, « Analytique » and « Réglages »; the counter waits behind Analytique.
+  for(const id of ['orange-pause-session','orange-stop-session','orange-analytics','orange-settings'])assert.ok(top.includes(id),id);
+  for(const id of ['orange-start-session','orange-user-call','orange-export','orange-theme','orange-ai-voice','orange-tones','orange-tools','orange-new','orange-session-progress'])assert.ok(!top.includes(id),id+' hidden until Réglages / Analytique (or until the vacation stops)');
+  let shown=texts(bar).join('');
+  assert.ok(!shown.includes('arrivés')&&!shown.includes('Démonstration')&&!JSON.stringify(bar).includes('oc-services'),'no counter, no environment tag, no service chip while everything is up');
+  app.state.analytics=true;bar=app.controls();shown=texts(bar).join('');
+  assert.ok(shown.includes('3/100 arrivés · 1 terminés · 0 échecs · en cours')&&JSON.stringify(bar).includes('"id":"orange-session-progress"'),'Analytique shows the counter; its text keeps the parsed format');
+  app.state.latency={samples:3,sites:[{name:'lyon',n:3,fallbacks:0,caller_ms:{n:3,median:1855,p95:1900,max:1900}}],console:{stt_ms:{n:3,median:338,p95:350},analyze_ms:{n:3,median:1605,p95:1700},reply_tts_ms:null}};
+  shown=texts(app.controls()).join(' ').replace(/ /g,' ');assert.ok(shown.includes('Appelant · lyon 1 855 ms')&&shown.includes('Console · STT 338 ms · analyse 1 605 ms'),'Analytique carries the latency medians: '+shown);
+  app.state.latency=null;app.state.analytics=false;
+  // Service status appears only as an exception: a service down, a guardrail configured, a caller site unreachable.
+  app.state.services={stt:{ready:false},gemma:{ready:true},voxtral:{ready:true}};const services=JSON.stringify(app.controls().children[0].children[1]);
+  assert.ok(services.includes('oc-svc-warn')&&services.includes('"title":"Modèles connectés · STT / Gemma / Voxtral'),services.slice(0,200));
+  app.state.services={stt:{ready:true},gemma:{ready:true},voxtral:{ready:true}};
   app.state.guardrail={configured:true,name:'F5 AI Guardrails',mode:'proxy · enforce'};assert.ok(texts(app.controls()).join('').includes('Garde-fou · F5 AI Guardrails'));
-  app.state.guardrail=null;assert.ok(JSON.stringify(app.controls()).includes('Garde-fou IA non configuré'));
+  app.state.guardrail=null;assert.ok(!JSON.stringify(app.controls()).includes('oc-services'));
   app.state.settings=true;bar=app.controls();const settings=ids(bar.children[1]);
   for(const id of ['orange-theme','orange-ai-voice','orange-ai-pace','orange-tones','orange-export','orange-user-call','orange-tools'])assert.ok(settings.includes(id),id);
   assert.equal(app.state.style,'sober','the sober (light, flat) look is the default without an OS preference');
@@ -575,7 +586,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(shown.includes('Latence · dernier tour')&&/Appelant \d+ ms · STT 21 ms · Analyse \d+ ms · Voix IA 33 ms/.test(shown),shown);
   assert.ok(!shown.includes('modèle 450 ms'),'breakdown folded');
   app.state.more={latency:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
-  assert.ok(shown.includes('modèle 450 ms · voix 140 ms · réseau 50 ms')&&shown.includes('Médianes')&&shown.includes('2 tours'),shown);
+  assert.ok(shown.includes('modèle 450 ms · voix 140 ms · réseau 50 ms')&&shown.includes('Médianes')&&!shown.includes('tours'),shown);
   const head=texts(app.callPane(app.consoleModel())).join(' ');assert.match(head,/lyon · \d+ ms/);
   // The export carries the per-turn samples and the site list.
   let exported=null;context.URL.createObjectURL=b=>{exported=JSON.parse(b.parts[0]);return 'blob:test';};
@@ -605,8 +616,9 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.latency={samples:7,sites:[{name:'paris',n:5,fallbacks:0,caller_ms:{n:5,median:1180,p95:1600,max:1700}},{name:'montreal',n:0,fallbacks:2,caller_ms:null},{name:'local',n:2,fallbacks:0,caller_ms:{n:2,median:1900,p95:2100,max:2100}}],
     console:{stt_ms:{n:7,median:300,p95:330},analyze_ms:{n:7,median:1600,p95:1800},reply_tts_ms:null}};
   const shown=texts(app.callPane(app.consoleModel())).join(' ').replace(/\u202f/g,' ');  // durations use a narrow no-break space as thousands separator
-  for(const expected of ['Sites appelants · latence','paris · Paris · Saint-Denis','aller-retour 14 ms','appelant 1 180 ms · p95 1 600 ms','5 tours','montreal','injoignable','aucune mesure','0 tours · 2 replis','passerelle','sur place','appelant 1 900 ms','Console (médianes) : Transcription 300 ms · Analyse 1 600 ms'])
+  for(const expected of ['Sites appelants · latence','paris · Paris · Saint-Denis','aller-retour 14 ms','appelant 1 180 ms · p95 1 600 ms','montreal','injoignable','aucune mesure','2 replis','passerelle','sur place','appelant 1 900 ms','Console (médianes) : Transcription 300 ms · Analyse 1 600 ms'])
     assert.ok(shown.includes(expected),'board: '+expected+' in '+shown);
+  assert.ok(!/\btours?\b/.test(shown),'no turn counts on the board');
   app.state.callers=[];app.state.latency=null;assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Sites appelants'),'nothing configured, nothing measured: no block');
   app.state.latency={samples:1,sites:[{name:'local',n:1,fallbacks:0,caller_ms:{n:1,median:1500,p95:1500,max:1500}}],console:{}};
   assert.ok(texts(app.callPane(app.consoleModel())).join(' ').includes('passerelle'),'the built-in caller is measured too');
@@ -624,7 +636,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const list=app.callList(app.consoleModel()),shown=texts(list).join(' ').replace(/\u202f/g,' '),json=JSON.stringify(list).replace(/\u202f/g,' ');
   assert.ok(shown.includes('lyon · appelant 1 655 ms'),'collapsed card shows site and last round trip: '+shown);
   assert.ok(shown.includes('passerelle · appelant 2 100 ms')&&json.includes('oc-latency oc-site-warn'),'a fallback row is marked');
-  assert.ok(json.includes('médiane 1 800 ms sur 2 tours')&&json.includes('dont réseau 42 ms'),'tooltip carries the median and the network share');
+  assert.ok(json.includes('médiane 1 800 ms')&&json.includes('dont réseau 42 ms')&&!json.includes('tours'),'tooltip carries the median and the network share');
   assert.equal(app.callLatency(fresh),null,'no measurement yet: nothing shown');assert.equal(app.callLatency(app.createCall(false)),null,'manual tests have no simulated caller');
   app.endCall(row,'Appel terminé · à revoir');assert.ok(!texts(app.callList(app.consoleModel())).join(' ').includes('passerelle · appelant'),'ended rows keep their closing label only');
 }

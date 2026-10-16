@@ -28,8 +28,10 @@ template=swap(template,scriptPattern,(_,a,b,c)=>a+logic+c);
 // Floor and call views -> the console. The gradient bar and the shell's closing tags stay.
 template=swap(template,/(<div style="height:3px;background:linear-gradient[^>]*><\/div>)\n\n<sc-if value="\{\{ isFloor \}\}"[\s\S]*<\/sc-if>\n(<\/div>\n<\/x-import>\n<\/x-dc>)/,
   (_,bar,tail)=>bar+'\n<div style="padding:0;">{{ consoleView }}</div>\n'+tail);
-template=swap(template,/<x-import component-from-global-scope="KuiFoundationsReact.Tag"[^>]*>\{\{ audioLabel \}\}<\/x-import>/,
-  '<span style="font-size:12px;color:var(--text-color-brand);">{{ soundLabel }}</span>');
+// The header keeps the brand, the title and the user only: the mockup's shift clock (« Vacation {{ shiftTime }} ») and
+// its sound tag go (asked away); the sound state lives in the player of the open call.
+template=swap(template,'<span style="font-family:var(--font-mono);font-size:13px;color:var(--text-color-secondary);">Vacation {{ shiftTime }}</span>','');
+template=swap(template,/<x-import component-from-global-scope="KuiFoundationsReact.Tag"[^>]*>\{\{ audioLabel \}\}<\/x-import>/,'');
 // The player is fixed at the bottom; the console's height (see .oc) leaves it 110px, so no spacer: the page must not scroll.
 template=swap(template,'</x-import>\n</x-dc>', '{{ audioPlayer }}</x-import>\n</x-dc>');
 const controls=`<div class="oc-topbar">
@@ -108,7 +110,7 @@ nve-button{--text-transform:none;}
 .oc-quote{font-size:14px;line-height:1.35;text-wrap:pretty;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .oc-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-color-brand);min-width:0;}
 .oc-cardline{display:flex;align-items:center;gap:8px;min-width:0;}
-.oc-cardline>.oc-status,.oc-cardline>.oc-signal{flex:1;min-width:0;}
+.oc-cardline>.oc-status,.oc-cardline>.oc-signal,.oc-cardline>.oc-callmeta{flex:1;min-width:0;}
 .oc-cardact{flex:none;display:inline-flex;}
 .oc-cardtoggle{background:none;border:0;padding:0 2px;margin:0;color:var(--text-color-secondary);cursor:pointer;font:inherit;font-size:12px;line-height:1;}
 .oc-cardtoggle:hover{color:var(--text-color-primary);}
@@ -135,7 +137,9 @@ nve-button{--text-transform:none;}
 .oc-bubble{max-width:min(620px,86%);padding:10px 14px;font-size:15px;line-height:1.45;text-wrap:pretty;color:var(--text-color-primary);}
 .oc-turn-caller{align-items:flex-start;} .oc-turn-ai,.oc-turn-op{align-items:flex-end;} .oc-turn-sys{align-items:center;}
 .oc-turn-caller .oc-bubble{border-radius:14px 14px 14px 4px;background:var(--background-color-surface-raised);border:1px solid var(--border-color-base);}
-.oc-turn-ai .oc-bubble{border-radius:14px 14px 4px 14px;background:rgba(118,185,0,.10);border:1px solid rgba(118,185,0,.35);}
+/* The AI's bubbles are black with white text in every theme (asked for); the caller's and the operator's follow the theme. */
+.oc-turn-ai .oc-bubble{border-radius:14px 14px 4px 14px;background:#000;border:1px solid #000;color:#fff;}
+.oc-turn-ai .oc-cursor{color:#76b900;}
 .oc-turn-op .oc-bubble{border-radius:14px 14px 4px 14px;background:rgba(255,121,0,.12);border:1px solid rgba(255,121,0,.45);}
 .oc-turn-sys .oc-bubble{border-radius:999px;background:transparent;border:1px solid var(--border-color-base);color:var(--text-color-secondary);font-style:italic;}
 .oc-turn-caller .oc-who,.oc-turn-caller .oc-cursor{color:var(--text-color-primary);} .oc-turn-ai .oc-who,.oc-turn-ai .oc-cursor{color:var(--text-color-brand);}
@@ -174,7 +178,6 @@ nve-button{--text-transform:none;}
 .oc-site::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-green-500);flex:none;}
 .oc-site-warn{color:#FF7900;} .oc-site-warn::before{background:#FF7900;}
 .oc-callmeta{font-family:var(--font-mono);font-size:11px;line-height:1.3;color:var(--text-color-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.oc-card>.oc-callmeta{margin-top:-2px;}
 .oc-sites{display:flex;flex-direction:column;gap:4px;}
 .oc-siterow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.5fr) auto;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border-color-base);font-size:13px;}
 .oc-siterow .oc-svc{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -188,8 +191,10 @@ nve-button{--text-transform:none;}
 @keyframes arrive{from{background-color:rgba(255,121,0,.22)}to{background-color:transparent}}
 @keyframes fadeup{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .oc-turn{animation:fadeup .25s ease-out;}
-.oc-avatar{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;background:#5c6670;flex:none;}
-.oc-turn-ai .oc-avatar{background:var(--color-green-500);} .oc-turn-op .oc-avatar{background:#FF7900;color:#111;}
+.oc-avatar{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;background:#5c6670;flex:none;}
+.oc-avatar svg{display:block;}
+.oc-turn-ai .oc-avatar{background:#000;} .oc-turn-op .oc-avatar{background:#FF7900;color:#111;}
+html.dark .oc-turn-ai .oc-avatar{box-shadow:0 0 0 1px #3a424c;} html.glass .oc-turn-ai .oc-avatar{box-shadow:0 0 0 1px rgba(255,255,255,.25);}
 .oc-turn-ai .oc-turnhead,.oc-turn-op .oc-turnhead{flex-direction:row-reverse;}
 .oc-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;}
 .oc-pill{font-size:12px;padding:4px 10px;border:1px solid var(--border-color-base);border-radius:999px;color:var(--text-color-secondary);}
@@ -238,7 +243,7 @@ html.sober .oc-kpis,html.sober .oc-services,html.sober .oc-chip-demo{background:
 html.sober .oc-chip-demo{border-color:#ff7900;color:#8a4b00;} html.sober .oc-chip-demo::before{background:#ff7900;}
 html.sober .oc-kpis b,html.sober .oc-svc-ok{color:#111;}
 html.sober .oc-turn-caller .oc-bubble{background:#f3f4f6;border-color:#e3e6ea;}
-html.sober .oc-turn-ai .oc-bubble{background:#f1f8ea;border-color:#cfe3bd;}
+html.sober .oc-turn-ai .oc-bubble{background:#000;border-color:#000;}
 html.sober .oc-turn-op .oc-bubble{background:#fff4e8;border-color:#ffd2a8;}
 html.sober .oc-turn-ai .oc-who,html.sober .oc-turn-ai .oc-cursor,html.sober .oc-status{color:#2f7a12;}
 html.sober .oc-player{border-top:1px solid #d9dde3;}
@@ -264,7 +269,7 @@ html.dark .oc-chip{background:#1a1e23;border-color:#2b3139;}
 html.dark .oc-kpis,html.dark .oc-services,html.dark .oc-chip-demo{background:transparent;border-color:transparent;}
 html.dark .oc-chip-demo{border-color:#ff7900;color:#ffb366;} html.dark .oc-chip-demo::before{background:#ff7900;}
 html.dark .oc-turn-caller .oc-bubble{background:#1c2026;border-color:#2b3139;}
-html.dark .oc-turn-ai .oc-bubble{background:#1b2616;border-color:#2f4a1b;}
+html.dark .oc-turn-ai .oc-bubble{background:#000;border-color:#3a424c;}
 html.dark .oc-turn-op .oc-bubble{background:#2a1f14;border-color:#5a3a1a;}
 html.dark .oc-player{background:#15181c;border-top:1px solid #2b3139;}
 html.dark .oc-tile{background:#1a1e23;border-color:#2b3139;}
@@ -320,7 +325,7 @@ html.glass .oc-emptybox{border-color:var(--g-line);border-radius:var(--g-r2);}
 html.glass .oc-tile{background:rgba(255,255,255,.06);border-color:var(--g-line);border-radius:var(--g-r2);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);}
 html.glass .oc-mode{border-radius:var(--g-r2);}
 html.glass .oc-turn-caller .oc-bubble{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.16);border-radius:6px 6px 6px 2px;box-shadow:inset 0 1px 0 rgba(255,255,255,.14);}
-html.glass .oc-turn-ai .oc-bubble{background:rgba(118,185,0,.16);border-color:rgba(118,185,0,.45);border-radius:6px 6px 2px 6px;}
+html.glass .oc-turn-ai .oc-bubble{background:rgba(0,0,0,.8);border-color:rgba(255,255,255,.2);border-radius:6px 6px 2px 6px;}
 html.glass .oc-turn-op .oc-bubble{background:rgba(255,121,0,.16);border-color:rgba(255,121,0,.5);border-radius:6px 6px 2px 6px;}
 html.glass .oc-player{left:14px;right:14px;bottom:14px;border-radius:var(--g-r);background:rgba(12,14,24,.74);backdrop-filter:var(--g-blur);-webkit-backdrop-filter:var(--g-blur);
   border:1px solid var(--g-line);box-shadow:var(--g-shadow),inset 0 1px 0 var(--g-hi);}
@@ -342,8 +347,11 @@ if(JSON.parse(output.match(pattern)[2])!==template)throw Error('Bundle round-tri
 for(const forbidden of ['speechSynthesis','SpeechRecognition','get_medical_alerts','alert_units','request_aml_fix','const EXTRA']) {
   if(logic.includes(forbidden))throw Error('Legacy simulation leaked: '+forbidden);
 }
-for(const needed of ['{{ liveControls }}','{{ consoleView }}','{{ audioPlayer }}','{{ soundLabel }}']) {
+for(const needed of ['{{ liveControls }}','{{ consoleView }}','{{ audioPlayer }}']) {
   if(!template.includes(needed))throw Error('Binding not mounted: '+needed);
+}
+for(const gone of ['{{ soundLabel }}','{{ audioLabel }}','{{ shiftTime }}']) {
+  if(template.includes(gone))throw Error('Header label still mounted: '+gone);
 }
 if(/\{\{ (isFloor|isCall|alerts|aiRows|historyRows|sideGroups) \}\}/.test(template))throw Error('Mockup floor or call view still mounted');
 const out=path.join(HERE,'dist');
