@@ -1,8 +1,0 @@
-{
-  "source": "/home/shadeform/urgence.html",
-  "source_sha256": "cd44f114c6cd385bdf6d5bb7a25d206d4fd6dfc8d33bb7c71f45767cbe38ac17",
-  "deployed_sha256": "0e80ab4c6e6524845dbf152c3fc9e4be06da866937ce72561f5ab6c34ad4c576",
-  "original_untouched": true,
-  "scenarios": 100,
-  "dispatch_connected": false
-}

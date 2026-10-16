@@ -798,6 +798,14 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual([t["tool"] for t in tools], ["lookup_address", "dispatch_ambulance", "dispatch_fire", "dispatch_police"])
         self.assertEqual(tools[0]["args"], {"address": "huit cours Gambetta à Lyon"}); self.assertEqual(tools[0]["kind"], "lookup"); self.assertEqual(tools[1]["kind"], "dispatch")
         self.assertEqual(server.propose_tools([{"role": "caller", "text": "Bonjour, je voudrais un renseignement."}], [], None), [])
+        # No Lieu fact from the model: the caller's own street address is still found and looked up.
+        tools = server.propose_tools([{"role": "caller", "text": "Il y a le feu au onze rue Gabriel Péri à Longjumeau, vite !"}], [], None)
+        self.assertEqual((tools[0]["tool"], tools[0]["args"]["address"]), ("lookup_address", "onze rue Gabriel Péri à Longjumeau"))
+        # A « Lieu » that is not an address (the model mislabelled a sentence) is not looked up; the snippet keeps whole words.
+        tools = server.propose_tools([{"role": "caller", "text": "S'il vous plaît, j'ai besoin d'aide, mon collègue vient de tomber dans le couloir et ne me répond pas."}],
+                                     [{"k": "Lieu", "v": "mon collègue vient de tomber dans le couloir", "source": "caller_quote"}], None)
+        self.assertEqual([x["tool"] for x in tools], ["dispatch_ambulance"]); self.assertTrue(tools[0]["reason"].startswith("« ") and not tools[0]["reason"].startswith("« '"))
+        self.assertNotIn("d'aide.", tools[0]["reason"].split()[0] if tools[0]["reason"].split() else "")
         # analyze() returns them with the reply.
         analysis = {"summary": "Feu et blessé.", "facts": [{"field": "Lieu", "quote": "huit cours Gambetta à Lyon"}], "signals": ["ne respire plus"], "question": "handoff",
                     "reply": "Restez à distance du feu. Y a-t-il d'autres personnes ?", "tools": [{"tool": "dispatch_police", "reason": "arme"}]}

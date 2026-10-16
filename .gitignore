@@ -1,6 +1,8 @@
 # Frontend: the UI mockup goes in frontend/mockup/ (not committed); dist/ is the build output
 frontend/mockup/
 frontend/dist/
+# Build output of the first layout; the build writes to frontend/dist/ only
+generated/
 # Runtime state, logs, test receipts
 state/
 logs/

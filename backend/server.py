@@ -983,6 +983,8 @@ TOOL_RULES = {  # the caller's words that make a dispatch proposal obvious, what
     "dispatch_fire": r"\b(feu|flammes?|fumée|incendie|gaz|explosion|inondation|effondr\w*|coincée?|bloquée?)\b",
     "dispatch_police": r"\b(arme|couteau|pistolet|fusil|menace|menaçant|violen\w*|agress\w*|frappe|frappé|cambriol\w*|voleur|bagarre|accident de la route|percut\w*|voitures?|scooter|camion|délit de fuite)\b",
 }
+ADDRESS = re.compile(r"\b(?:(?:\d{1,4}|un|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingt|trente)\s*(?:bis|ter)?\s*,?\s*)?"
+                     r"(?:rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b[^,.;!?]{3,70}", re.I)
 GEOCODER_URL = os.environ.get("ORANGE_GEOCODER_URL", "https://api-adresse.data.gouv.fr/search/")
 GEOCODER_ENABLED = os.environ.get("ORANGE_GEOCODER", "1") not in ("0", "false", "no")
 
@@ -998,12 +1000,23 @@ def propose_tools(messages, facts, raw_tools):
             seen.add(tool)
             proposals.append({"tool": tool, "label": TOOLS[tool]["label"], "kind": TOOLS[tool]["kind"], "args": args, "reason": reason[:160]})
     place = next((f["v"] for f in facts if f.get("k") == "Lieu"), None)
+    if not place or not ADDRESS.search(place):  # the model's « Lieu » may be no address at all: look for one in the caller's own words
+        hit = ADDRESS.search(callers)
+        place = hit.group(0).strip(" ,;") if hit else None
     if place:
         add("lookup_address", {"address": place}, "adresse prononcée par l'appelant")
+
+    def snippet(hit):
+        text = callers[max(0, hit.start() - 30):hit.end() + 30]
+        if hit.start() > 30:
+            text = re.sub(r"^\S*\s+", "", text)
+        if hit.end() + 30 < len(callers):
+            text = re.sub(r"\s+\S*$", "", text)
+        return "« " + text.strip() + " »"
     for tool, pattern in TOOL_RULES.items():
         hit = re.search(pattern, callers, re.I)
         if hit:
-            add(tool, {}, "« " + callers[max(0, hit.start() - 30):hit.end() + 30].strip() + " »")
+            add(tool, {}, snippet(hit))
     for item in raw_tools if isinstance(raw_tools, list) else []:
         if not isinstance(item, dict) or item.get("tool") not in TOOLS:
             continue
