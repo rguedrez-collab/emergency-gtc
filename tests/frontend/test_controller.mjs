@@ -187,7 +187,7 @@ const withAudio=()=>{const app=new context.TestComponent(),a=new FakeAudio();app
   const c=app.createCall(true,{index:0,auto:true,background:true});app.append(c,'Appelant','Il y a de la fumée','typed_test');
   app.takeOverCall(c);app.stopSession();assert.equal(c.ended,false);
   let analyzed=0;app.analyzeCall=async()=>{analyzed++;};app.handBackCall(c);await idle(c);
-  assert.equal(analyzed,1);assert.equal(c.ended,true);assert.equal(c.endLabel,'Vacation close · à revoir');
+  assert.equal(analyzed,1);assert.equal(c.ended,true);assert.equal(c.endLabel,'Session close · à revoir');
 }
 // « Laisser l'IA continuer » holds until a new signal; repeated analyses do not re-animate the card.
 {
@@ -331,7 +331,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.playback={callId:c.id,speaker:'caller',paused:false,current:0,duration:1,text:'Allô ?',category:''};
   const v=app.renderVals(),shown=texts(v.consoleView);
   assert.equal(shown.filter(t=>t===' ▍').length,1);assert.equal(shown[shown.indexOf(' ▍')-1],'Allô ?');
-  assert.equal(app.waveMode.color,'var(--oc-caller)');assert.equal(app.waveMode.amp,1);assert.ok(!('soundLabel' in v),'the header sound label is gone');
+  assert.equal(app.waveMode.color,'var(--oc-caller)');assert.equal(app.waveMode.amp,1);assert.ok(!('soundLabel' in v)&&!('audioPlayer' in v),'no header sound label, no player');
+  assert.equal(v.consoleView.props['data-speaker'],'caller');assert.equal(v.consoleView.props['data-playing'],'true');assert.equal(v.consoleView.props['data-call'],c.id);
   app.state.playback=null;app.renderVals();
   app.goFloor();assert.ok(texts(app.consoleView()).join(' ').includes('Sélectionnez un appel'));
 }
@@ -524,12 +525,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(stopped.includes('orange-start-session')&&stopped.includes('orange-user-call')&&!stopped.includes('orange-pause-session'));app.state.session.status='running';app.state.settings=true;
   assert.ok(!settings.includes('orange-new'));app.state.tools=true;assert.ok(ids(app.controls().children[1]).includes('orange-new'));
   assert.ok(texts(app.consoleView()).length>0);assert.equal(app.consoleView().props.className,'oc oc-full','overview: no player, full height');
-  // The player is part of the open call only; hidden (not removed) on the overview so scripts can still read it.
-  assert.equal(app.audioPlayer().props.style.display,'none');assert.equal(app.audioPlayer().props['data-speaker'],'idle');assert.equal(app.audioPlayer().props.className,'oc-player');
+  // No fixed player: the console root carries the playback state for the scripts (speaker, playing, call).
+  assert.equal(app.consoleView().props.id,'orange-console');assert.equal(app.consoleView().props['data-speaker'],'idle');assert.equal(app.consoleView().props['data-playing'],'false');
   app.state.view='call';app.state.selId=app.state.calls[0].id;app.waveMode={amp:0,color:'#3a3a3a'};  // renderVals() sets waveMode before each render
-  assert.equal(app.audioPlayer().props.style.display,undefined);assert.equal(app.consoleView().props.className,'oc');
-  assert.ok(!/Appelant|Opérateur|Assistant IA|\d\d:\d\d/.test(texts(app.audioPlayer()).join(' ')),'bare transport strip: no speaker label, call line, clock or tags');
-  assert.ok(JSON.stringify(app.audioPlayer()).includes('"id":"orange-player-seek"')&&JSON.stringify(app.audioPlayer()).includes('"id":"orange-player-toggle"'));
+  assert.equal(app.consoleView().props.className,'oc');assert.ok(!JSON.stringify(app.renderVals()).includes('oc-player'),'no player strip anywhere');
   const groups=bar.children[0].children.map(g=>g.props.className);assert.deepEqual(groups,['oc-bargroup','oc-bargroup oc-barstatus']);
   assert.ok(ids(bar.children[0].children[1]).includes('orange-settings')&&!ids(bar.children[0].children[1]).includes('orange-session-progress'),'status group: settings, not the counter');
 }

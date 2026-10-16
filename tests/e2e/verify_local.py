@@ -70,7 +70,7 @@ TIMING_JS = """(() => {
   HTMLMediaElement.prototype.play=function(...args){
     if(!this.orangeTiming){this.orangeTiming=true;window.orangeMedia=this;
       this.addEventListener('playing',()=>{const at=Date.now();setTimeout(()=>{
-        const bar=document.querySelector('#orange-audio-player');
+        const bar=document.querySelector('#orange-console');
         this.orangeRole=bar?.dataset.speaker;this.orangeCall=bar?.dataset.call||'';
         window.audioTiming.push({event:'playing',role:this.orangeRole,call:this.orangeCall,at});},40);});
       this.addEventListener('ended',()=>window.audioTiming.push({event:'ended',role:this.orangeRole,call:this.orangeCall,at:Date.now()}));
@@ -303,8 +303,8 @@ def wait_for(page, expression, timeout=60000):
 
 
 def speaking(role, call=None):
-    test = f"document.querySelector('#orange-audio-player')?.dataset.speaker==='{role}' && document.querySelector('#orange-audio-player').dataset.playing==='true'"
-    return test + (f" && document.querySelector('#orange-audio-player').dataset.call==='{call}'" if call else "")
+    test = f"document.querySelector('#orange-console')?.dataset.speaker==='{role}' && document.querySelector('#orange-console').dataset.playing==='true'"
+    return test + (f" && document.querySelector('#orange-console').dataset.call==='{call}'" if call else "")
 
 
 def export(page):
@@ -465,7 +465,7 @@ def main():
         receipt["checks"]["selecting_a_call_enables_its_sound"] = "PASS"
         if not args.gaps_only:
             # The restored waveform draws while someone speaks; the spoken line carries a cursor.
-            wait_for(page, "document.querySelector('#orange-audio-player').dataset.playing==='true' && document.body.innerText.includes('▍')", 30000)
+            wait_for(page, "document.querySelector('#orange-console').dataset.playing==='true' && document.body.innerText.includes('▍')", 30000)
             drawn = page.evaluate("""(() => {const cv=document.querySelector('canvas');const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
               let n=0;for(let i=3;i<d.length;i+=4)if(d[i])n++;return n;})()""")
             assert drawn > 500, drawn
@@ -488,7 +488,7 @@ def main():
 
         # 3. Takeover while the caller speaks: the caller finishes, the AI stays silent.
         wait_for(page, speaking("caller") + " && window.orangeMedia.currentTime>0.3", 60000)
-        call = page.locator("#orange-audio-player").get_attribute("data-call")
+        call = page.locator("#orange-console").get_attribute("data-call")
         launched = arrived(page)
         page.locator(".oc-head").get_by_text("Prendre l'appel", exact=True).click()  # nve-button: match the slotted label
         page.get_by_text("Prise en charge opérateur · assistance IA", exact=True).wait_for(timeout=5000)

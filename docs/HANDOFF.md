@@ -7,8 +7,8 @@ hosts, credentials and partner contacts are deliberately kept outside it.
 
 A French emergency-call console for a demonstration: synthetic callers (100 scripted scenarios, 20 incident
 families) are handled by an AI assistant — speech-to-text, contextual dialogue through an LLM, text-to-speech —
-while a human operator supervises a *vacation* (shift): listens to calls, takes them over, reviews and files
-them. Nothing is real: no telephony, no dispatch, no transmission to emergency services, no diagnosis.
+while a human operator supervises a shift (called *session* on screen; `vacation` survives only in code and database
+names): listens to calls, takes them over, reviews and files them. Nothing is real: no telephony, no dispatch, no transmission to emergency services, no diagnosis.
 
 ## Architecture in one screen
 
@@ -33,8 +33,8 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   `requested_location`) so the console and the latency log show them. Remote turns take no Gemma gate slot.
 - `frontend/build.mjs` embeds `src/logic.js` (with `src/samples.mjs` spliced in) and the `.oc-*` CSS into the mockup's
   template; every patch asserts it applied. The mockup is an external asset (`frontend/mockup/urgence.html` or `ORANGE_MOCKUP`).
-- `frontend/src/logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls`,
-  `consoleView`, `audioPlayer`, `soundLabel`. All markup goes through `h()`; buttons are NVIDIA Elements
+- `frontend/src/logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls` and
+  `consoleView` (the mockup's own header labels and audio tag are removed by the build). All markup goes through `h()`; buttons are NVIDIA Elements
   `nve-button` via `button(label, action, disabled, id, title, {emphasis, tone, key, size})`.
 - Models and endpoints are environment-driven (`ORANGE_LLM_MODEL`, `ORANGE_CALLER_MODEL`, `ORANGE_TTS_MODEL`,
   `ORANGE_STT_MODELS`, `ORANGE_TTS_VOICES`, `ORANGE_*_URL`, `ORANGE_*_LABEL`); `/api/health` publishes them under
@@ -48,10 +48,9 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   `#orange-session-progress` (inside the Analytique panel: open it first, see the harness's `open_analytics`),
   `#orange-settings`, `#orange-tools`, `#orange-new`, `#orange-scenario`, `#orange-stt`, `#orange-export`,
   `#orange-user-call`, `#orange-theme`, `#orange-site` (only with caller sites), `#orange-close`, `#orange-retry`,
-  `#orange-next`, `#orange-decision`, `#orange-close-case`, `#orange-more-*` (incl. `latency`), `#orange-audio-player`
-  (always in the DOM, hidden on the overview, `data-speaker`/`data-playing`/`data-call`; a bare transport strip:
-  play/pause + position only, no speaker label, call line, clock or speaker tags), `#orange-player-toggle`,
-  `#orange-player-seek`.
+  `#orange-next`, `#orange-decision`, `#orange-close-case`, `#orange-more-*` (incl. `latency`), `#orange-console` (the
+  console root, present once a session exists; carries `data-speaker`/`data-playing`/`data-call` for the scripts — the
+  fixed audio player and its controls were removed on request, there is no play/pause control).
 - Transcript turns show the avatar only (robot for the AI, person for the caller and the operator; speaker and time in
   the avatar's tooltip), no speaker label or clock in front of the bubble; system lines have no head at all.
 - Caller identity: `c.phone` is a fictional European number generated per sample (`fakePhone`: mostly +33 in the ARCEP

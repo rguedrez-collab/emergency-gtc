@@ -29,19 +29,17 @@ template=swap(template,scriptPattern,(_,a,b,c)=>a+logic+c);
 template=swap(template,/(<div style="height:3px;background:linear-gradient[^>]*><\/div>)\n\n<sc-if value="\{\{ isFloor \}\}"[\s\S]*<\/sc-if>\n(<\/div>\n<\/x-import>\n<\/x-dc>)/,
   (_,bar,tail)=>bar+'\n<div style="padding:0;">{{ consoleView }}</div>\n'+tail);
 // The header keeps the brand, the title and the user only: the mockup's shift clock (« Vacation {{ shiftTime }} ») and
-// its sound tag go (asked away); the sound state lives in the player of the open call.
+// its sound tag go (asked away); the sound state shows in the wave row of the open call.
 template=swap(template,'<span style="font-family:var(--font-mono);font-size:13px;color:var(--text-color-secondary);">Vacation {{ shiftTime }}</span>','');
 template=swap(template,/<x-import component-from-global-scope="KuiFoundationsReact.Tag"[^>]*>\{\{ audioLabel \}\}<\/x-import>/,'');
-// The player is fixed at the bottom; the console's height (see .oc) leaves it 110px, so no spacer: the page must not scroll.
-template=swap(template,'</x-import>\n</x-dc>', '{{ audioPlayer }}</x-import>\n</x-dc>');
 const controls=`<div class="oc-topbar">
 {{ liveControls }}
 </div>`;
 template=swap(template,'</x-import>\n<div style="height:3px', '</x-import>\n'+controls+'\n<div style="height:3px');
 // Console styles use the mockup's theme tokens; new controls use current Elements.
 const css=`
-/* --oc-top is measured by the controller (fit): the console ends --oc-space above the viewport bottom, where the fixed
-   transport strip (play/pause + position, ~50px) sits while a call is open; on the overview (no player) it runs to the bottom. */
+/* --oc-top is measured by the controller (fit): the console runs from under the bar to the viewport bottom (no fixed player;
+   playback state is exposed as data attributes on #orange-console). The page must not scroll. */
 :root{--oc-caller:#e6c54a;--oc-ai:#76b900;--oc-op:#FF7900;--oc-idle:#3a3a3a;}
 nve-button[data-tone=quiet]{--background:transparent;--border:1px solid transparent;}
 nve-button[data-tone=danger]{--background:transparent;--border:1px solid rgba(255,122,122,.6);--color:#ff8a8a;}
@@ -59,9 +57,7 @@ nve-button[data-tone=ai]{--background:transparent;--border:1px solid rgba(118,18
 .oc-chip-demo{border-color:rgba(243,193,75,.45);color:#f3c14b;}
 .oc-chip-demo::before{content:"";width:7px;height:7px;border-radius:50%;background:#f3c14b;flex:none;}
 .oc-entrycard{display:flex;flex-direction:column;align-items:center;gap:24px;max-width:760px;}
-.oc{display:grid;grid-template-columns:380px minmax(0,1fr) 340px;height:calc(100vh - var(--oc-top,124px) - var(--oc-space,54px));min-height:520px;}
-.oc.oc-full{height:calc(100vh - var(--oc-top,124px) - var(--oc-space-full,0px));}
-.oc-player{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:8px 16px;background:var(--background-color-surface-raised);border-top:1px solid var(--border-color-base);}
+.oc{display:grid;grid-template-columns:380px minmax(0,1fr) 340px;height:calc(100vh - var(--oc-top,124px) - var(--oc-space,0px));min-height:520px;}
 .oc-kpis,.oc-services,.oc-chip-demo{border-color:transparent;background:transparent;box-shadow:none;}
 @media (max-width:1400px){.oc{grid-template-columns:340px minmax(0,1fr) 300px;}}
 @media (max-width:1100px){.oc{grid-template-columns:320px minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,34%);}
@@ -249,7 +245,6 @@ html.sober .oc-turn-caller .oc-bubble{background:#f3f4f6;border-color:#e3e6ea;}
 html.sober .oc-turn-ai .oc-bubble{background:#000;border-color:#000;}
 html.sober .oc-turn-op .oc-bubble{background:#fff4e8;border-color:#ffd2a8;}
 html.sober .oc-turn-ai .oc-who,html.sober .oc-turn-ai .oc-cursor,html.sober .oc-status{color:#2f7a12;}
-html.sober .oc-player{border-top:1px solid #d9dde3;}
 html.sober .oc-tile{background:#fff;border-color:#e3e6ea;} html.sober .oc-event,html.sober .oc-siterow{border-bottom-color:#eef0f3;} html.sober .oc-arrivalbar{background:#e6e9ee;}
 html.sober .oc-site-warn{color:#8a4b00;}
 html.sober .oc-emptybox,html.sober .oc-entrycard{border-color:#d9dde3;}
@@ -274,7 +269,6 @@ html.dark .oc-chip-demo{border-color:#ff7900;color:#ffb366;} html.dark .oc-chip-
 html.dark .oc-turn-caller .oc-bubble{background:#1c2026;border-color:#2b3139;}
 html.dark .oc-turn-ai .oc-bubble{background:#000;border-color:#3a424c;}
 html.dark .oc-turn-op .oc-bubble{background:#2a1f14;border-color:#5a3a1a;}
-html.dark .oc-player{background:#15181c;border-top:1px solid #2b3139;}
 html.dark .oc-tile{background:#1a1e23;border-color:#2b3139;}
 html.dark nve-button{--background:#1c2026;--border:1px solid #3a424c;--color:#fff;}
 html.dark nve-button[interaction=emphasis]{--background:#000;--border:1px solid #5a636e;--color:#fff;}
@@ -287,7 +281,7 @@ html.dark nve-button[data-tone=ai]{--background:transparent;--border:1px solid #
    Only top-level surfaces blur the backdrop; nested tiles are plain translucent fills (cheaper, same look). */
 /* Dark glass: panels are a dark tint over the blurred field, so text always sits on a dark surface and the colour only shows at the rims. */
 html.glass{--g-bg:rgba(14,16,26,.68);--g-bg2:rgba(255,255,255,.075);--g-line:rgba(255,255,255,.15);--g-hi:rgba(255,255,255,.22);
-  --g-blur:blur(26px) saturate(170%);--g-shadow:0 12px 40px rgba(0,0,0,.42);--g-r:10px;--g-r2:6px;--oc-space:76px;--oc-space-full:14px;}  /* one flat radius scale: 10px surfaces, 6px tiles */
+  --g-blur:blur(26px) saturate(170%);--g-shadow:0 12px 40px rgba(0,0,0,.42);--g-r:10px;--g-r2:6px;--oc-space:14px;}  /* one flat radius scale: 10px surfaces, 6px tiles */
 html.glass body{position:relative;z-index:0;background:#06080f;}
 html.glass body::before{content:"";position:fixed;inset:-25%;z-index:-1;pointer-events:none;filter:blur(48px);
   background:radial-gradient(30% 36% at 6% 8%,rgba(255,121,0,.36),transparent 62%),radial-gradient(28% 34% at 95% 4%,rgba(118,185,0,.24),transparent 60%),
@@ -300,8 +294,8 @@ html.glass .nv-dark{--background-color-surface-sunken:transparent;--background-c
 html.glass .nv-app-bar-root{background:rgba(8,10,18,.62);backdrop-filter:var(--g-blur);-webkit-backdrop-filter:var(--g-blur);border-bottom:1px solid var(--g-line);}
 html.glass .oc-topbar{border-bottom:none;padding:10px 14px 4px;}
 html.glass .oc-topbar+div{margin:0 14px 10px;border-radius:999px;opacity:.85;}  /* the mockup's orange/green accent line becomes an inset hairline */
-html.glass .oc-bar{position:relative;}  /* the player is already positioned (fixed) */
-html.glass .oc-bar::before,html.glass .oc-player::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+html.glass .oc-bar{position:relative;}
+html.glass .oc-bar::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,0) 40%);}  /* specular sheen, kept faint under text */
 html.glass .oc-bar{background:var(--g-bg);backdrop-filter:var(--g-blur);-webkit-backdrop-filter:var(--g-blur);border:1px solid var(--g-line);border-radius:var(--g-r);
   padding:8px 12px;box-shadow:var(--g-shadow),inset 0 1px 0 var(--g-hi);}
@@ -331,8 +325,6 @@ html.glass .oc-mode{border-radius:var(--g-r2);}
 html.glass .oc-turn-caller .oc-bubble{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.16);border-radius:6px 6px 6px 2px;box-shadow:inset 0 1px 0 rgba(255,255,255,.14);}
 html.glass .oc-turn-ai .oc-bubble{background:rgba(0,0,0,.8);border-color:rgba(255,255,255,.2);border-radius:6px 6px 2px 6px;}
 html.glass .oc-turn-op .oc-bubble{background:rgba(255,121,0,.16);border-color:rgba(255,121,0,.5);border-radius:6px 6px 2px 6px;}
-html.glass .oc-player{left:14px;right:14px;bottom:14px;border-radius:var(--g-r);background:rgba(12,14,24,.74);backdrop-filter:var(--g-blur);-webkit-backdrop-filter:var(--g-blur);
-  border:1px solid var(--g-line);box-shadow:var(--g-shadow),inset 0 1px 0 var(--g-hi);}
 html.glass .oc button:not(.oc-more){border-radius:999px;}
 html.glass .oc-talkinput input{border-radius:999px;}
 html.glass .oc-col::-webkit-scrollbar,html.glass .oc-tr::-webkit-scrollbar{width:8px;}
@@ -351,7 +343,7 @@ if(JSON.parse(output.match(pattern)[2])!==template)throw Error('Bundle round-tri
 for(const forbidden of ['speechSynthesis','SpeechRecognition','get_medical_alerts','alert_units','request_aml_fix','const EXTRA']) {
   if(logic.includes(forbidden))throw Error('Legacy simulation leaked: '+forbidden);
 }
-for(const needed of ['{{ liveControls }}','{{ consoleView }}','{{ audioPlayer }}']) {
+for(const needed of ['{{ liveControls }}','{{ consoleView }}']) {
   if(!template.includes(needed))throw Error('Binding not mounted: '+needed);
 }
 for(const gone of ['{{ soundLabel }}','{{ audioLabel }}','{{ shiftTime }}']) {

@@ -970,7 +970,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, voices())
         elif path == "/api/session":
             state = load_state()
-            self.reply(200, state) if state else self.reply(404, {"error": "aucune vacation enregistrée"})
+            self.reply(200, state) if state else self.reply(404, {"error": "aucune session enregistrée"})
         elif path == "/api/latency":
             self.reply(200, latency_report())
         else:
@@ -1012,7 +1012,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             saved = save_state(json.loads(self.rfile.read(length)))
             if saved is None:
-                self.reply(409, {"error": "Vacation suivie depuis un autre poste."})
+                self.reply(409, {"error": "Session suivie depuis un autre poste."})
                 return
             self.reply(200, {"saved": True, "savedAt": saved})
         except (ValueError, TypeError) as exc:

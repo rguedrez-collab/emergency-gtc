@@ -285,7 +285,7 @@ class Component extends DCLogic {
     const s=this.state.session;if(!['running','paused'].includes(s.status))return;
     this.setState({session:{...s,status:'stopped'}});
     // Calls a human has taken over stay open until that human closes them.
-    this.state.calls.filter(c=>c.auto&&c.sessionId===s.id&&!c.ended&&!c.takenOver).forEach(c=>this.endCall(c,'Vacation close · à revoir'));
+    this.state.calls.filter(c=>c.auto&&c.sessionId===s.id&&!c.ended&&!c.takenOver).forEach(c=>this.endCall(c,'Session close · à revoir'));
   }
   // Sound only for the call the user has opened: the overview is silent.
   audible() {return this.state.view==='call'?this.state.selId:null;}
@@ -643,7 +643,7 @@ class Component extends DCLogic {
     const pending=this.dialogue(c).at(-1)?.role==='caller',s=this.state.session;
     // No running session can continue this sample: answer the caller, then close it for review.
     if(c.auto&&!(c.sessionId===s.id&&['running','paused'].includes(s.status))){
-      this.run(c,async()=>{if(pending)await this.analyzeCall(c);this.endCall(c,'Vacation close · à revoir');});return;}
+      this.run(c,async()=>{if(pending)await this.analyzeCall(c);this.endCall(c,'Session close · à revoir');});return;}
     // An unanswered caller line gets the AI reply before the sample continues.
     if(pending)this.run(c,()=>this.analyzeCall(c));else this.setPhase(c,'gap');
   }
@@ -674,13 +674,12 @@ class Component extends DCLogic {
     c.audit.push({action:'simulated_dispatch',actor:'demo_operator',at:new Date().toISOString(),external_action:false});
     this.endCall(c,'Décision enregistrée');
   }
-  toggleAudio() {this.unlockAudio();this.setState({audioOn:true});}
   download() {
     const data={mode:'demonstration',exported_at:new Date().toISOString(),dispatch_connected:false,session:this.state.session,
       caller_sites:(this.state.callers||[]).map(s=>s.name),latency:this.state.latency,
       calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,...c})=>c)};
     const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-    const a=document.createElement('a');a.href=url;a.download='orange-vacation-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const a=document.createElement('a');a.href=url;a.download='orange-session-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   // ---------------- Persistence: the gateway keeps the vacation so a reload restores it ----------------
   // One tab owns the vacation (its id lives in sessionStorage, so a reload keeps it). A second tab that finds a live
@@ -701,7 +700,7 @@ class Component extends DCLogic {
     fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:final&&body.length<60000}).then(r=>{
       if(this.disposed)return;
       if(r.status===409){this.readOnly=true;const s=this.state.session;
-        this.setState({session:s.status==='running'?{...s,status:'paused'}:s,notice:'Vacation reprise depuis un autre poste · lecture seule ici'});}
+        this.setState({session:s.status==='running'?{...s,status:'paused'}:s,notice:'Session reprise depuis un autre poste · lecture seule ici'});}
       else if(r.ok)this.takeover=false;
       else this.lastPersisted=null;
     }).catch(()=>{this.lastPersisted=null;});
@@ -723,12 +722,12 @@ class Component extends DCLogic {
         if(call.liveCaller&&!call.ended){call.ended=true;call.phase='ended';call.endLabel='Appel de test interrompu';call.endedAt=now-this.started;}
         return call;});
       const session={...s.session,status:this.readOnly&&s.session.status==='running'?'paused':s.session.status};
-      this.setState({calls,session,view:'floor',selId:null,shift:now-this.started,notice:this.readOnly?'Vacation suivie depuis un autre poste · lecture seule ici':null},()=>this.pumpSession());
+      this.setState({calls,session,view:'floor',selId:null,shift:now-this.started,notice:this.readOnly?'Session suivie depuis un autre poste · lecture seule ici':null},()=>this.pumpSession());
       this.lastPersisted=null;return true;
     }catch(e){return false;}
   }
   resetAll() {
-    if(!window.confirm('Effacer la vacation enregistrée sur la passerelle et recharger la page ?'))return;
+    if(!window.confirm('Effacer la session enregistrée sur la passerelle et recharger la page ?'))return;
     this.readOnly=true;
     fetch('/api/session/clear',{method:'POST'}).catch(()=>{}).finally(()=>location.reload());
   }
@@ -764,11 +763,11 @@ class Component extends DCLogic {
     // everything secondary sits behind two toggles — « Analytique » (counters, latencies) and « Réglages » (theme, voice,
     // export, test calls) — actions on demand.
     const actions=active?[this.button(s.status==='paused'?'Reprendre':'Pause',()=>this.toggleSession(),false,'orange-pause-session'),
-        this.button('Clore la vacation',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})]
-      :[this.button(s.status==='idle'?'Ouvrir la vacation':'Nouvelle vacation',()=>this.startSession(),false,'orange-start-session'),
+        this.button('Clore la session',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})]
+      :[this.button(s.status==='idle'?'Ouvrir la session':'Nouvelle session',()=>this.startSession(),false,'orange-start-session'),
         this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call',undefined,{tone:'quiet'})];
     const status=[...(this.state.notice?[chip('notice',this.state.notice,'warn')]:[]),services,
-      this.button(this.state.analytics?'Analytique ▴':'Analytique ▾',()=>this.setState({analytics:!this.state.analytics}),false,'orange-analytics','Compteurs de la vacation et latences',{tone:'quiet'}),
+      this.button(this.state.analytics?'Analytique ▴':'Analytique ▾',()=>this.setState({analytics:!this.state.analytics}),false,'orange-analytics','Compteurs de la session et latences',{tone:'quiet'}),
       this.button(this.state.settings?'Réglages ▴':'Réglages ▾',()=>this.setState({settings:!this.state.settings}),false,'orange-settings',undefined,{tone:'quiet'})];
     const analytics=this.state.analytics?this.analyticsPanel(progress):null;
     const settings=this.state.settings?h('div',{key:'settings',className:'oc-settings'},
@@ -778,7 +777,7 @@ class Component extends DCLogic {
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
-      this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la vacation (JSON)'),
+      this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),
       ...(active?[this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call')]:[]),
       this.button(this.state.tools?'Masquer les outils de test':'Outils de test',()=>this.setState({tools:!this.state.tools}),false,'orange-tools'),
       ...(this.state.tools?[h('span',{key:'sep',className:'oc-vsep'}),
@@ -808,20 +807,20 @@ class Component extends DCLogic {
       h('div',{className:'oc-pills'},h('span',{className:'oc-pill'},`${AI_CALLS} appels pris en charge en parallèle`),h('span',{className:'oc-pill'},'Transcription et synthèse en temps réel'),h('span',{className:'oc-pill'},'Revue humaine à chaque étape')),
       h('nve-button',{id:'orange-start-session',size:'lg',interaction:'emphasis',
         style:{'--height':'72px','--font-size':'22px','--padding':'0 44px'},
-        ref:el=>{if(el)el.onclick=()=>this.startSession();}},'Ouvrir la vacation'),
+        ref:el=>{if(el)el.onclick=()=>this.startSession();}},'Ouvrir la session'),
       h('p',{'nve-text':'body sm muted'},'Les appels entrants sont pris en charge par l’assistance IA et affichés sans audio. Ouvrez un appel pour l’écouter ou le reprendre.'),
       h('nve-button',{id:'orange-user-call',size:'lg',ref:el=>{if(el)el.onclick=()=>this.startUserCall();}},'Appel de test · microphone'),
       h('p',{'nve-text':'body sm muted'},'Vous tenez le rôle de l’appelant ; l’assistance IA vous répond.')));
   }
   arrivalLabel() {
     const s=this.state.session,wait=Math.ceil(((this.nextArrivalAt||0)-Date.now())/1000);
-    return s.status==='paused'?'Vacation en pause':s.status!=='running'?'Vacation fermée':
+    return s.status==='paused'?'Session en pause':s.status!=='running'?'Session fermée':
       s.launched>=s.total?`File vide · ${s.total} appels reçus`:this.aiCalls()>=AI_CALLS?`Capacité IA atteinte (${AI_CALLS} appels) · prochain appel à la prochaine clôture ou prise en charge`:
       wait>0?`Prochain appel dans ${wait} s`:'Prochain appel imminent';
   }
   noAlertsLabel() {
     return ['running','paused'].includes(this.state.session.status)?'Aucun appel en attente de revue. Un appel apparaît ici après sa première analyse.':
-      'Aucun appel en attente de revue. Ouvrez la vacation ou lancez un appel de test.';
+      'Aucun appel en attente de revue. Ouvrez la session ou lancez un appel de test.';
   }
   activity(c) {const p=this.state.playback;
     return p&&p.callId===c.id&&!p.paused?SPEAKING[p.speaker]:STATUS[c.phase]||'Traitement…';}
@@ -865,7 +864,8 @@ class Component extends DCLogic {
   consoleView() {
     if(this.state.session.status==='idle'&&!this.state.calls.length)return this.entry();
     const m=this.consoleModel();
-    return h('div',{className:'oc'+(this.state.view==='call'?'':' oc-full')},this.callList(m),this.callPane(m),this.copilot(m));
+    const a=this.playbackState();
+    return h('div',{id:'orange-console',className:'oc'+(this.state.view==='call'?'':' oc-full'),'data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.callList(m),this.callPane(m),this.copilot(m));
   }
   callList(m) {
     const section=(label,dot,count,extra)=>h('div',{key:'s:'+label,className:'oc-sec'},h('span',{className:'oc-dot',style:{background:dot}}),h('span',null,label),
@@ -1134,32 +1134,16 @@ class Component extends DCLogic {
   footnote() {
     return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?footnoteText(this.labels()):'Signal IA ≠ gravité clinique · validation humaine requise'),this.moreButton('note'));
   }
-  audioPlayer() {
+  // What is audible right now, exposed as data attributes on the console root (scripts read them; the user sees it in
+  // the wave row and the transcript cursor). The fixed audio player strip was removed on request.
+  playbackState() {
     const p=this.state.playback,rec=this.recording;
-    const role=rec?(rec.who==='Vous'?'operator':'caller'):(p?.speaker||'idle');
-    const current=rec?(Date.now()-rec.started)/1000:p?.current||0,duration=p?.duration||0;
-    const who=p?.callId||rec?.c.id||'';
-    const playing=!!rec||!!p&&!p.paused;
-    // A bare transport strip for the open call — play/pause and the position; who speaks and what is said show in the
-    // transcript and the wave row (speaker labels, call line, clock and speaker tags were removed on request). On the
-    // start screen and the overview it stays in the DOM (scripts read its data attributes) but hidden, and the console
-    // takes the full height (.oc-full).
-    const shown=this.state.view==='call';
-    return h('section',{id:'orange-audio-player',className:'oc-player','data-speaker':role,'data-playing':String(playing),'data-call':who,
-      'aria-label':'Lecteur audio de l’appel','aria-hidden':shown?undefined:'true',style:{...(shown?{}:{display:'none'})}},
-      h('div',{'nve-layout':'row gap:lg align:vertical-center'},
-        this.button(p?.paused?'▶ Lecture':'Ⅱ Pause',()=>{if(this.player?.paused)this.player.play().then(()=>{this.audioBlocked=false;},()=>{});else this.player?.pause();},!p,'orange-player-toggle',
-          this.audioBlocked?'Lecture bloquée par le navigateur : cliquez dans la page':rec?'Micro ouvert':undefined),
-        h('div',{style:{flex:'1',minWidth:'220px'}},
-          h('nve-range',{layout:'horizontal-inline'},
-            h('input',{id:'orange-player-seek',type:'range',min:0,max:duration||1,step:0.1,value:current,
-              disabled:!p||!duration,'aria-label':'Position dans la prise de parole',
-              onChange:e=>{if(this.player&&duration)this.player.currentTime=Number(e.target.value);}})))));
+    return {role:rec?(rec.who==='Vous'?'operator':'caller'):(p?.speaker||'idle'),playing:!!rec||!!p&&!p.paused,who:p?.callId||rec?.c.id||''};
   }
   renderVals() {
     const c=this.sel(),p=this.state.playback,playing=!!c&&!!p&&p.callId===c.id&&!p.paused;
     // Waveform colour and amplitude follow what is actually audible.
     this.waveMode=this.state.mic?{amp:1,color:OP}:playing?{amp:1,color:WAVE[p.speaker]}:{amp:c?.busy?0.12:0.06,color:'var(--oc-idle)'};
-    return {density:this.props.density??'standard',liveControls:this.controls(),consoleView:this.consoleView(),audioPlayer:this.audioPlayer()};
+    return {density:this.props.density??'standard',liveControls:this.controls(),consoleView:this.consoleView()};
   }
 }
