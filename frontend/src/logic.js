@@ -142,7 +142,7 @@ class Component extends DCLogic {
   }
   async refreshHealth() {
     try {const r=await fetch('/api/health',{signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Connexion refusée');
-      const h=await r.json();const g=h.guardrail||{};const guard=g.configured?(h.services?.guardrail?.ready===false?' · garde-fou injoignable':' · garde-fou '+(g.name||'')+' actif'+(g.mode?' ('+g.mode+')':'')):'';
+      const h=await r.json();const g=h.guardrail||{};const guard=g.configured?(g.enabled===false?' · garde-fou désactivé':h.services?.guardrail?.ready===false?' · garde-fou injoignable':' · garde-fou '+(g.name||'')+' actif'+(g.mode?' ('+g.mode+')':'')):'';
       const m=h.models||{},stt=Array.isArray(m.stt)&&m.stt.length?m.stt:['nemotron','parakeet'];
       if(!this.disposed)this.setState({guardrail:g,services:h.services||{},models:m,stt:stt.includes(this.state.stt)?this.state.stt:stt[0],callers:Array.isArray(h.callers)?h.callers:[],
         health:(h.ready?'Modèles connectés · STT / '+(m.llm_label||'Gemma 4')+' / '+(m.tts_label||'Voxtral'):'Modèle indisponible')+guard});
@@ -188,10 +188,23 @@ class Component extends DCLogic {
     const core=[['stt','STT','Transcription · '+L.sttLabel],['gemma','Analyse','Analyse et dialogue · '+L.llm],['voxtral','Voix','Synthèse vocale · '+L.tts]];
     const states=core.map(([key])=>ready(key));
     const dots=states.some(x=>x===false)?core.map(([key,label,title],i)=>dot(key,label,states[i],title)):[];
-    if(g.configured)dots.push(dot('guard','Garde-fou · '+(g.name||'IA'),svc?.guardrail?.ready??true,`${g.name||'Garde-fou IA'} actif${g.mode?' · '+g.mode:''}`));
+    // The guardrail chip is a toggle: the configuration stays, the AI's turns bypass the proxy while it is off.
+    if(g.configured){const on=g.enabled!==false,state=on?(svc?.guardrail?.ready??true):undefined;
+      dots.push(h('button',{key:'guard',type:'button',id:'orange-guardrail-toggle',className:'oc-svc oc-svc-toggle oc-svc-'+(state===false?'warn':state?'ok':'off'),'aria-pressed':on?'true':'false',
+        title:on?`${g.name||'Garde-fou IA'} actif${g.mode?' · '+g.mode:''} · cliquer pour désactiver`:`${g.name||'Garde-fou IA'} désactivé · l’analyse va directement au modèle · cliquer pour réactiver`,
+        onClick:()=>this.toggleGuardrail()},'Garde-fou · '+(g.name||'IA')+(on?'':' · désactivé')));}
     // Caller sites are not a console outage (the built-in caller takes over), so they only appear when one is down.
     if(svc?.callers?.ready===false)dots.push(dot('sites','Sites appelants',false,'Un site appelant est injoignable · appelant intégré de la passerelle en repli'));
     return dots.length?h('span',{key:'services',className:'oc-chip oc-services',role:'status',title:this.state.health},...dots):null;
+  }
+  async toggleGuardrail() {
+    const g=this.state.guardrail||{};if(!g.configured||this.guardBusy)return;this.guardBusy=true;
+    try{
+      const r=await fetch('/api/guardrail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:g.enabled===false})});
+      if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json();
+      if(!this.disposed)this.setState({guardrail:d.guardrail||{...g,enabled:g.enabled===false}});
+    }catch(e){/* the chip keeps its state; the next health poll tells the truth */}
+    finally{this.guardBusy=false;}
   }
   touch() {if(!this.disposed)this.forceUpdate();}
   sel() {return this.state.calls.find(c=>c.id===this.state.selId);}
@@ -1260,7 +1273,8 @@ class Component extends DCLogic {
         for(const [dir,label] of [['request','propos de l’appelant'],['response','réponse de l’IA']])if(v[dir])
           body.push(h('span',{key:dir,className:'oc-muted'},label+' : '+this.guardLabel(v[dir])+(v[dir].scanners?.length?' · '+v[dir].scanners.map(x=>String(x.scannerId||'').slice(0,8)).join(', '):'')));
         if(v.message&&v.kind!=='blocked')body.push(h('span',{key:'msg',className:'oc-muted'},v.message));}}
-    return h('div',{key:'Garde-fou',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Garde-fou IA'),this.moreButton('guard')),...body);
+    return h('div',{key:'Garde-fou',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Garde-fou IA'),this.moreButton('guard')),
+      ...(g.configured&&g.enabled===false?[h('span',{key:'off',className:'oc-signal'},'Désactivé par l’opérateur · l’analyse va directement au modèle')]:[]),...body);
   }
   copilot(m) {
     const c=this.sel(),show=!!c&&this.state.view==='call',s=this.state.session;

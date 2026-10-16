@@ -727,6 +727,21 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(!('lineQueue' in app.snapshot().calls[0])&&!('opSample' in app.snapshot().calls[0]),'transient line state stays out of the snapshot');
   delete context.fetch;
 }
+// The guardrail chip is a toggle: one click switches the AI's path off through the gateway, the next one switches it back on.
+{
+  const app=make();let posted=null;
+  context.fetch=async(url,opts)=>{if(opts&&opts.method==='POST'){posted=JSON.parse(opts.body);return {ok:true,json:async()=>({guardrail:{configured:true,enabled:posted.enabled,name:'F5 AI Guardrails',mode:'proxy'}})};}
+    return {ok:true,json:async()=>({ready:true,services:{guardrail:{ready:true}},guardrail:{configured:true,enabled:true,name:'F5 AI Guardrails',mode:'proxy'},models:{}})};};
+  context.AbortSignal={timeout:()=>undefined};
+  await app.refreshHealth();
+  let chip=texts(app.servicesChip()).join(' ');assert.ok(chip.includes('Garde-fou · F5 AI Guardrails')&&!chip.includes('désactivé'),chip);
+  await app.toggleGuardrail();assert.deepEqual(posted,{enabled:false});assert.equal(app.state.guardrail.enabled,false);
+  chip=texts(app.servicesChip()).join(' ');assert.ok(chip.includes('Garde-fou · F5 AI Guardrails · désactivé'),chip);
+  assert.ok(texts(app.guardBlock(null)).join(' ').includes('Désactivé par l’opérateur'),'the copilot says so too');
+  await app.toggleGuardrail();assert.deepEqual(posted,{enabled:true});assert.equal(app.state.guardrail.enabled,true);
+  await app.refreshHealth();assert.ok(!app.state.health.includes('désactivé'));
+  delete context.fetch;
+}
 // Tool calls: the AI's proposals land in « Actions · outils »; the lookup runs at once, a dispatch waits for the operator.
 {
   const app=make(),c=app.createCall(false);app.append(c,'Appelant','Il y a le feu au huit cours Gambetta à Lyon, mon voisin est blessé','typed_test');
@@ -759,4 +774,4 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-console.log('PASS: 56 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+console.log('PASS: 57 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

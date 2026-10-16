@@ -66,8 +66,25 @@ GUARDRAIL_HEADERS = {"x-ai-security-outcome": "outcome", "x-ai-security-scan-id"
 BLOCK_WORDS = re.compile(r"block|bloqu|policy|politique|guardrail|garde-fou|violation|not allowed|refus|interdit", re.I)
 
 
+# The operator's toggle (the console's « Garde-fou » chip): the guardrail stays configured, the AI's turns bypass it while off.
+GUARDRAIL_SWITCH = {"enabled": True, "changed_at": None}
+
+
+def guardrail_configured():
+    return os.environ.get("ORANGE_LLM_URL", GEMMA_DIRECT) != GEMMA_DIRECT or f5_config() is not None
+
+
 def llm_url(simulation=False):
+    if not simulation and not GUARDRAIL_SWITCH["enabled"]:
+        return GEMMA_DIRECT  # switched off from the console: the AI's turns go to the model directly
     return os.environ.get("ORANGE_CALLER_LLM_URL" if simulation else "ORANGE_LLM_URL", GEMMA_DIRECT)
+
+
+def guardrail_status():
+    cfg = f5_config()
+    return {"configured": guardrail_configured(), "enabled": GUARDRAIL_SWITCH["enabled"], "name": GUARDRAIL_NAME, "path": "/api/analyze",
+            "mode": (cfg["mode"] + " · hors bande") if cfg else ("proxy" if os.environ.get("ORANGE_LLM_URL", GEMMA_DIRECT) != GEMMA_DIRECT else None),
+            "caller_simulation_guarded": llm_url(True) != GEMMA_DIRECT, "changed_at": GUARDRAIL_SWITCH["changed_at"]}
 
 
 # Out-of-band mode (F5 "Scans API", POST /backend/v1/scans): the gateway scans the caller's latest
@@ -85,7 +102,7 @@ def f5_config():
 
 
 def guardrail_active():
-    return llm_url() != GEMMA_DIRECT or f5_config() is not None
+    return guardrail_configured() and GUARDRAIL_SWITCH["enabled"]
 
 
 def f5_scan(text, direction):
@@ -1320,7 +1337,7 @@ def analyze(payload):
     messages = validate_messages(payload)
     start = time.monotonic()
     verdicts = []
-    if f5_config():
+    if f5_config() and GUARDRAIL_SWITCH["enabled"]:
         latest = next(m for m in reversed(messages) if m["role"] == "caller")
         text, verdict = guard_text(latest["text"], "request")
         verdicts.append(verdict)
@@ -1489,9 +1506,7 @@ def health():
             "model": MODEL, "stt": list(STT_MODELS), "tts": TTS_MODEL,
             "models": {"llm": MODEL, "llm_label": LLM_LABEL, "caller": CALLER_MODEL, "tts": TTS_MODEL, "tts_label": TTS_LABEL, "stt": list(STT_MODELS)},
             "callers": callers, "caller_fallback": os.environ.get("ORANGE_CALLER_FALLBACK", "1") != "0",
-            "guardrail": {"configured": guardrail_active(), "name": GUARDRAIL_NAME, "path": "/api/analyze",
-                          "mode": (cfg["mode"] + " · hors bande") if cfg else ("proxy" if llm_url() != GEMMA_DIRECT else None),
-                          "caller_simulation_guarded": llm_url(True) != GEMMA_DIRECT},
+            "guardrail": guardrail_status(),
             "mode": "demonstration", "dispatch_enabled": False}
 
 
@@ -1663,6 +1678,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def guardrail_route(self):
+        """POST /api/guardrail {"enabled": bool}: the operator's toggle. The guardrail stays configured; while off, the AI's
+        turns go to the model directly (the simulated caller's path is unchanged)."""
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+            self.reply(403, {"error": "cross-origin requests are disabled"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 1_000 or self.headers.get("Transfer-Encoding"):
+                self.reply(400, {"error": "invalid request size"})
+                return
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
+                raise ValueError('JSON object with "enabled": true|false required')
+        except (ValueError, TypeError) as exc:
+            self.reply(400, {"error": str(exc)})
+            return
+        if not guardrail_configured():
+            self.reply(400, {"error": "no guardrail configured"})
+            return
+        GUARDRAIL_SWITCH.update(enabled=payload["enabled"], changed_at=time.time())
+        self.reply(200, {"guardrail": guardrail_status()})
+
     def tool_route(self):
         origin = self.headers.get("Origin")
         if origin and urlsplit(origin).netloc != self.headers.get("Host"):
@@ -1723,6 +1762,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/tool":
             self.tool_route()
+            return
+        if path == "/api/guardrail":
+            self.guardrail_route()
             return
         if path not in ROUTE_GATES:
             self.reply(404, {"error": "not found; no dispatch API is implemented"})

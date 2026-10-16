@@ -940,6 +940,22 @@ class GatewayTests(unittest.TestCase):
                 status, body = self.request("/appel")
                 self.assertEqual(status, 200); self.assertIn("Maintenir pour parler".encode(), body)
 
+    def test_the_guardrail_can_be_switched_off_from_the_console(self):
+        with patch.dict(server.os.environ, {"ORANGE_LLM_URL": "http://proxy:8100/v1/chat/completions"}):
+            try:
+                self.assertEqual((server.guardrail_configured(), server.llm_url()), (True, "http://proxy:8100/v1/chat/completions"))
+                status, body = self.request("/api/guardrail", {"enabled": False}); data = json.loads(body)["guardrail"]
+                self.assertEqual((status, data["configured"], data["enabled"], data["mode"]), (200, True, False, "proxy"))
+                self.assertEqual(server.llm_url(), server.GEMMA_DIRECT, "the AI's turns go to the model directly while the toggle is off")
+                self.assertEqual(json.loads(self.request("/api/health")[1])["guardrail"]["enabled"], False)
+                status, body = self.request("/api/guardrail", {"enabled": True}); self.assertEqual((status, json.loads(body)["guardrail"]["enabled"]), (200, True))
+                self.assertEqual(server.llm_url(), "http://proxy:8100/v1/chat/completions")
+                self.assertEqual(self.request("/api/guardrail", {"enabled": "oui"})[0], 400)
+            finally:
+                server.GUARDRAIL_SWITCH.update(enabled=True, changed_at=None)
+        if not server.guardrail_configured():
+            self.assertEqual(self.request("/api/guardrail", {"enabled": False})[0], 400, "nothing to switch without a guardrail")
+
     def test_tool_calls_are_proposed_and_run(self):
         # Rules on the caller's words propose the obvious tools; the model may add valid ones; invented addresses are dropped.
         messages = [{"role": "caller", "text": "Il y a le feu au huit cours Gambetta à Lyon, mon voisin est blessé et ne respire plus."},

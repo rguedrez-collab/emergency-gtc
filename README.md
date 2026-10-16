@@ -155,7 +155,7 @@ to this gateway. Everything below is configured through environment variables (o
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ORANGE_GEMMA_URL` | `http://127.0.0.1:8000/v1/chat/completions` | LLM endpoint (OpenAI-compatible). |
-| `ORANGE_LLM_URL` | *= `ORANGE_GEMMA_URL`* | Where `/api/analyze` sends the AI operator's turn — point it at the guardrail proxy for option B. |
+| `ORANGE_LLM_URL` | *= `ORANGE_GEMMA_URL`* | Where `/api/analyze` sends the AI operator's turn — point it at the guardrail proxy for option B. The console's « Garde-fou » chip toggles it at runtime (`POST /api/guardrail`). |
 | `ORANGE_CALLER_LLM_URL` | *= `ORANGE_GEMMA_URL`* | Where the simulated caller's turn is sent. |
 | `ORANGE_STT_URL` | `http://127.0.0.1:8098` | STT service base (`/transcribe`). |
 | `ORANGE_TTS_URL` | `http://127.0.0.1:8011` | Speech service base (`/v1/audio/speech`, `/v1/models`). |

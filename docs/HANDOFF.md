@@ -137,6 +137,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   checklist's line in place; a second guard block stays an explicit failure.
 - Kubernetes: the console's state volume is mounted root-owned; the pod `fsGroup` (10001) in `deploy/k8s/base/console.yaml`
   is what lets the gateway create its SQLite database there.
+- Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
+  `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
+  off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration
+  stays and `/api/health` reports `guardrail.enabled`. The simulated caller's path is unchanged.
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the
   LLM path; block = HTTP 200 + substituted sentence + `X-Tee-Prompt-Action: blocked`). A block holds the call
   for a human; nothing is closed automatically.
