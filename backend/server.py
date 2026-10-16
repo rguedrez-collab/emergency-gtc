@@ -721,6 +721,7 @@ CALL_US = re.compile(r"(?:appelez|appeler|prévenez|contactez|joignez|alertez)\s
 GROUP_CUES = re.compile(r"\b(accident|voitures?|explos\w*|incendie|feu|fumée|effondr\w*|inond\w*|bagarre|foule|manifestation|plusieurs|des gens|des personnes|passagers?|élèves|enfants|"
                         r"dans le (?:bus|car|train|tram|métro)|(?:bus|car|camion|train|tram) (?:a|s'est|est|vient))\b", re.I)
 ADDRESS_ASK = re.compile(r"adresse|quelle rue|nom de la rue|numéro et le nom", re.I)  # the address question, really asked (« quelle ville » alone is not)
+ROOM_ASK = re.compile(r"où (?:se trouve|est|êtes-vous|vous trouvez|est-elle|est-il)[^?]{0,40}(?:salle de bain|couloir|cuisine|chambre|pièce|logement|bâtiment|immeuble|étage|maison)", re.I)
 # The caller cannot tell whether the person breathes: two concrete observation instructions, in turn, before anything else.
 UNSURE_BREATHING = re.compile(r"(?:sais|sait|vois|voit|arrive)\s+pas\s+(?:\w+\s+){0,3}si\s+(?:\w+\s+){0,3}respire|pas sûre? qu['’](?:elle|il) respire|si (?:elle|il) respire (?:encore|vraiment)", re.I)
 OBSERVE_STEPS = ("breathing", "response_check")
@@ -1086,7 +1087,7 @@ TOOL_RULES = {  # the caller's words that make a dispatch proposal obvious, what
     "dispatch_police": r"\b(arme|couteau|pistolet|fusil|menace|menaçant|violen\w*|agress\w*|frappe|frappé|cambriol\w*|voleur|bagarre|accident de la route|percut\w*|voitures?|scooter|camion|délit de fuite)\b",
 }
 ADDRESS = re.compile(r"\b(?:(?:\d{1,4}|un|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingt|trente)\s*(?:bis|ter)?\s*,?\s*)?"
-                     r"(?:rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b[^,.;!?]{3,70}", re.I)
+                     r"(?:rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b[^,.;!?]{3,70}(?-i:,\s*(?:à\s+)?[A-ZÀ-Ý][\wÀ-ÿ'’-]+(?:[ -][A-ZÀ-Ý][\wÀ-ÿ'’-]+)*)?", re.I)
 GEOCODER_URL = os.environ.get("ORANGE_GEOCODER_URL", "https://api-adresse.data.gouv.fr/search/")
 GEOCODER_ENABLED = os.environ.get("ORANGE_GEOCODER", "1") not in ("0", "false", "no")
 
@@ -1289,7 +1290,7 @@ def analyze(payload):
         else:
             reply, reply_source = fallback_reply(state, previous, bool(dispatched)), "checklist"
     # The address is the one question that cannot be paraphrased away (« où êtes-vous ? » gets the room, not the street).
-    if state["next"] in ("location", "location_again") and not ADDRESS_ASK.search(reply):
+    if state["next"] in ("location", "location_again") and (not ADDRESS_ASK.search(reply) or ROOM_ASK.search(reply)):
         reply, reply_source = QUESTIONS[state["next"]], "checklist"
     # Help validated by the operator is announced once, plainly, when the model did not do it.
     if dispatched and not announced and not ANNOUNCED.search(reply):

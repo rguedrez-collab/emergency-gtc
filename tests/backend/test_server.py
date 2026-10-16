@@ -201,6 +201,15 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(server.intake_state(unknown)["next"], "location_again")
         self.assertEqual(server.intake_state(unknown[:1])["next"], "location")
         self.assertIn(server.QUESTIONS["location_again"], server.QUESTIONS.values())
+        # A street address keeps its city after the comma, but not the rest of the sentence.
+        self.assertEqual(server.ADDRESS.search("Oui, c'est Douze rue des Lilas, Paris, près du portail gris.").group(0), "Douze rue des Lilas, Paris")
+        self.assertEqual(server.ADDRESS.search("au 12 rue des Lilas, près du portail gris").group(0), "12 rue des Lilas")
+        self.assertEqual(server.ADDRESS.search("huit avenue du Parc à Nantes.").group(0), "huit avenue du Parc à Nantes")
+        # « Où se trouve la salle de bain ? » with the word « adresse » tacked on is still not the address question.
+        room = {"summary": "Chute.", "facts": [], "signals": [], "question": "location", "reply": "Où se trouve exactement la salle de bain ? Pouvez-vous préciser l'adresse ?"}
+        with patch.object(server, "request_model", return_value=self.completion(room)):
+            result = server.analyze({"messages": [{"role": "caller", "text": "Ma mère est tombée dans la salle de bain et ne peut pas se relever."}]})
+        self.assertEqual((result["reply"], result["reply_source"]), (server.QUESTIONS["location"], "checklist"))
         # « Où êtes-vous exactement dans le couloir ? » is not the address question: the reference wording replaces it.
         vague = {"summary": "Collègue tombé.", "facts": [], "signals": [], "question": "location", "reply": "D'accord. Où exactement êtes-vous dans le couloir ?"}
         with patch.object(server, "request_model", return_value=self.completion(vague)):
