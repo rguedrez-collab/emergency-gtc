@@ -752,5 +752,9 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   shown=texts(app.copilot(app.consoleModel())).join(' ');assert.ok(shown.includes('simulation · fait')&&shown.includes('refusé'),shown);
   assert.ok(app.activityFeed(10).some(e=>e.text.includes('Déclencher les pompiers · simulation'))&&app.activityFeed(10).some(e=>e.text.includes('adresse reconnue : 8 Cours Gambetta')));
   assert.ok(!('actions' in app.snapshot().calls[0])===false&&app.snapshot().calls[0].actions.length===3,'actions persist with the call');
+  // The next analysis tells the AI what the operator validated: the verified address and the dispatched service, not the refusal.
+  let analyzed=null;const previousApi=app.api;app.api=async(call,path,payload)=>{if(path==='/api/analyze')analyzed=payload;return previousApi(call,path,payload);};
+  await app.analyzeCall(c);await tick(10);
+  assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-console.log('PASS: 54 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+console.log('PASS: 55 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

@@ -128,7 +128,7 @@ def turn(payload, cfg):
     start = time.monotonic()
     prompt = simulation.build_prompt(data["facts"], data["style"], data["messages"])
     completer = (lambda p, t: fake_complete(p, t, cfg)) if cfg["fake"] else (lambda p, t: complete(p, t, cfg))
-    text, retries = simulation.generate(prompt, completer)
+    text, retries = simulation.generate(prompt, completer, messages=data["messages"])
     llm_done = time.monotonic()
     audio = fake_speak(text, data["voice"], data["style"], cfg) if cfg["fake"] else speak(text, data["voice"], data["style"], cfg)
     end = time.monotonic()

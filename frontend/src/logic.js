@@ -545,7 +545,7 @@ class Component extends DCLogic {
   }
   async analyzeCall(c,beforeSpeech=Promise.resolve(),sample=null) {
     this.setPhase(c,'think');const t=this.tool(c,this.labels().llm,'extraction + résumé');
-    const r=await this.api(c,'/api/analyze',{messages:this.analysisContext(c),call:c.id,turn:c.ti});const d=await r.json();
+    const r=await this.api(c,'/api/analyze',{messages:this.analysisContext(c),call:c.id,turn:c.ti,actions:this.doneActions(c)});const d=await r.json();
     if(c.ended)return;
     const verdict=d.guardrail?.configured?' · garde-fou : '+this.guardLabel(d.guardrail):'';
     this.done(t,d.ms+' ms · citations vérifiées · résumé à valider'+verdict);c.lastAnalysis=d;if(d.guardrail?.configured)c.guardrail={...d.guardrail,at:new Date().toISOString()};
@@ -698,6 +698,8 @@ class Component extends DCLogic {
   // ---------------- Tool calls proposed by the AI (copilot « Actions · outils ») ----------------
   // The address lookup runs at once (read-only, the national address base). Dispatch tools wait for the operator's
   // validation and are then recorded as simulated decisions — nothing is transmitted, the spoken reply never says otherwise.
+  // What the operator validated so far, for the AI's next line: done tool calls (service dispatched, address verified).
+  doneActions(c) {return (c.actions||[]).filter(a=>a.status==='done').map(a=>({tool:a.tool,status:'done',label:a.result?.label||null}));}
   proposeTools(c,tools) {
     if(!Array.isArray(tools))return;c.actions=c.actions||[];
     for(const t of tools){

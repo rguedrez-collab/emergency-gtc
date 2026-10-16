@@ -75,6 +75,34 @@ class TurnTests(unittest.TestCase):
         self.assertEqual(service.health(cfg)["ready"], True); self.assertTrue(service.health(cfg)["fake"])
         self.assertIsNone(simulation.text_in_wav(b"RIFF" + b"\0" * 40)); self.assertIsNone(simulation.text_in_wav(b"\x1aE\xdf\xa3webm"))
 
+    def test_repeated_lines_are_resampled_and_politeness_tics_trimmed(self):
+        messages = [{"role": "caller", "text": "Je suis au 12 rue des Lilas, près du portail gris, devant l'arrêt de bus, s'il vous plaît, dépêchez-vous."},
+                    {"role": "assistant", "text": "Il y a un danger autour, du feu, du gaz ?"}]
+        lines = iter([{"utterance": "Je suis au 12 rue des Lilas, près du portail gris, devant l'arrêt de bus, je sais pas si elle respire, dépêchez-vous."},
+                      {"utterance": "Non, non, rien de ça, s'il vous plaît, dépêchez-vous !"}])
+        prompts = []
+
+        def complete(prompt, temperature):
+            prompts.append((prompt, temperature))
+            return next(lines)
+        text, retries = simulation.generate(simulation.build_prompt({"incident": "Ma mère est tombée"}, "urgent", messages), complete, messages=messages)
+        self.assertEqual((text, retries), ("Non, non, rien de ça !", 1))
+        self.assertTrue(prompts[1][0][-1]["content"].startswith(simulation.REPEAT_NUDGE)); self.assertEqual(prompts[1][1], simulation.TEMPERATURES[1])
+        self.assertIn("Il y a un danger autour, du feu, du gaz ?", prompts[1][0][-1]["content"], "the nudge quotes the operator's question")
+        # Asked to repeat the address, the caller may say it again; a first « s'il vous plaît » stays.
+        again = messages[:1] + [{"role": "assistant", "text": "Vous pouvez me redire l'adresse ?"}]
+        text, retries = simulation.generate(simulation.build_prompt({"incident": "Ma mère est tombée"}, "urgent", again),
+                                            lambda p, t: {"utterance": "12 rue des Lilas, près du portail gris."}, messages=again)
+        self.assertEqual((text, retries), ("12 rue des Lilas, près du portail gris.", 0))
+        self.assertEqual(simulation.trim_tics("Oui, s'il vous plaît, venez vite, s'il vous plaît !", []), "Oui, s'il vous plaît, venez vite !")
+        self.assertEqual(simulation.trim_tics("S'il vous plaît, dépêchez-vous, elle bouge plus.", ["Venez vite s'il vous plaît"]), "Dépêchez-vous, elle bouge plus.")
+        self.assertEqual(simulation.trim_tics("Dépêchez-vous !", ["dépêchez-vous"]), "Dépêchez-vous !", "a line that is only a tic is left alone")
+        # When the fresh sample repeats as well, the repeated sentence goes and the rest of the line stays.
+        said = [{"role": "caller", "text": "Huit avenue du Parc. La fumée sort de l'appartement du dessus et personne ne répond."}, {"role": "assistant", "text": "C'est bien là ?"}]
+        same = {"utterance": "Oui, c'est bien là. La fumée sort de l'appartement du dessus et personne ne répond."}
+        text, retries = simulation.generate(simulation.build_prompt({"incident": "Fumée"}, "concerned", said), lambda p, t: same, messages=said)
+        self.assertEqual((text, retries), ("Oui, c'est bien là.", 1))
+
     def test_the_prompt_is_the_gateways(self):
         self.assertIs(server.CALLER_SYSTEM, simulation.CALLER_SYSTEM)
         self.assertIs(server.STYLE_NOTES, simulation.STYLE_NOTES)

@@ -27,15 +27,18 @@ const places = [
  'huit avenue du Parc à Nantes', 'quinze rue du Moulin à Lille', 'trente rue des Jardins à Bordeaux',
 ];
 const names=['Camille','Alex','Samira','Julien','Nora'];
-const openings=['Allô ? S’il vous plaît, j’ai besoin d’aide ! ','Écoutez… je suis très inquiet. ','Allô, vous m’entendez ? C’est urgent ! ','S’il vous plaît, aidez-nous… ','Je ne sais pas quoi faire… '];
+// Spoken openings, one per variant; the landmark and the access vary the same way so the hundred calls do not share one street scene.
+const openings=['Allô ? Oui, bonjour, euh… il faut venir vite. ','Allô, allô ? Vous m’entendez ? ','Bonjour, excusez-moi, c’est… c’est urgent. ','Allô ? Je… j’ai besoin d’aide, là. ','Oui allô, je sais pas quoi faire… '];
+const landmarks=['un arrêt de bus en face et une pharmacie au coin de la rue','une boulangerie juste à côté, en face de l’école','le tabac au coin, près du feu rouge','derrière la mairie, à côté du parc','la station-service, cent mètres plus loin'];
+const accesses=['entrée côté rue, près du portail gris','troisième étage sans ascenseur, code 12A','deuxième étage, interphone au nom de la famille','rez-de-chaussée, porte vitrée côté cour','par la cour, grille verte, la porte est ouverte'];
 function dialogue(text,family,variant){
  const place=places[(family+variant)%places.length];
  const quiet=family===7;
  return [
   {text:(quiet?'Je parle doucement… je ne veux pas qu’on m’entende. ':openings[variant])+text,question:'location'},
   {text:`Oui… nous sommes au ${place}. C’est bien là. Je suis sur place, je vais essayer de vous expliquer.`,question:'landmark'},
-  {text:'Il y a un arrêt de bus juste en face, et une pharmacie au coin de la rue. Je peux voir le panneau depuis ici.',question:'access'},
-  {text:'L’entrée est du côté de la rue, à côté du portail gris. Je ne sais pas si l’autre accès est ouvert.',question:'people'},
+  {text:`Comme repère : ${landmarks[variant]}. Je vois ça d’ici.`,question:'access'},
+  {text:`Pour entrer : ${accesses[variant]}. Je peux venir vous ouvrir si besoin.`,question:'people'},
   {text:'Je vois deux autres personnes près de moi. Je ne peux pas vous dire s’il y en a davantage, je n’ai pas tout vu.',question:'timeline'},
   {text:'Ça vient de se passer… il y a deux ou trois minutes, pas plus. J’ai appelé dès que j’ai compris qu’il y avait un problème.',question:'observation'},
   {text:`Ce que j’ai vu, c’est ça : ${text} Je suis vraiment inquiet, je préfère vous dire seulement ce dont je suis sûr.`,question:'changes'},
@@ -54,7 +57,7 @@ export const samples = Array.from({length:5},(_,variant)=>families.map(([cat,var
  voiceStyle:family===7?'restrained':family===19?'concerned':variant%2?'rushed':'urgent',
  durationMs:(150+variant*15+(family%3)*15)*1000,
  facts:{incident:variants[variant],address:places[(family+variant)%places.length],name:names[variant],
-   landmark:'un arrêt de bus en face et une pharmacie au coin de la rue',access:'entrée côté rue près du portail gris',
+   landmark:landmarks[variant],access:accesses[variant],
    elapsed:'deux ou trois minutes',otherPeople:'nombre exact inconnu'},
  turns:dialogue(variants[variant],family,variant),
 }))).flat();

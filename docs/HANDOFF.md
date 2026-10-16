@@ -111,6 +111,20 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   (`tools/db_report.py`).
 - Themes are classes on `<html>` (`sober`, `dark`, `glass`, plus `flat` for the first two) and a swap of the
   mockup's ThemeProvider class; speaker colours are CSS variables resolved when the waveform is drawn.
+- Dialogue steering (`backend/server.py`): the gateway keeps the intake checklist (`intake_state`) and tells the
+  model what to ask next with the reference wording (`recueil.à_demander`, from `QUESTIONS`). Relevance: the
+  person's state only when a victim is described, dangers only when the incident suggests one, the number of
+  people only for collective events, never the callback number; a short « non » settles the question just asked;
+  the address question is never dropped (`location`, then `location_again`) and a reply that paraphrases it away
+  is replaced; « je ne sais pas si elle respire » brings the two observation steps (`breathing`, `response_check`).
+  Replies that repeat (stems, three-word runs), echo the caller, pile up questions (`overloaded`) or tell the caller
+  to call the services (`CALL_US`) get one rewrite then the checklist's own line (`fallback_reply`, with
+  `escalation` when the person just stopped breathing and `guide` once help is on its way). The console sends the
+  operator's done tool calls (`actions`); a validated dispatch lets the AI say once that help is coming
+  (`ARRIVAL_CLAIMS` allowed only then, never with a delay).
+- Simulated caller (`caller/simulation.py`): spoken-register prompt (answer the question first, each fact once, tics
+  once per call), `repeats` + a nudged resample, `drop_repeated_sentences`, `trim_tics`; openings, landmarks and
+  accesses vary per sample variant (`frontend/src/samples.mjs`).
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the
   LLM path; block = HTTP 200 + substituted sentence + `X-Tee-Prompt-Action: blocked`). A block holds the call
   for a human; nothing is closed automatically.
