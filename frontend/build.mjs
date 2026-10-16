@@ -40,8 +40,8 @@ const controls=`<div class="oc-topbar">
 template=swap(template,'</x-import>\n<div style="height:3px', '</x-import>\n'+controls+'\n<div style="height:3px');
 // Console styles use the mockup's theme tokens; new controls use current Elements.
 const css=`
-/* --oc-top is measured by the controller (fit): the console ends 110px above the viewport bottom, where the fixed player
-   sits while a call is open; on the overview (no player) it runs to the bottom. */
+/* --oc-top is measured by the controller (fit): the console ends --oc-space above the viewport bottom, where the fixed
+   transport strip (play/pause + position, ~50px) sits while a call is open; on the overview (no player) it runs to the bottom. */
 :root{--oc-caller:#e6c54a;--oc-ai:#76b900;--oc-op:#FF7900;--oc-idle:#3a3a3a;}
 nve-button[data-tone=quiet]{--background:transparent;--border:1px solid transparent;}
 nve-button[data-tone=danger]{--background:transparent;--border:1px solid rgba(255,122,122,.6);--color:#ff8a8a;}
@@ -59,7 +59,7 @@ nve-button[data-tone=ai]{--background:transparent;--border:1px solid rgba(118,18
 .oc-chip-demo{border-color:rgba(243,193,75,.45);color:#f3c14b;}
 .oc-chip-demo::before{content:"";width:7px;height:7px;border-radius:50%;background:#f3c14b;flex:none;}
 .oc-entrycard{display:flex;flex-direction:column;align-items:center;gap:24px;max-width:760px;}
-.oc{display:grid;grid-template-columns:380px minmax(0,1fr) 340px;height:calc(100vh - var(--oc-top,124px) - var(--oc-space,88px));min-height:520px;}
+.oc{display:grid;grid-template-columns:380px minmax(0,1fr) 340px;height:calc(100vh - var(--oc-top,124px) - var(--oc-space,54px));min-height:520px;}
 .oc.oc-full{height:calc(100vh - var(--oc-top,124px) - var(--oc-space-full,0px));}
 .oc-player{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:8px 16px;background:var(--background-color-surface-raised);border-top:1px solid var(--border-color-base);}
 .oc-kpis,.oc-services,.oc-chip-demo{border-color:transparent;background:transparent;box-shadow:none;}
@@ -125,6 +125,7 @@ nve-button{--text-transform:none;}
 .oc-emptybox{margin:0 14px 10px;border:1px dashed var(--border-color-base);padding:16px;text-align:center;font-size:13px;color:var(--text-color-secondary);border-radius:var(--radius-lg);}
 .oc-main{display:flex;flex-direction:column;min-width:0;min-height:0;}
 .oc-head{flex:none;padding:10px 16px 8px;border-bottom:1px solid var(--border-color-base);display:flex;flex-direction:column;gap:6px;background:var(--background-color-surface-base);}
+.oc-head .oc-top>.oc-muted{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}  /* id · number · declared place on one line */
 .oc-mode{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0 0;}
 .oc-modetext{display:flex;flex-direction:column;min-width:0;gap:2px;}
 .oc-modetitle{font-size:13px;font-weight:700;}
@@ -191,10 +192,11 @@ nve-button{--text-transform:none;}
 @keyframes arrive{from{background-color:rgba(255,121,0,.22)}to{background-color:transparent}}
 @keyframes fadeup{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .oc-turn{animation:fadeup .25s ease-out;}
-.oc-avatar{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;background:#5c6670;flex:none;}
+.oc-avatar{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;background:#000;flex:none;}
 .oc-avatar svg{display:block;}
-.oc-turn-ai .oc-avatar{background:#000;} .oc-turn-op .oc-avatar{background:#FF7900;color:#111;}
-html.dark .oc-turn-ai .oc-avatar{box-shadow:0 0 0 1px #3a424c;} html.glass .oc-turn-ai .oc-avatar{box-shadow:0 0 0 1px rgba(255,255,255,.25);}
+.oc-turn-op .oc-avatar{background:#FF7900;color:#111;}
+.oc-turnhead{min-height:20px;}
+html.dark .oc-avatar{box-shadow:0 0 0 1px #3a424c;} html.glass .oc-avatar{box-shadow:0 0 0 1px rgba(255,255,255,.25);}
 .oc-turn-ai .oc-turnhead,.oc-turn-op .oc-turnhead{flex-direction:row-reverse;}
 .oc-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;}
 .oc-pill{font-size:12px;padding:4px 10px;border:1px solid var(--border-color-base);border-radius:999px;color:var(--text-color-secondary);}
@@ -283,7 +285,7 @@ html.dark nve-button[data-tone=ai]{--background:transparent;--border:1px solid #
    Only top-level surfaces blur the backdrop; nested tiles are plain translucent fills (cheaper, same look). */
 /* Dark glass: panels are a dark tint over the blurred field, so text always sits on a dark surface and the colour only shows at the rims. */
 html.glass{--g-bg:rgba(14,16,26,.68);--g-bg2:rgba(255,255,255,.075);--g-line:rgba(255,255,255,.15);--g-hi:rgba(255,255,255,.22);
-  --g-blur:blur(26px) saturate(170%);--g-shadow:0 12px 40px rgba(0,0,0,.42);--g-r:10px;--g-r2:6px;--oc-space:108px;--oc-space-full:14px;}  /* one flat radius scale: 10px surfaces, 6px tiles */
+  --g-blur:blur(26px) saturate(170%);--g-shadow:0 12px 40px rgba(0,0,0,.42);--g-r:10px;--g-r2:6px;--oc-space:76px;--oc-space-full:14px;}  /* one flat radius scale: 10px surfaces, 6px tiles */
 html.glass body{position:relative;z-index:0;background:#06080f;}
 html.glass body::before{content:"";position:fixed;inset:-25%;z-index:-1;pointer-events:none;filter:blur(48px);
   background:radial-gradient(30% 36% at 6% 8%,rgba(255,121,0,.36),transparent 62%),radial-gradient(28% 34% at 95% 4%,rgba(118,185,0,.24),transparent 60%),

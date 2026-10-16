@@ -49,8 +49,14 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   `#orange-settings`, `#orange-tools`, `#orange-new`, `#orange-scenario`, `#orange-stt`, `#orange-export`,
   `#orange-user-call`, `#orange-theme`, `#orange-site` (only with caller sites), `#orange-close`, `#orange-retry`,
   `#orange-next`, `#orange-decision`, `#orange-close-case`, `#orange-more-*` (incl. `latency`), `#orange-audio-player`
-  (always in the DOM, hidden on the overview, `data-speaker`/`data-playing`/`data-call`), `#orange-player-toggle`,
-  `#orange-player-seek`, `#orange-speaker-label`.
+  (always in the DOM, hidden on the overview, `data-speaker`/`data-playing`/`data-call`; a bare transport strip:
+  play/pause + position only, no speaker label, call line, clock or speaker tags), `#orange-player-toggle`,
+  `#orange-player-seek`.
+- Transcript turns show the avatar only (robot for the AI, person for the caller and the operator; speaker and time in
+  the avatar's tooltip), no speaker label or clock in front of the bubble; system lines have no head at all.
+- Caller identity: `c.phone` is a fictional European number generated per sample (`fakePhone`: mostly +33 in the ARCEP
+  fictional mobile range 06 39 98 xx xx, some +49 / +34 / +39), always with two digits masked (`••`) so nothing shown
+  is dialable; shown in the call header and the card details, exported with the call. No caller-ID integration exists.
 - Bar: actions on the left (open / pause / close), on the right the read-only notice when any, the services chip
   **only as an exception** (a service down, a guardrail configured, a caller site unreachable; nothing otherwise),
   « Analytique » (counter + latency medians) and « Réglages ». The « Démonstration » tag, the mockup's header shift

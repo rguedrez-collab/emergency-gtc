@@ -38,6 +38,17 @@ const ICONS = {
     h('circle', {key:'l', cx:9, cy:14.5, r:1.1, fill:'currentColor', stroke:'none'}), h('circle', {key:'r', cx:15, cy:14.5, r:1.1, fill:'currentColor', stroke:'none'}), h('path', {key:'mouth', d:'M9.5 17.5h5'})),
   human: svg(h('circle', {key:'head', cx:12, cy:8, r:3.6}), h('path', {key:'body', d:'M4.5 20.5a7.5 7.5 0 0 1 15 0'})),
 };
+// Fictional caller identity: a European mobile number (France mostly — in the ARCEP range reserved for fiction,
+// 06 39 98 xx xx — some Germany, Spain, Italy) with two digits masked, so the console never shows a dialable number.
+// Deterministic per sample, so a reload or a rebuild keeps the same number on the same call.
+const fakePhone = seed => {
+  let x = 2166136261; for (const ch of String(seed)) { x ^= ch.charCodeAt(0); x = Math.imul(x, 16777619) >>> 0; }
+  const next = () => { x = Math.imul(x ^ (x >>> 15), 2246822507) >>> 0; x = Math.imul(x ^ (x >>> 13), 3266489909) >>> 0; return x; };
+  const pool = String(next()) + String(next()) + String(next());
+  const country = ['fr', 'fr', 'fr', 'de', 'fr', 'es', 'fr', 'it', 'fr', 'fr'][next() % 10];
+  const templates = {fr:'+33 6 39 98 •• ##', de:'+49 151 •• ## ###', es:'+34 6## •• ## ##', it:'+39 3## ### ••##'};
+  let i = 0; return templates[country].replace(/#/g, () => pool[i++ % pool.length]);
+};
 
 class Component extends DCLogic {
   state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
@@ -233,9 +244,9 @@ class Component extends DCLogic {
     const sc=scenario?SCENARIOS[options.index??this.scIdx++%SCENARIOS.length]:{cat:'Appel micro / texte',turns:[]};
     const c={id:'TEST-'+(++this.seq),n:this.seq,sc:{cat:sc.cat,place:'Lieu non renseigné',lang:'FR · test',svc:'Revue opérateur'},
       // Automatic calls ring in as "Entrant" (no score yet), as in the original mockup.
-      phone:'Identité non connectée',started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
+      phone:fakePhone(sc.id||'test-'+this.seq),started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
       tr:[],facts:[],summary:'',takenOver:false,ended:false,endLabel:'',alerted:false,snoozed:false,why:'',suggestion:'',tools:[],
-      info:[{k:'Identité',v:'Non connectée'},{k:'Adresse',v:'Non confirmée'},{k:'Source',v:scenario?'Scénario fictif → audio → STT':'Micro / texte de test'}],
+      info:[{k:'Identité',v:'Numéro fictif, deux chiffres masqués'},{k:'Adresse',v:'Non confirmée'},{k:'Source',v:scenario?'Scénario fictif → audio → STT':'Micro / texte de test'}],
       busy:false,controllers:new Set(),revision:0,audit:[],lastAnalysis:null,seenSignals:[],gaps:[],prefetch:null,queued:null,
       sampleId:sc.id||null,sessionId:options.auto?this.state.session.id:null,auto:!!options.auto,liveCaller:!!options.liveCaller,reviewRequired:true,reviewed:false};
     if(c.liveCaller)c.sc.cat='Votre appel simulé';
@@ -705,6 +716,7 @@ class Component extends DCLogic {
       this.nextArrivalAt=Date.now()+ARRIVAL_MS;
       const now=Date.now();
       const calls=s.calls.map(c=>{const call={...c,controllers:new Set(),prefetch:null,queued:null,busy:false,t:now-c.started,latency:c.latency||[],
+          phone:c.phone&&c.phone.startsWith('+')?c.phone:fakePhone(c.sampleId||c.id),  // snapshots from before the fictional numbers
           phase:c.ended?'ended':['caller','think','tts','compose'].includes(c.phase)?'gap':c.phase};
         call.tools.forEach(t=>{if(t.status==='running'){t.status='cancelled';t.result='interrompu au rechargement';}});
         // A live microphone capture does not survive a reload.
@@ -883,7 +895,7 @@ class Component extends DCLogic {
         h('div',{className:'oc-cardline'},this.callLatency(d.c)||h('span',{className:'oc-status'}),h('span',{className:'oc-cardact',onClick:stop},primary)),
         open?h('div',{className:'oc-cardmore'},
           h('div',{className:'oc-quote'},this.latestWords(d.c)),
-          h('div',{className:'oc-muted'},d.id+(/non renseigné/.test(d.place)?'':' · '+d.place)),
+          h('div',{className:'oc-muted'},d.id+' · '+d.c.phone+(/non renseigné/.test(d.place)?'':' · '+d.place)),
           d.c.liveCaller||d.c.takenOver?null:h('div',{className:'oc-actions',onClick:stop},
             this.button(d.selected?'En écoute':"Écouter d'abord",()=>this.open(d.id),false,undefined,undefined,{tone:'quiet',key:'listen'}),
             this.button("Laisser l'IA continuer",()=>{d.c.snoozed=true;d.c.alerted=false;this.touch();},false,undefined,undefined,{tone:'quiet'}))):null,
@@ -918,7 +930,7 @@ class Component extends DCLogic {
     const d=this.decorate(c),mode=this.modeFor(c),taken=c.takenOver;
     const header=h('div',{className:'oc-head'},
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
-        h('span',{className:'oc-muted'},c.id+' · '+c.sc.place),this.siteChip(c),h('span',{className:'oc-mono oc-right'},d.dur)),
+        h('span',{className:'oc-muted'},c.id+' · ',h('span',{className:'oc-mono',title:'Numéro fictif, deux chiffres masqués'},c.phone),' · '+c.sc.place),this.siteChip(c),h('span',{className:'oc-mono oc-right'},d.dur)),
       // One line: the mode (with its help) on the left, every call-level action on the right — no separate control band.
       h('div',{className:'oc-mode'+(taken?' taken':'')},
         h('div',{className:'oc-modetext'},h('span',{className:'oc-modetitle'},h('span',{style:{color:mode.color}},mode.title),this.moreButton('mode','Aide')),
@@ -931,10 +943,10 @@ class Component extends DCLogic {
     // Each speaker's look lives in CSS (.oc-turn-caller/-ai/-op/-sys) so the style toggle can restyle the bubbles.
     const kind=who=>who==='Agent IA'?'ai':who==='Vous'?'op':who==='Système'?'sys':'caller';
     const p=this.state.playback,playing=!!p&&p.callId===c.id&&!p.paused,spoken=playing?c.tr.map(t=>t.who).lastIndexOf(SPEAKER_ROW[p.speaker]):-1;
-    // Avatars: a robot for the AI, a person for the caller and the operator (monochrome icons, no initials).
-    const icon=k=>k==='sys'?null:h('span',{className:'oc-avatar','aria-hidden':'true'},k==='ai'?ICONS.robot:ICONS.human);
+    // Each turn is its bubble under an avatar only — a robot for the AI, a person for the caller and the operator; the
+    // speaker and the time live in the avatar's tooltip (no label or clock in front of the bubble, asked away).
     const transcript=h('div',{className:'oc-tr',ref:this.trRef},...c.tr.map((t,i)=>{const k=kind(t.who);return h('div',{key:i,className:'oc-turn oc-turn-'+k},
-        h('div',{className:'oc-turnhead'},icon(k),h('span',{className:'oc-who'},t.who),h('span',{className:'oc-mono'},t.ts)),
+        k==='sys'?null:h('div',{className:'oc-turnhead'},h('span',{className:'oc-avatar',role:'img','aria-label':t.who+' · '+t.ts,title:t.who+' · '+t.ts},k==='ai'?ICONS.robot:ICONS.human)),
         h('div',{className:'oc-bubble'},t.text,i===spoken?h('span',{className:'oc-cursor'},' ▍'):null));}));
     if(!this.waveEl)this.waveEl=h('canvas',{ref:this.waveRef,width:640,height:28,style:{width:'100%',height:'28px',display:'block',borderRadius:'6px'}});
     const live=this.waveMode.amp>0.5;
@@ -1125,28 +1137,24 @@ class Component extends DCLogic {
   audioPlayer() {
     const p=this.state.playback,rec=this.recording;
     const role=rec?(rec.who==='Vous'?'operator':'caller'):(p?.speaker||'idle');
-    const labels={caller:'Appelant',assistant:'Assistant IA',operator:'Opérateur',idle:'Aucune lecture'};
     const current=rec?(Date.now()-rec.started)/1000:p?.current||0,duration=p?.duration||0;
-    const who=p?.callId||rec?.c.id||'',category=p?.category||rec?.c.sc.cat||'';
+    const who=p?.callId||rec?.c.id||'';
     const playing=!!rec||!!p&&!p.paused;
-    const tag=(speaker,label)=>h('span',{key:speaker,'nve-text':role===speaker?'body bold':'body sm muted','aria-current':role===speaker?'true':undefined},(role===speaker?'● ':'○ ')+label);
-    // The player belongs to the open call: on the start screen and the overview it stays in the DOM (scripts read its
-    // data attributes) but hidden, and the console takes the full height (.oc-full).
+    // A bare transport strip for the open call — play/pause and the position; who speaks and what is said show in the
+    // transcript and the wave row (speaker labels, call line, clock and speaker tags were removed on request). On the
+    // start screen and the overview it stays in the DOM (scripts read its data attributes) but hidden, and the console
+    // takes the full height (.oc-full).
     const shown=this.state.view==='call';
     return h('section',{id:'orange-audio-player',className:'oc-player','data-speaker':role,'data-playing':String(playing),'data-call':who,
       'aria-label':'Lecteur audio de l’appel','aria-hidden':shown?undefined:'true',style:{...(shown?{}:{display:'none'})}},
-      h('div',{'nve-layout':'row gap:lg wrap align:vertical-center'},
-        this.button(p?.paused?'▶ Lecture':'Ⅱ Pause',()=>{if(this.player?.paused)this.player.play().then(()=>{this.audioBlocked=false;},()=>{});else this.player?.pause();},!p,'orange-player-toggle'),
-        h('div',{'nve-layout':'column gap:xs',style:{minWidth:'210px'}},
-          h('span',{id:'orange-speaker-label',role:'status','nve-text':'body bold'},labels[role]+(rec?' · micro ouvert':this.audioBlocked?' · lecture bloquée : cliquez dans la page':p?.paused?' · en pause':'')),
-          h('span',{'nve-text':'body sm muted'},who?who+' · '+category:'En attente de la prochaine réplique')),
+      h('div',{'nve-layout':'row gap:lg align:vertical-center'},
+        this.button(p?.paused?'▶ Lecture':'Ⅱ Pause',()=>{if(this.player?.paused)this.player.play().then(()=>{this.audioBlocked=false;},()=>{});else this.player?.pause();},!p,'orange-player-toggle',
+          this.audioBlocked?'Lecture bloquée par le navigateur : cliquez dans la page':rec?'Micro ouvert':undefined),
         h('div',{style:{flex:'1',minWidth:'220px'}},
           h('nve-range',{layout:'horizontal-inline'},
             h('input',{id:'orange-player-seek',type:'range',min:0,max:duration||1,step:0.1,value:current,
               disabled:!p||!duration,'aria-label':'Position dans la prise de parole',
-              onChange:e=>{if(this.player&&duration)this.player.currentTime=Number(e.target.value);}})),
-          h('span',{'nve-text':'body sm muted'},fmt(current*1000)+' / '+(rec?'micro':fmt(duration*1000)))),
-        h('div',{'nve-layout':'row gap:md wrap'},tag('caller','Appelant'),tag('assistant','IA'),tag('operator','Opérateur'))));
+              onChange:e=>{if(this.player&&duration)this.player.currentTime=Number(e.target.value);}})))));
   }
   renderVals() {
     const c=this.sel(),p=this.state.playback,playing=!!c&&!!p&&p.callId===c.id&&!p.paused;

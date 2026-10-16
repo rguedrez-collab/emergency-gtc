@@ -528,7 +528,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(app.audioPlayer().props.style.display,'none');assert.equal(app.audioPlayer().props['data-speaker'],'idle');assert.equal(app.audioPlayer().props.className,'oc-player');
   app.state.view='call';app.state.selId=app.state.calls[0].id;app.waveMode={amp:0,color:'#3a3a3a'};  // renderVals() sets waveMode before each render
   assert.equal(app.audioPlayer().props.style.display,undefined);assert.equal(app.consoleView().props.className,'oc');
-  assert.ok(texts(app.audioPlayer()).join(' ').includes('En attente de la prochaine réplique'));
+  assert.ok(!/Appelant|Opérateur|Assistant IA|\d\d:\d\d/.test(texts(app.audioPlayer()).join(' ')),'bare transport strip: no speaker label, call line, clock or tags');
+  assert.ok(JSON.stringify(app.audioPlayer()).includes('"id":"orange-player-seek"')&&JSON.stringify(app.audioPlayer()).includes('"id":"orange-player-toggle"'));
   const groups=bar.children[0].children.map(g=>g.props.className);assert.deepEqual(groups,['oc-bargroup','oc-bargroup oc-barstatus']);
   assert.ok(ids(bar.children[0].children[1]).includes('orange-settings')&&!ids(bar.children[0].children[1]).includes('orange-session-progress'),'status group: settings, not the counter');
 }
@@ -640,4 +641,23 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(app.callLatency(fresh),null,'no measurement yet: nothing shown');assert.equal(app.callLatency(app.createCall(false)),null,'manual tests have no simulated caller');
   app.endCall(row,'Appel terminé · à revoir');assert.ok(!texts(app.callList(app.consoleModel())).join(' ').includes('passerelle · appelant'),'ended rows keep their closing label only');
 }
-console.log('PASS: 50 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+// Caller identity: a fictional European number per call, two digits always masked, stable per sample, shown in the header.
+{
+  const app=make();app.state.session={status:'paused',id:1,launched:0,total:100,finished:0,failed:0};
+  const phones=[0,1,2,3,4,5,6,7,8,9].map(i=>app.createCall(true,{index:i,auto:true,background:true}).phone);
+  for(const p of phones){assert.match(p,/^\+(33|49|34|39) [\d •]+$/,p);assert.ok(p.includes('••'),'two digits masked: '+p);assert.ok(!/#/.test(p));}
+  assert.ok(phones.some(p=>p.startsWith('+33 6 39 98 ')),'France in the ARCEP fictional range');assert.ok(new Set(phones).size>=8,'numbers differ between calls');
+  const again=make();again.state.session={status:'paused',id:1,launched:0,total:100,finished:0,failed:0};
+  assert.equal(again.createCall(true,{index:0,auto:true,background:true}).phone,phones[0],'deterministic per sample');
+  assert.match(app.createCall(false).phone,/^\+/,'manual tests get one too');
+  app.state.view='call';app.state.selId=app.state.calls[0].id;app.waveMode={amp:0,color:'#3a3a3a'};
+  assert.ok(texts(app.callPane(app.consoleModel())).join('').includes(phones[0]),'header shows the number');
+  app.state.more={['card:'+app.state.calls[0].id]:true};app.state.calls[0].alerted=true;app.state.calls[0].lastAnalysis={signals:[]};
+  assert.ok(texts(app.callList(app.consoleModel())).join('').includes(phones[0]),'expanded card details show the number');
+  // The transcript shows avatars only: no speaker label or clock in front of the bubbles.
+  const c=app.state.calls[0];app.append(c,'Appelant','Allô ?','typed_test');app.append(c,'Agent IA','Je vous écoute.','contextual_gemma');app.append(c,'Système','Prise en charge opérateur.','operator_takeover');
+  const pane=app.callPane(app.consoleModel()),tr=pane.children.find(x=>x&&x.props&&x.props.className==='oc-tr'),shown=texts(tr).join(' ');
+  assert.equal(shown.trim(),'Allô ? Je vous écoute. Prise en charge opérateur.','bubbles only, no speaker label or clock: '+shown);
+  assert.ok(JSON.stringify(pane).includes('"aria-label":"Appelant · 00:00"')&&JSON.stringify(pane).includes('"aria-label":"Agent IA · 00:00"'),'speaker and time stay in the avatar tooltip');
+}
+console.log('PASS: 51 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
