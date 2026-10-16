@@ -549,6 +549,9 @@ QUESTIONS = {
     "contact": "Gardez ce téléphone avec vous et restez en ligne, d'accord ?",
     "location_again": "Je vous entends. Pour qu'on puisse venir, il me faut l'adresse : vous êtes où exactement ?",
     "guide": "Si quelqu'un est avec vous, envoyez-le ouvrir en bas pour guider les secours.",
+    "prepare": "En attendant, ouvrez la porte d'entrée et allumez la lumière, que les secours vous trouvent vite.",
+    "age": "Quel âge a la personne, à peu près ?",
+    "history": "Des problèmes de santé connus, un traitement en cours ?",
     "escalation": "Je vous entends. Restez près de la personne, ne la laissez pas seule, je reste en ligne avec vous.",
     "breathing": "Regardez sa poitrine : est-ce qu'elle se soulève ? Posez la main sur son ventre et dites-moi.",
     "response_check": "Parlez-lui fort, tout près de l'oreille, et pincez-lui l'épaule. Elle réagit ?",
@@ -654,6 +657,12 @@ haut-parleur, ne pas la déplacer, faire ouvrir l'entrée) et au plus une questi
 d'observation. Si « prochaine_question » est breathing ou response_check, donne cette
 consigne d'observation, en tes mots et en une phrase, au lieu d'une question. Ne pose
 jamais de question sur un élément absent de « manquant ».
+Quand « phase » vaut accompagnement (l'essentiel est connu, les secours déclenchés), tu
+accompagnes en attendant l'équipe : à tour de rôle, une vérification de l'état (une
+observation précise), la préparation de l'arrivée (porte ouverte, lumière, quelqu'un en
+bas, passage dégagé), l'âge et les antécédents ou traitements de la personne, le prénom
+de l'appelant, ce qui a changé. Chaque tour apporte quelque chose de nouveau ; jamais
+deux fois la même consigne, jamais « restez près d'elle » seul.
 """
 # The simulated caller's character prompt (CALLER_SYSTEM) is caller/simulation.py's, shared with the caller service.
 REPLY_RETRY = """La réplique proposée a été bloquée par le filtre de sécurité : elle affirmait
@@ -683,7 +692,7 @@ def same_line(a, b):
 
 # --- The operator's intake checklist, kept by the gateway so a small model is told what to ask next instead of
 # being trusted to remember. Caller words cover an item; AI questions mark it as asked; critical signals reorder.
-INTAKE_ITEMS = ("location", "incident", "state", "danger", "people", "access", "callback")
+INTAKE_ITEMS = ("location", "incident", "state", "danger", "people", "access", "age", "history", "name", "callback")
 INTAKE_RULES = {
     "incident": r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûl\w*|noy\w*|coinc\w*|"
                 r"bloqu\w*|accouch\w*|intox\w*|évanou\w*|perdu connaissance|agress\w*|frapp\w*|menac\w*|arme|couteau|vol\w*|cambriol\w*|feu|flamme|fumée|incendie|explos\w*|gaz|"
@@ -693,6 +702,10 @@ INTAKE_RULES = {
     "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
     "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",
     "access": r"\b(étage|porte|code|digicode|interphone|entrée|escalier|ascenseur|bâtiment|batiment|appartement|appart|hall|parking|accès)\b",
+    "age": r"\b\d{1,3} ans\b|\bâgée?\b|\b(?:vingtaine|trentaine|quarantaine|cinquantaine|soixantaine|septantaine|nonantaine)\b|quatre-vingts? ans|\bbébé\b|\bnourrisson\b|quelques mois",
+    "history": r"antécéden\w*|diabét\w*|cardiaque|du cœur|le cœur|tension|traitement|médicament\w*|asthm\w*|épilep\w*|allergi\w*|insuffisan\w*|cancer|pacemaker|dialys\w*|"
+               r"aucun problème|en bonne santé|pas de problème de santé|pas de maladie|connais pas (?:ses|cette personne|cet homme|cette femme)",
+    "name": r"je m'appelle|mon nom est|moi c'est|mon prénom",
     "callback": r"\b(numéro|rappel\w*|téléphone|portable)\b|\b0[1-9](?:[ .]?\d\d){4}\b",
 }
 ASKED_RULES = {
@@ -704,6 +717,9 @@ ASKED_RULES = {
     "danger": r"danger|feu|fumée|gaz|menace|circulation|dans l'eau",
     "people": r"combien|quelqu'un d'autre|seule?\b|personnes (?:sont|concernées)",
     "access": r"étage|porte|entrée|accès|accède|code|interphone|guider",
+    "age": r"quel âge|\bâge\b",
+    "history": r"problèmes? de santé|antécédent|traitement|médicament|maladie|santé connu",
+    "name": r"vous appeler|votre prénom|votre nom|comment vous appelez|appeler comment",
     "callback": r"numéro|rappeler|rappel",
 }
 CRITICAL = re.compile(r"ne respire (?:pas|plus)|plus de respiration|respire (?:pas|plus)|inconscien|(?:me |nous |lui |leur )?(?:réagit|répond) (?:pas|plus)|"
@@ -715,7 +731,9 @@ DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|brûl\w*|gaz|odeur|explos\w*|�
 VICTIM_CUES = re.compile(r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûlée?s?|noy\w*|évanou\w*|"
                          r"perdu connaissance|agress\w*|frappée?s?|accident|percut\w*|renvers\w*|heurt\w*|électrocut\w*|intox\w*|overdose|allerg\w*|piq\w*|mord\w*|coincée?|victimes?|"
                          r"(?:me |nous |lui )?(?:répond|réagit) (?:pas|plus))\b", re.I)
-NEGATIVE = re.compile(r"^\s*(?:non|nan|rien|aucune?|pas de|y a pas|il n'y a pas|je (?:ne )?sais pas|personne)\b", re.I)
+NEGATIVE = re.compile(r"^\s*(?:non|nan|rien|aucune?|pas de|y a pas|il n'y a pas|je (?:ne )?sais pas|je (?:ne )?connais pas|aucune idée|personne)\b", re.I)
+PLEA = re.compile(r"dépêchez|\bvite\b|aidez|s'il vous pla[iî]t|secours|venez", re.I)  # a plea is not an answer
+SETTLED_BY_ANSWER = ("state", "danger", "people", "access", "age", "history", "name")  # a short answer closes these; never the address
 STRONG = re.compile(r"ne respire plus|plus de respiration|y a plus rien|arrêt cardiaque|respire pas du tout|ne respire pas", re.I)
 CALL_US = re.compile(r"(?:appelez|appeler|prévenez|contactez|joignez|alertez)\s+(?:vous[- ]même\s+)?(?:le|les|la|l[’'])?\s*(?:secours|samu|smur|pompiers|police|urgences|15|18|112)\b|composez le|faites le (?:15|18|112)\b", re.I)
 GROUP_CUES = re.compile(r"\b(accident|voitures?|explos\w*|incendie|feu|fumée|effondr\w*|inond\w*|bagarre|foule|manifestation|plusieurs|des gens|des personnes|passagers?|élèves|enfants|"
@@ -738,18 +756,20 @@ def intake_state(messages):
     callers = " ".join(caller_lines)
     assistants = [m["text"] for m in messages if m["role"] == "assistant"]
     times_asked = {k: sum(1 for a in assistants if re.search(ASKED_RULES[k], a, re.I)) for k in INTAKE_ITEMS + OBSERVE_STEPS}
-    # A short negative answer right after a question settles that item (« non, rien de ça », « je sais pas »).
+    # A short answer right after a question settles that item (« non, rien de ça », « je sais pas », « Camille. ») unless it is a
+    # plea; the address and the incident are only known from their own words.
     settled = set()
     for i, m in enumerate(messages[:-1]):
-        if m["role"] == "assistant" and messages[i + 1]["role"] == "caller" and NEGATIVE.match(messages[i + 1]["text"]):
-            settled.update(k for k in INTAKE_ITEMS if re.search(ASKED_RULES[k], m["text"], re.I))
+        answer = messages[i + 1]["text"] if messages[i + 1]["role"] == "caller" else ""
+        if m["role"] == "assistant" and answer and (NEGATIVE.match(answer) or (len(answer.split()) <= 6 and not PLEA.search(answer))):
+            settled.update(k for k in SETTLED_BY_ANSWER if re.search(ASKED_RULES[k], m["text"], re.I))
     known = [k for k in INTAKE_ITEMS if k in settled or re.search(INTAKE_RULES[k], callers, re.I)]
     asked = [k for k in INTAKE_ITEMS if times_asked[k]]
     critical = bool(CRITICAL.search(callers))
     # Only what this call makes relevant is asked: a person's state when someone is hurt or down, the dangers when the
     # incident suggests one, the number of people for a collective event; the callback number is the line's own.
-    relevant = ["location", "incident", "access"]
-    relevant += ["state"] if VICTIM_CUES.search(callers) else []
+    relevant = ["location", "incident", "access", "name"]
+    relevant += ["state", "age", "history"] if VICTIM_CUES.search(callers) else []  # what the crew will ask first
     relevant += ["danger"] if DANGER_CUES.search(callers) else []
     relevant += ["people"] if GROUP_CUES.search(callers) else []
     missing = [k for k in INTAKE_ITEMS if k in relevant and k not in known]
@@ -764,12 +784,17 @@ def intake_state(messages):
         step = next((x for x in OBSERVE_STEPS if not times_asked[x]), None)
         if step and (step == "breathing" or UNSURE_BREATHING.search(last_caller)):
             next_item = step
+    # The person just stopped breathing or responding: no administrative question this turn, the model stays on the situation.
+    if STRONG.search(last_caller):
+        next_item = "handoff"
     # Without an address nothing can be sent: the question is never dropped, its wording changes after the first time.
     if "location" not in known:
         next_item = "location" if not times_asked["location"] else "location_again"
     # The last line makes the situation critical (or says the person stopped breathing): acknowledge before anything else.
     escalated = bool(CRITICAL.search(last_caller)) and (not CRITICAL.search(" ".join(caller_lines[:-1])) or bool(STRONG.search(last_caller)))
-    return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": next_item, "escalated": escalated}
+    essentials = [k for k in missing if k in ("location", "incident", "state", "danger", "people", "access")]
+    return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": next_item, "escalated": escalated,
+            "hazard": bool(DANGER_CUES.search(callers)), "essentials_missing": essentials}
 
 
 def _content_words(text):
@@ -826,7 +851,8 @@ def overloaded(reply):
 def fallback_reply(state, previous, dispatched=False):
     """The checklist's own question when the model keeps repeating itself: the next missing item, never a line already said;
     once help is on its way, having someone guide it in comes before the generic observation questions."""
-    order = [state["next"]] + list(state["missing"]) + (["guide"] if dispatched else []) + ["observation", "changes", "handoff"]
+    waiting = (["guide"] + ([] if state.get("hazard") else ["prepare"])) if dispatched else []  # no « open the door » next to smoke or fire
+    order = [state["next"]] + list(state["missing"]) + waiting + ["observation", "changes", "handoff"]
     line = next((QUESTIONS[key] for key in order if key in QUESTIONS and not any(similar_line(QUESTIONS[key], p) for p in previous)), QUESTIONS["handoff"])
     if state.get("escalated") and not any(similar_line(QUESTIONS["escalation"], p) for p in previous):
         # The person just stopped breathing or responding: hear it first; the address, if still unknown, in the same breath.
@@ -1236,7 +1262,8 @@ def analyze(payload):
     dispatched = [TOOLS[a["tool"]]["service"] for a in actions if TOOLS[a["tool"]]["kind"] == "dispatch"]
     verified = next((a["label"] for a in actions if a["tool"] == "lookup_address" and a["label"]), None)
     announced = any(ANNOUNCED.search(x) for x in said)
-    recueil = {"connu": state["known"], "manquant": state["missing"], "prochaine_question": state["next"], "à_demander": QUESTIONS.get(state["next"]),
+    phase = "accompagnement" if dispatched or not state["essentials_missing"] else "recueil"
+    recueil = {"phase": phase, "connu": state["known"], "manquant": state["missing"], "prochaine_question": state["next"], "à_demander": QUESTIONS.get(state["next"]),
                "situation_critique": state["critical"], "répliques_déjà_dites": previous,
                "actions_opérateur": {"secours_déclenchés": dispatched, "adresse_vérifiée": verified, "secours_annoncés": announced}}
     prompt = [{"role": "system", "content": SYSTEM},

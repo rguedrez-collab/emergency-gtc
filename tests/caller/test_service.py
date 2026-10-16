@@ -103,6 +103,10 @@ class TurnTests(unittest.TestCase):
         text, retries = simulation.generate(simulation.build_prompt({"incident": "Fumée"}, "concerned", said), lambda p, t: same, messages=said)
         self.assertEqual((text, retries), ("Oui, c'est bien là.", 1))
 
+    def test_age_and_health_are_caller_facts(self):
+        facts = {"incident": "Ma mère est tombée", "age": "la soixantaine", "health": "diabétique, sous insuline", "person": "ma mère (elle)"}
+        self.assertEqual(simulation.validate_turn({"facts": facts, "messages": [{"role": "caller", "text": "Allô ?"}]})["facts"], facts)
+
     def test_the_prompt_is_the_gateways(self):
         self.assertIs(server.CALLER_SYSTEM, simulation.CALLER_SYSTEM)
         self.assertIs(server.STYLE_NOTES, simulation.STYLE_NOTES)

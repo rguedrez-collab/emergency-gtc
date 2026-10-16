@@ -30,6 +30,15 @@ const names=['Camille','Alex','Samira','Julien','Nora'];
 // Spoken openings, one per variant; the landmark and the access vary the same way so the hundred calls do not share one street scene.
 const openings=['Allô ? Oui, bonjour, euh… il faut venir vite. ','Allô, allô ? Vous m’entendez ? ','Bonjour, excusez-moi, c’est… c’est urgent. ','Allô ? Je… j’ai besoin d’aide, là. ','Oui allô, je sais pas quoi faire… '];
 const landmarks=['un arrêt de bus en face et une pharmacie au coin de la rue','une boulangerie juste à côté, en face de l’école','le tabac au coin, près du feu rouge','derrière la mairie, à côté du parc','la station-service, cent mètres plus loin'];
+// What the crew asks for: the person's age and known health problems, when the caller can know them.
+const ages=['la soixantaine','une trentaine d’années','la quarantaine','soixante-dix ans environ','une cinquantaine d’années'];
+const healths=['aucun problème de santé connu','un traitement pour la tension','diabétique, sous insuline','asthmatique'];
+const RELATIVE=/\b(ma|mon) (mère|père|femme|mari|sœur|frère|fille|fils|grand-mère|grand-père|collègue|voisin|voisine|ami|amie|patron|employé|employée)\b/i;
+const age=(text,variant)=>/bébé|nourrisson/i.test(text)?'quelques mois':/enfant|élève|écolier|petit garçon|petite fille/i.test(text)?'six ans environ':ages[variant];
+const health=(text,variant)=>RELATIVE.test(text)?healths[variant%healths.length]:'aucune idée, je ne connais pas la personne';
+// Who the person is, with the pronoun to use, when the incident describes one (small models mix genders otherwise).
+const PERSON=/\b(ma|mon) (mère|père|femme|mari|sœur|frère|fille|fils|grand-mère|grand-père|collègue|voisin|voisine|ami|amie|patron|employée?)\b|\b(un|une) (personne|homme|femme|ouvrier|ouvrière|passagère?|enfant|monsieur|dame|jeune|élève|conducteur|conductrice|motard|cycliste|piéton|piétonne|voisin|voisine|cliente?|collègue|bébé|garçon|fille|vieille dame|vieux monsieur)\b/i;
+const person=(text)=>{const m=text.match(PERSON);if(!m)return null;const det=(m[1]||m[3]).toLowerCase();const who=m[0];return m[1]?`${who} (${det==='ma'?'elle':'il'})`:`${who}, que je ne connais pas (${det==='une'?'elle':'il'})`;};
 const accesses=['entrée côté rue, près du portail gris','troisième étage sans ascenseur, code 12A','deuxième étage, interphone au nom de la famille','rez-de-chaussée, porte vitrée côté cour','par la cour, grille verte, la porte est ouverte'];
 function dialogue(text,family,variant){
  const place=places[(family+variant)%places.length];
@@ -57,7 +66,8 @@ export const samples = Array.from({length:5},(_,variant)=>families.map(([cat,var
  voiceStyle:family===7?'restrained':family===19?'concerned':variant%2?'rushed':'urgent',
  durationMs:(150+variant*15+(family%3)*15)*1000,
  facts:{incident:variants[variant],address:places[(family+variant)%places.length],name:names[variant],
-   landmark:landmarks[variant],access:accesses[variant],
+   landmark:landmarks[variant],access:accesses[variant],age:age(variants[variant],variant),health:health(variants[variant],variant),
+   ...(person(variants[variant])?{person:person(variants[variant])}:{}),
    elapsed:'deux ou trois minutes',otherPeople:'nombre exact inconnu'},
  turns:dialogue(variants[variant],family,variant),
 }))).flat();

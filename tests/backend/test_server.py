@@ -140,19 +140,19 @@ class ExtractionTests(unittest.TestCase):
         state = server.intake_state(messages)
         self.assertEqual((state["known"], state["critical"]), (["location", "incident", "state", "access"], True))
         self.assertEqual(state["asked"], ["location", "incident", "state", "access"])
-        self.assertEqual((state["missing"], state["next"]), ([], "handoff"), "indoors, one person: no danger, people or callback question")
+        self.assertEqual((state["missing"], state["next"]), (["age", "history", "name"], "handoff"), "no danger, people or callback question; the person just stopped breathing: no administrative question this turn")
         self.assertEqual(server.intake_state(messages[:2])["next"], "location")
         early = server.intake_state(messages[:4])  # « une situation critique » says nothing about what happened (asked once already, it comes back after
-        self.assertEqual((early["missing"], early["next"]), (["incident", "access"], "access"))  # the others) and describes no victim: no state question yet
+        self.assertEqual((early["missing"], early["next"]), (["incident", "access", "name"], "access"))  # the others) and describes no victim: no state/age question yet
         # An item asked twice without an answer is dropped: the call moves on instead of nagging. A road accident makes
         # the danger and the number-of-people questions relevant.
         crash = [{"role": "caller", "text": "Un accident de voiture au carrefour de la rue Nationale à Lyon, le conducteur est blessé."}]
-        self.assertEqual((server.intake_state(crash)["missing"], server.intake_state(crash)["next"]), (["state", "danger", "people", "access"], "state"))
+        self.assertEqual((server.intake_state(crash)["missing"], server.intake_state(crash)["next"]), (["state", "danger", "people", "access", "age", "history", "name"], "state"))
         nagging = crash + [{"role": "assistant", "text": "Il y a un danger autour de vous, de la circulation ?"}, {"role": "caller", "text": "Je ne sais pas."},
                            {"role": "assistant", "text": "Y a-t-il du feu ou de la fumée ?"}, {"role": "caller", "text": "Je ne sais pas, venez."}]
         self.assertNotEqual(server.intake_state(nagging)["next"], "danger")
         self.assertEqual(server.intake_state(nagging)["next"], "state")
-        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois, il est inconscient, porte 12, mon numéro est le 06 12 34 56 78"}])["next"], "handoff")
+        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois, il est inconscient, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "handoff")
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
         said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"
@@ -170,9 +170,9 @@ class ExtractionTests(unittest.TestCase):
         # The caller just said the person does not breathe: the checklist's line hears it first (it carries the safety
         # instruction itself, so the generic safety line is not added on top).
         self.assertEqual(result["reply"], server.QUESTIONS["escalation"])
-        self.assertEqual(result["intake"]["critical"], True); self.assertEqual(result["intake"]["next"], "handoff")
+        self.assertEqual(result["intake"]["critical"], True); self.assertEqual(result["intake"]["next"], "handoff")  # « elle ne respire pas » was just said
         sent = json.loads(request.call_args_list[0].args[1]["messages"][1]["content"])["recueil"]
-        self.assertEqual((sent["prochaine_question"], sent["situation_critique"], sent["répliques_déjà_dites"]), ("handoff", True, [said]))
+        self.assertEqual((sent["prochaine_question"], sent["situation_critique"], sent["répliques_déjà_dites"], sent["phase"]), ("handoff", True, [said], "accompagnement"))
         self.assertEqual(sent["actions_opérateur"], {"secours_déclenchés": [], "adresse_vérifiée": None, "secours_annoncés": False})
         # A good, different reply passes untouched.
         good = dict(analysis, reply="Y a-t-il un danger autour de vous : du feu, de la fumée, de l'eau ?")
@@ -188,7 +188,7 @@ class ExtractionTests(unittest.TestCase):
                 {"role": "assistant", "text": "Elle est consciente ? Elle respire normalement ?"},
                 {"role": "caller", "text": "Elle est là, mais je ne sais pas si elle respire vraiment, dépêchez-vous."}]
         state = server.intake_state(fall)
-        self.assertEqual((state["missing"], state["next"], state["critical"]), (["access"], "breathing", False), "« arrêt de bus » is a landmark, not a crowd")
+        self.assertEqual((state["missing"], state["next"], state["critical"]), (["access", "age", "history", "name"], "breathing", False), "« arrêt de bus » is a landmark, not a crowd")
         given = fall + [{"role": "assistant", "text": server.QUESTIONS["breathing"]}, {"role": "caller", "text": "Je sais pas si elle respire, je vois pas bien."}]
         self.assertEqual(server.intake_state(given)["next"], "response_check")
         answered = fall + [{"role": "assistant", "text": server.QUESTIONS["breathing"]}, {"role": "caller", "text": "Oui, elle se soulève un peu."}]
@@ -233,7 +233,7 @@ class ExtractionTests(unittest.TestCase):
         # The AI is the emergency service: telling the caller to call it is rewritten (one try), never spoken.
         self.assertTrue(server.CALL_US.search("Restez à distance, ne touchez pas la personne, appelez les secours et guidez-les vers l'entrée."))
         smoke = [{"role": "caller", "text": "Il y a de la fumée qui sort de l'appartement du dessus au 8 avenue du Parc à Nantes, personne ne répond."}]
-        self.assertEqual(server.intake_state(smoke)["missing"], ["people"], "no victim described: no question about someone's state")
+        self.assertEqual(server.intake_state(smoke)["missing"], ["people", "name"], "no victim described: no question about someone's state, age or health")
         misdirected = {"summary": "Fumée.", "facts": [{"field": "Lieu", "quote": "8 avenue du Parc à Nantes"}], "signals": [], "question": "people",
                        "reply": "Restez à distance et appelez les pompiers immédiatement."}
         with patch.object(server, "request_model", side_effect=[self.completion(misdirected), self.completion({"reply": "Restez à l'écart de la fumée, n'ouvrez pas cette porte."})]) as request:
@@ -248,7 +248,19 @@ class ExtractionTests(unittest.TestCase):
         crash = [{"role": "caller", "text": "Un accident de voiture au carrefour de la rue Nationale à Lyon, le conducteur est blessé."},
                  {"role": "assistant", "text": "Il y a un danger autour de vous, de la circulation ?"}, {"role": "caller", "text": "Non, rien de ça."}]
         self.assertIn("danger", server.intake_state(crash)["known"])
-        self.assertEqual(server.intake_state(fall + [{"role": "assistant", "text": "Restez près d'elle."}, {"role": "caller", "text": "Je reste près d'elle, vous êtes en route ?"}])["missing"], ["access"])
+        self.assertEqual(server.intake_state(fall + [{"role": "assistant", "text": "Restez près d'elle."}, {"role": "caller", "text": "Je reste près d'elle, vous êtes en route ?"}])["missing"], ["access", "age", "history", "name"])
+        # Age, health history and the caller's name are answered in the caller's words; « open the door » is never suggested next to smoke.
+        told_all = fall + [{"role": "assistant", "text": "Quel âge a la personne ?"}, {"role": "caller", "text": "Elle a la soixantaine, elle est diabétique, et moi c'est Camille."}]
+        self.assertEqual(server.intake_state(told_all)["missing"], ["access"])
+        # A bare short answer closes the question just asked (« Camille. »); a plea does not; the address never settles that way.
+        self.assertIn("name", server.intake_state(fall + [{"role": "assistant", "text": "Je peux vous appeler comment ?"}, {"role": "caller", "text": "Camille."}])["known"])
+        self.assertNotIn("age", server.intake_state(fall + [{"role": "assistant", "text": "Quel âge a la personne ?"}, {"role": "caller", "text": "Dépêchez-vous !"}])["known"])
+        self.assertNotIn("location", server.intake_state([{"role": "caller", "text": "Ma mère est tombée."}, {"role": "assistant", "text": "Vous êtes à quelle adresse ?"}, {"role": "caller", "text": "Oui."}])["known"])
+        # The person just stopped breathing: no administrative question this turn.
+        stopped = server.intake_state(fall + [{"role": "assistant", "text": "Quel âge a la personne ?"}, {"role": "caller", "text": "Elle ne respire plus, y a plus rien."}])
+        self.assertEqual((stopped["next"], stopped["escalated"]), ("handoff", True))
+        self.assertEqual(server.fallback_reply({"next": "handoff", "missing": [], "hazard": False}, [server.QUESTIONS["handoff"], server.QUESTIONS["guide"]], dispatched=True), server.QUESTIONS["prepare"])
+        self.assertEqual(server.fallback_reply({"next": "handoff", "missing": [], "hazard": True}, [server.QUESTIONS["handoff"], server.QUESTIONS["guide"]], dispatched=True), server.QUESTIONS["observation"])
         # An address the model overlooked still becomes the « Lieu » fact, verbatim.
         checked = server.validate_analysis({"summary": "Chute.", "facts": [], "signals": [], "question": "state"}, [{"role": "caller", "text": "Ma mère est tombée au 12 rue des Lilas à Paris."}])
         self.assertEqual((checked["facts"], checked["question"]), ([{"k": "Lieu", "v": "12 rue des Lilas à Paris", "source": "caller_quote"}], "state"))

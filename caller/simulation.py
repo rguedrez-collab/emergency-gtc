@@ -31,6 +31,9 @@ COMMENT TU PARLES : comme une vraie personne au téléphone, jamais comme un tex
 - Si tu ne sais pas, dis-le simplement. Tu peux hésiter (« euh », « attendez »),
   reprendre un mot, laisser une phrase inachevée, mais pas à chaque tour.
 - Tu peux dire ton inquiétude ou demander qu'on reste avec toi, sans en faire trop.
+- Tu vouvoies toujours l'opérateur. Tu ne fais aucun geste médical de toi-même (pas de
+  massage, pas de compressions) : tu fais seulement ce que l'opérateur te demande, et
+  tu dis ce que tu vois. Le fait « person » dit de qui il s'agit et quel pronom employer.
 
 CE QUI EST VRAI : les faits fournis sont la seule vérité du personnage. N'invente pas
 d'aggravation, de guérison, de nouveaux symptômes, d'arrivée de secours ni de données
@@ -62,7 +65,7 @@ STYLE_NOTES = {
 # Speech tempo per delivery profile: the only emotion control the speech service really has.
 VOICE_SPEEDS = {"neutral": 1.0, "concerned": 1.04, "urgent": 1.10, "rushed": 1.16, "restrained": 0.96}
 DEFAULT_VOICES = ("fr_female", "fr_male")
-FACT_FIELDS = {"incident", "address", "name", "landmark", "access", "elapsed", "otherPeople"}
+FACT_FIELDS = {"incident", "address", "name", "landmark", "access", "elapsed", "otherPeople", "age", "health", "person"}
 ROLES = ("caller", "operator", "assistant")
 TEMPERATURES = (0.65, 0.85)  # first sample, then one fresh sample if the line is unusable
 MAX_TOKENS = 220

@@ -117,14 +117,19 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   people only for collective events, never the callback number; a short « non » settles the question just asked;
   the address question is never dropped (`location`, then `location_again`) and a reply that paraphrases it away
   is replaced; « je ne sais pas si elle respire » brings the two observation steps (`breathing`, `response_check`).
+  After the essentials come what the crew asks (`age`, `history` when a victim is described, then the caller's `name`);
+  a short answer settles the question just asked (never the address); when the person has just stopped breathing
+  (`STRONG`) no administrative question is asked that turn. `recueil.phase` turns to `accompagnement` once the
+  essentials are known or a dispatch is validated, and the fallbacks add `guide` and `prepare` (not next to smoke).
   Replies that repeat (stems, three-word runs), echo the caller, pile up questions (`overloaded`) or tell the caller
   to call the services (`CALL_US`) get one rewrite then the checklist's own line (`fallback_reply`, with
   `escalation` when the person just stopped breathing and `guide` once help is on its way). The console sends the
   operator's done tool calls (`actions`); a validated dispatch lets the AI say once that help is coming
   (`ARRIVAL_CLAIMS` allowed only then, never with a delay).
 - Simulated caller (`caller/simulation.py`): spoken-register prompt (answer the question first, each fact once, tics
-  once per call), `repeats` + a nudged resample, `drop_repeated_sentences`, `trim_tics`; openings, landmarks and
-  accesses vary per sample variant (`frontend/src/samples.mjs`).
+  once per call, vouvoiement, no medical gesture of its own), `repeats` + a nudged resample, `drop_repeated_sentences`,
+  `trim_tics`; openings, landmarks, accesses, the person's `age`/`health` and a `person` fact with the pronoun vary per
+  sample (`frontend/src/samples.mjs`), so the caller can answer the crew's questions truthfully.
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the
   LLM path; block = HTTP 200 + substituted sentence + `X-Tee-Prompt-Action: blocked`). A block holds the call
   for a human; nothing is closed automatically.
