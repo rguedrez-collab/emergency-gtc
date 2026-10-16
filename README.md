@@ -69,6 +69,30 @@ ORANGE_CALLERS=paris=http://10.0.0.5:8094,montreal=https://caller-yul.example OR
 `CALLER_FAKE=1` runs a site without models (scripted lines, silent audio that carries its text), which is what the
 preview and the e2e harness use to show two sites with different distances.
 
+### Who answered: the AI or the operator
+
+Each sample carries `handler`: `ai` for a turn the assistant answered, `operator` for a turn after a takeover. Operator
+turns record the human's latency separately: `operator_ms` (reaction time, from the caller's last words to the answer
+being sent or spoken), `op_tts_ms` (their voice synthesis) and `op_stt_ms` (their microphone transcription). The
+aggregates (`GET /api/latency` → `handlers`, `tools/db_report.py --latency`) keep the two apart; the console shows the
+operator's reaction on the card (« vous »), in the copilot and on the overview.
+
+## A real caller from a phone
+
+A person can call the console from a phone: open the console's address followed by `/appel` on the mobile (same
+Basic-auth credentials), enter an optional pseudonym, tap « Appeler », then hold « Maintenir pour parler » to speak.
+The page records each utterance (push-to-talk, 30 s max), uploads it, and plays the spoken replies; it shows the
+round trip it measured for each exchange. The console picks the line up as an incoming call (« Appel entrant · ligne
+mobile », straight under « À traiter »): the AI greets, transcribes and answers with audio the phone plays; the
+operator can take the call, in which case their typed or spoken answers go to the phone. Hanging up on either side
+closes the call.
+
+It is plain HTTPS (upload + polling through the gateway's `/api/line/*` routes), so it works through the demonstration
+tunnel in Android Chrome, as a page added to the home screen, or inside a WebView-based Android app. Lines live in the
+gateway's memory only and expire after 30 minutes of silence; nothing of a real voice is written to disk. A WebRTC
+transport (full-duplex, lower latency) would need a media server or peer connection and can replace the polling
+behind the same console logic. The phone's measured round trips land in the latency log as `phone_ms`.
+
 ## What is deliberately *not* here
 
 - **The UI mockup** (`urgence.html`, ~2.6 MB bundle). The build needs it: put it in `frontend/mockup/`,
@@ -125,6 +149,7 @@ to this gateway. Everything below is configured through environment variables (o
 | `ORANGE_PASSWORD_FILE` | `.access-password` | File holding the Basic-auth password of user `demo`. |
 | `ORANGE_STATE_DIR`, `ORANGE_DB_PATH` | `state/`, `state/orange.db` | Runtime state and the SQLite database. |
 | `ORANGE_STATIC_FILE` | `frontend/dist/urgence.html` | The page served at `/`. |
+| `ORANGE_LINE_FILE` | `frontend/src/line.html` | The caller's phone page served at `/appel`. |
 | `F5_GUARDRAILS_*` | unset | Option A guardrails (see `backend/env.example`). |
 
 ### Caller sites

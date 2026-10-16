@@ -659,4 +659,72 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(shown.trim(),'Allô ? Je vous écoute. Prise en charge opérateur.','bubbles only, no speaker label or clock: '+shown);
   assert.ok(JSON.stringify(pane).includes('"aria-label":"Appelant · 00:00"')&&JSON.stringify(pane).includes('"aria-label":"Agent IA · 00:00"'),'speaker and time stay in the avatar tooltip');
 }
-console.log('PASS: 51 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+// After a takeover the operator's turns are measured apart from the AI's: reaction time, their voice, their mic transcription.
+{
+  const app=make();app.state.session={status:'paused',id:1,launched:1,total:100,finished:0,failed:0};
+  app.api=async(call,path)=>path==='/api/caller'?{json:async()=>({text:'Oui, au douze rue des Lilas.',ms:900,location:'local',timings:{llm_ms:900}})}:{json:async()=>({...result,reply:'Où êtes-vous ?',ms:1600})};
+  app.tts=async(call,text,speaker='assistant')=>{call.lastTts={ms:speaker==='operator'?640:700,speaker};return {text,speaker};};
+  app.transcribe=async(call,blob)=>{call.lastStt={ms:310};return blob.text;};app.play=async()=>{};
+  const c=app.createCall(true,{index:0});await idle(c);
+  assert.equal(c.latency.at(-1).handler,'ai','the AI answered the opening line');assert.ok(c.callerLineAt>0);
+  app.takeOverCall(c);c.callerLineAt=1000;c.opSubmittedAt=5200;  // caller's last words at t=1.0 s on the page clock, answer sent at t=5.2 s
+  await app.submitText(c,'Je suis là. Pouvez-vous me redire l’adresse ?','Vous');await idle(c);
+  const s=c.latency.at(-1);
+  assert.equal(s.handler,'operator');assert.equal(s.operator_ms,4200,'reaction measured from the caller’s last words to the answer');
+  assert.equal(s.op_tts_ms,640);assert.equal(s.op_stt_ms,null,'typed, not spoken');assert.ok(s.caller_ms>=0,'the simulated caller’s answer is still timed');assert.equal(s.analyze_ms>=0,true,'the AI suggestion is timed');
+  app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};app.state.more={latency:true};
+  const shown=texts(app.copilot(app.consoleModel())).join(' ').replace(/ /g,' ');
+  assert.ok(/Vous 4 \d{3} ms/.test(shown)&&shown.includes('l’opérateur (prise en charge)')&&/réaction 4 \d{3} ms · voix 640 ms/.test(shown),shown);
+  assert.ok(texts(app.callList(app.consoleModel())).join(' ').replace(/ /g,' ').includes(' · vous 4 '),'the card names the operator’s reaction');
+  // Spoken answer: the reaction counts from the caller’s words to the moment the operator started speaking; their STT is kept.
+  c.callerLineAt=10000;c.opSubmittedAt=10500;c.opStt=330;  // the operator started speaking 0.5 s after the caller's last words
+  await app.run(c,async()=>{app.append(c,'Vous','Restez en ligne.','microphone_stt');await app.respond(c,'Vous','Restez en ligne.');});
+  const spoken=c.latency.at(-1);assert.equal(spoken.handler,'operator');assert.equal(spoken.operator_ms,500);assert.equal(spoken.op_stt_ms,330);
+  // The gateway aggregates the two handlers apart; the board and Analytique show the operator’s reaction.
+  app.state.latency={samples:5,sites:[],console:{},handlers:{ai:{n:3},operator:{n:2,operator_ms:{n:2,median:4000,p95:4200},op_tts_ms:{n:2,median:650,p95:700}}},phone:{n:1,phone_ms:{n:1,median:2300,p95:2300}}};
+  app.state.view='floor';app.state.selId=null;app.state.callers=[{name:'lyon',ready:true}];
+  const board=texts(app.callPane(app.consoleModel())).join(' ').replace(/ /g,' ');
+  assert.ok(board.includes('Opérateur (prise en charge, médianes) : réaction 4 000 ms · voix 650 ms')&&board.includes('Téléphone (ligne mobile, médiane) : aller-retour 2 300 ms'),board);
+  app.state.analytics=true;const bar=texts(app.controls()).join(' ').replace(/ /g,' ');assert.ok(bar.includes('Opérateur · réaction 4 000 ms')&&bar.includes('Téléphone · aller-retour 2 300 ms'),bar);
+}
+// A real caller on a phone (mobile line): the console adopts the line, answers with audio for the phone, and closes on hang-up.
+{
+  const app=make();app.state.session={status:'stopped',id:1,launched:0,total:100,finished:0,failed:0};
+  const posts=[];let events=[{idx:0,type:'speech',filename:'speech.webm'}];
+  context.fetch=async(url,init)=>{const u=String(url);
+    if(init?.method==='POST'){posts.push({url:u,headers:init.headers||{},body:init.body});return {ok:true,status:200,json:async()=>({})};}
+    if(u==='/api/line/pending')return {ok:true,json:async()=>({lines:[{id:'abc123',name:'Camille',status:'ringing',created:0}]})};
+    if(u.startsWith('/api/line/abc123/events')){const e=events;events=[];return {ok:true,json:async()=>({status:'live',events:e})};}
+    if(u==='/api/line/abc123/audio/0')return {ok:true,blob:async()=>({text:'Allô, il y a eu un accident devant chez moi, quelqu’un est blessé.'})};
+    return {ok:true,json:async()=>({sites:[]})};};
+  app.api=async()=>({json:async()=>({...result,reply:'Je vous écoute. Où êtes-vous exactement ?',signals:['quelqu’un est blessé'],ms:1600})});
+  app.tts=async(call,text,speaker='assistant')=>{call.lastTts={ms:700,speaker};return {text,speaker,size:10};};
+  app.transcribe=async(call,blob)=>{call.lastStt={ms:300};return blob.text;};app.play=async()=>{};
+  await app.pollLines();const c=app.state.calls.find(x=>x.lineId==='abc123');
+  assert.ok(c,'the ringing line became a call');assert.equal(c.sc.cat,'Appel entrant · ligne mobile');assert.equal(c.phone,'ligne mobile · Camille');assert.equal(c.location,'ligne');
+  assert.ok(c.alerted,'a waiting person goes straight to « À traiter »');assert.ok(posts.some(p=>p.url==='/api/line/abc123/claim'&&p.body.includes(c.id)));
+  assert.equal(app.decorate(c).category,'Appel entrant · ligne mobile','named from the start, not « Nouvel appel · évaluation en cours »');
+  await idle(c);const greeting=posts.find(p=>p.url==='/api/line/abc123/reply');
+  assert.ok(greeting&&greeting.headers['X-Speaker']==='assistant'&&decodeURIComponent(greeting.headers['X-Text'])===c.tr[0].text,'the phone hears the greeting');
+  await app.pollLines();assert.equal(app.state.calls.filter(x=>x.lineId==='abc123').length,1,'a line is adopted once');
+  app.pollLineEvents();await tick(20);await idle(c);
+  const said=c.tr.find(t=>t.source==='line_stt');assert.ok(said&&said.text.includes('accident'),'the recording was fetched and transcribed');
+  assert.equal(c.tr.at(-1).who,'Agent IA');const answer=posts.filter(p=>p.url==='/api/line/abc123/reply').at(-1);
+  assert.ok(decodeURIComponent(answer.headers['X-Text']).includes('Où êtes-vous')&&answer.headers['Content-Type']==='audio/wav','the AI’s answer went to the phone as audio');
+  const s=c.latency.at(-1);assert.equal(s.location,'ligne');assert.equal(s.handler,'ai');assert.equal(s.stt_ms,300);assert.equal(s.reply_tts_ms,700);assert.ok(s.caller_ms==null);
+  assert.equal(app.talkBox(c),null,'no caller input box: the caller is the phone');assert.match(app.modeFor(c).title,/ligne mobile/);
+  app.state.view='call';app.state.selId=c.id;assert.ok(!(app.callControls()?.children||[]).some(b=>b.props.id==='orange-caller-mic'));
+  assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('ligne mobile · réponse'),'the card shows how long the caller waited');
+  app.state.view='floor';app.state.selId=null;
+  // The operator takes the call: their answer goes to the phone too, and their turn is recorded without waiting for the caller.
+  app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
+  const op=posts.filter(p=>p.url==='/api/line/abc123/reply').at(-1);assert.equal(op.headers['X-Speaker'],'operator');
+  assert.equal(c.latency.at(-1).handler,'operator');assert.ok(c.latency.at(-1).operator_ms>=0);assert.ok(app.talkBox(c),'after takeover the operator talks');
+  // The phone hangs up.
+  events=[{idx:1,type:'end',by:'phone'}];app.pollLineEvents();await tick(20);
+  assert.ok(c.ended&&c.endLabel==='Appel terminé · à revoir'&&c.tr.some(t=>t.source==='line_end'),'hang-up closes the call');
+  assert.ok(posts.some(p=>p.url==='/api/line/abc123/end'),'the console tells the gateway the call is over');
+  assert.ok(!('lineQueue' in app.snapshot().calls[0])&&!('opSample' in app.snapshot().calls[0]),'transient line state stays out of the snapshot');
+  delete context.fetch;
+}
+console.log('PASS: 53 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

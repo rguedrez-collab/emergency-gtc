@@ -68,6 +68,8 @@ class Component extends DCLogic {
     this.restoring = true;
     this.restore().finally(() => {this.restoring = false;});
     this.persistTick = setInterval(() => this.persist(), 2000);
+    // Real callers on their phones (page /appel): adopt new lines and pull their recordings every second.
+    this.lineTick = setInterval(() => {this.pollLines(); this.pollLineEvents();}, 1000);
     this.onHide = () => this.persist(true);
     window.addEventListener('pagehide', this.onHide);
     // Any later click re-arms sound if the browser blocked a clip.
@@ -132,7 +134,7 @@ class Component extends DCLogic {
     if (document.title !== title) document.title = title;
   }
   componentWillUnmount() {
-    this.disposed=true; clearInterval(this.tick);clearInterval(this.healthTick);clearInterval(this.persistTick);cancelAnimationFrame(this.raf);
+    this.disposed=true; clearInterval(this.tick);clearInterval(this.healthTick);clearInterval(this.persistTick);clearInterval(this.lineTick);cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);window.removeEventListener('pagehide', this.onHide);
     document.removeEventListener('pointerdown',this.onGesture,true);document.removeEventListener('keydown',this.onKey);
     this.cancelRecording();this.stopAudio();
@@ -240,13 +242,15 @@ class Component extends DCLogic {
     finally {clearTimeout(timeout);c.controllers.delete(ctrl);}
   }
   createCall(scenario=false,options={}) {
-    if(!options.auto&&this.state.calls.filter(c=>!c.ended&&!c.auto).length>=MANUAL_CALLS){window.alert('Quatre tests manuels maximum. Clôturez un test.');return;}
-    const sc=scenario?SCENARIOS[options.index??this.scIdx++%SCENARIOS.length]:{cat:'Appel micro / texte',turns:[]};
+    const line=options.line||null;  // a real caller on a phone (mobile line), see adoptLine()
+    if(!options.auto&&this.state.calls.filter(c=>!c.ended&&!c.auto).length>=MANUAL_CALLS){if(!line)window.alert('Quatre tests manuels maximum. Clôturez un test.');return;}
+    const sc=scenario?SCENARIOS[options.index??this.scIdx++%SCENARIOS.length]:{cat:line?'Appel entrant · ligne mobile':'Appel micro / texte',turns:[]};
     const c={id:'TEST-'+(++this.seq),n:this.seq,sc:{cat:sc.cat,place:'Lieu non renseigné',lang:'FR · test',svc:'Revue opérateur'},
       // Automatic calls ring in as "Entrant" (no score yet), as in the original mockup.
-      phone:fakePhone(sc.id||'test-'+this.seq),started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
+      phone:line?'ligne mobile'+(line.name?' · '+line.name:''):fakePhone(sc.id||'test-'+this.seq),started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
       tr:[],facts:[],summary:'',takenOver:false,ended:false,endLabel:'',alerted:false,snoozed:false,why:'',suggestion:'',tools:[],
-      info:[{k:'Identité',v:'Numéro fictif, deux chiffres masqués'},{k:'Adresse',v:'Non confirmée'},{k:'Source',v:scenario?'Scénario fictif → audio → STT':'Micro / texte de test'}],
+      info:[{k:'Identité',v:line?'Ligne mobile de démonstration':'Numéro fictif, deux chiffres masqués'},{k:'Adresse',v:'Non confirmée'},
+        {k:'Source',v:scenario?'Scénario fictif → audio → STT':line?'Téléphone (page /appel) → passerelle → STT':'Micro / texte de test'}],
       busy:false,controllers:new Set(),revision:0,audit:[],lastAnalysis:null,seenSignals:[],gaps:[],prefetch:null,queued:null,
       sampleId:sc.id||null,sessionId:options.auto?this.state.session.id:null,auto:!!options.auto,liveCaller:!!options.liveCaller,reviewRequired:true,reviewed:false};
     if(c.liveCaller)c.sc.cat='Votre appel simulé';
@@ -254,11 +258,15 @@ class Component extends DCLogic {
     c.callerFacts=sc.facts||null;
     // The site whose service plays this caller (voice included), and the per-turn latency log of the call.
     c.location=scenario?this.pickLocation():'local';c.latency=[];c.lastCaller=null;
+    if(line){c.lineId=line.id;c.lineName=line.name||'';c.lineSeen=0;c.location='ligne';}
     // Two voice presets only: a small per-sample pitch/tempo offset keeps callers from sounding identical.
     c.voiceRate=scenario&&sc.id?0.96+((sc.family*7+sc.id.charCodeAt(sc.id.length-1))%9)/100:1;
     if(!options.background){this.cancelRecording();this.stopAudio();this.unlockAudio();}
     this.setState({calls:[...this.state.calls,c],...(options.background?{}:{selId:c.id,view:'call',opText:''})},()=>{
-      if(scenario&&!options.auto)this.nextScenario(c);else if(!scenario)this.append(c,'Agent IA',GREETING,'fixed_demo_greeting');
+      if(scenario&&!options.auto)this.nextScenario(c);
+      else if(!scenario){this.append(c,'Agent IA',GREETING,'fixed_demo_greeting');
+        // The phone hears the greeting: synthesized whether or not the call is open here.
+        if(line)this.run(c,async()=>{const b=await this.tts(c,GREETING,'assistant');await this.deliver(c,b,GREETING,'assistant');});}
     });
     return c;
   }
@@ -331,8 +339,9 @@ class Component extends DCLogic {
     c.busy=true;this.touch();
     try{await fn();}catch(e){this.fail(c,e);}
     finally{c.busy=false;this.touch();
-      // Operator text typed during a busy turn is spoken once that turn ends.
-      const q=c.queued;c.queued=null;if(q&&!c.ended&&!this.disposed)this.submitText(c,q.text,q.who);}
+      // Operator text typed during a busy turn is spoken once that turn ends; a phone recording that arrived meanwhile follows.
+      const q=c.queued;c.queued=null;if(q&&!c.ended&&!this.disposed)this.submitText(c,q.text,q.who);
+      else if(c.lineQueue?.length&&!c.ended&&!this.disposed)this.lineSpeech(c,c.lineQueue.shift());}
   }
   // The AI speaks with the selected preset; the human operator takes the other one so the two voices differ.
   voiceOptions(c,speaker) {
@@ -480,7 +489,7 @@ class Component extends DCLogic {
     const speaking=this.play(c,blob,c.revision,'caller',text);
     const recognized=await this.transcribe(c,blob,'scenario.wav');if(c.ended)return;
     sample.stt_ms=c.lastStt?.ms??null;
-    c.ti++;this.append(c,'Appelant',recognized,'scenario_audio_stt',{said:text});
+    c.ti++;this.append(c,'Appelant',recognized,'scenario_audio_stt',{said:text});c.callerLineAt=performance.now();
     await this.analyzeCall(c,speaking,sample);
   }
   // One line of the simulated caller, timed for the latency log. With caller sites configured (ORANGE_CALLERS) the
@@ -541,6 +550,9 @@ class Component extends DCLogic {
     const verdict=d.guardrail?.configured?' · garde-fou : '+this.guardLabel(d.guardrail):'';
     this.done(t,d.ms+' ms · citations vérifiées · résumé à valider'+verdict);c.lastAnalysis=d;if(d.guardrail?.configured)c.guardrail={...d.guardrail,at:new Date().toISOString()};
     sample=sample||{location:c.location||'local',requested:c.location||'local',fallback:false};sample.analyze_ms=t.ms;
+    // Who is answering this turn: the AI, or the operator who took the call over (their reaction and voice were measured in respond()).
+    if(c.opSample){Object.assign(sample,c.opSample);c.opSample=null;}
+    sample.handler=sample.handler||(c.takenOver?'operator':'ai');
     c.summary=d.summary;c.facts=mergeFacts(c.facts,d.facts);c.suggestion=d.reply;c.score=d.signals.length?85:40;
     const fresh=d.signals.filter(q=>!c.seenSignals.includes(q));c.seenSignals.push(...fresh);
     c.why=d.signals.length?'Signal à vérifier : « '+(fresh[0]||d.signals[0])+' »':'Évaluation humaine requise ; absence de signal ≠ absence de danger.';
@@ -552,31 +564,43 @@ class Component extends DCLogic {
     c.info.find(f=>f.k==='Adresse').v=place?'Déclarée, non vérifiée : '+place.v:'Non confirmée';
     if(c.takenOver){this.recordLatency(c,sample);this.setPhase(c,'operator');return;}
     const rev=c.revision;let voice=null;
-    // Nobody hears a call that is not selected, so its reply needs no voice synthesis.
-    if(c.id===this.audible()){
+    // Nobody hears a call that is not selected, so its reply needs no voice synthesis — except a real caller on the line.
+    if(c.id===this.audible()||c.lineId){
       this.setPhase(c,'tts');voice=await this.tts(c,d.reply);sample.reply_tts_ms=c.lastTts?.ms??null;
       if(c.auto&&c.id===this.audible()&&rev===c.revision&&!c.ended&&this.canAdvance(c))this.prefetchCaller(c,{role:'assistant',text:d.reply});
     }
     this.recordLatency(c,sample);
     await beforeSpeech;
     if(c.ended||c.takenOver||rev!==c.revision)return;
-    this.append(c,'Agent IA',d.reply,'contextual_gemma');if(voice)await this.play(c,voice,rev,'assistant',d.reply);
+    this.append(c,'Agent IA',d.reply,'contextual_gemma');
+    if(c.lineId&&voice)this.deliver(c,voice,d.reply,'assistant');  // to the phone; played here too when the call is open
+    if(voice)await this.play(c,voice,rev,'assistant',d.reply);
     if(!c.ended)this.setPhase(c,c.takenOver?'operator':'gap');
   }
   submitText(c,text,who='Appelant') {
     text=(text||'').trim();if(!c||!text||c.ended||this.recording||text.length>3000)return;
     this.setState({opText:''});
+    if(who==='Vous'&&!c.opSubmittedAt)c.opSubmittedAt=performance.now();  // the operator's answer is ready (typed), even if it waits for the line
     if(c.busy){c.queued=c.queued?.who===who?{who,text:c.queued.text+' '+text}:{who,text};this.touch();return;}
     return this.run(c,async()=>{this.append(c,who,text,'typed_test');await this.respond(c,who,text);});
   }
   async respond(c,who,text) {
     if(who==='Vous'){
-      const rev=c.revision;this.setPhase(c,'tts');const b=await this.tts(c,text,'operator');
+      const rev=c.revision;this.setPhase(c,'tts');
+      // The operator's own latency, kept apart from the AI's: reaction time from the caller's last words (end of their
+      // audio, else their transcript) to the answer, then the voice synthesis; the mic transcription when they spoke.
+      const since=Math.max(c.callerLineAt||0,c.lastSpeech?.speaker==='caller'?c.lastSpeech.at:0);
+      const reacted=since?Math.max(0,Math.round((c.opSubmittedAt||performance.now())-since)):null;
+      const b=await this.tts(c,text,'operator');
+      c.opSample={handler:'operator',operator_ms:reacted,op_tts_ms:c.lastTts?.ms??null,op_stt_ms:c.opStt??null};c.opStt=null;c.opSubmittedAt=null;
+      if(c.lineId)this.deliver(c,b,text,'operator');
       // A scenario caller answers the operator; that answer is prepared while the operator speaks.
       const answer=!!c.callerFacts&&this.canAdvance(c,true);
       if(answer)this.prefetchCaller(c);
       await this.play(c,b,rev,'operator',text);
       if(answer&&!c.ended)return this.callerTurn(c);
+      // A real caller answers in their own time: the operator's turn is complete, record it now.
+      if(c.lineId){this.recordLatency(c,{location:'ligne',requested:'ligne',fallback:false,...c.opSample});c.opSample=null;this.setPhase(c,'operator');return;}
     }
     if(this.dialogue(c).some(m=>m.role==='caller'))await this.analyzeCall(c);
     else this.setPhase(c,'operator');
@@ -594,7 +618,7 @@ class Component extends DCLogic {
       const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
       if(!mime){stream.getTracks().forEach(t=>t.stop());throw Error('Format micro non pris en charge.');}
       const rec=new MediaRecorder(stream,{mimeType:mime});const chunks=[];
-      const capture={rec,stream,c,cancelled:false,who,mime,started:Date.now()};this.recording=capture;
+      const capture={rec,stream,c,cancelled:false,who,mime,started:Date.now(),startedPerf:performance.now()};this.recording=capture;
       rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
       rec.onerror=()=>{capture.cancelled=true;stream.getTracks().forEach(t=>t.stop());this.recording=null;clearTimeout(this.micTimer);this.setState({mic:false});this.fail(c,Error('Échec capture micro.'));};
       rec.onstop=async()=>{
@@ -604,7 +628,9 @@ class Component extends DCLogic {
         await this.run(c,async()=>{
           const blob=new Blob(chunks,{type:mime});if(blob.size<100)throw Error('Enregistrement vide.');
           const text=await this.transcribe(c,blob,mime.includes('mp4')?'micro.mp4':'micro.webm');
-          if(c.ended)return;this.append(c,who,text,'microphone_stt');await this.respond(c,who,text);
+          if(c.ended)return;
+          if(who==='Vous'){c.opSubmittedAt=capture.startedPerf;c.opStt=c.lastStt?.ms??null;}  // the operator reacted when they started speaking
+          this.append(c,who,text,'microphone_stt');await this.respond(c,who,text);
         });
       };
       rec.start();this.setPhase(c,'gap');this.setState({mic:true});this.micTimer=setTimeout(()=>{if(rec.state==='recording')rec.stop();},30000);
@@ -653,6 +679,7 @@ class Component extends DCLogic {
     c.tools.filter(t=>t.status==='running').forEach(t=>{t.status='cancelled';t.result='annulé';});
     if(this.recording?.c===c)this.cancelRecording();
     if(this.audioCallId===c.id)this.stopAudio();
+    if(c.lineId&&typeof fetch==='function')fetch('/api/line/'+c.lineId+'/end',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});  // the phone hears the end
     if(c.auto&&c.sessionId===this.state.session.id){
       this.state.session.finished++;
       if(label.startsWith('Échec'))this.state.session.failed++;
@@ -677,7 +704,7 @@ class Component extends DCLogic {
   download() {
     const data={mode:'demonstration',exported_at:new Date().toISOString(),dispatch_connected:false,session:this.state.session,
       caller_sites:(this.state.callers||[]).map(s=>s.name),latency:this.state.latency,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,lineQueue,linePolling,opSample,...c})=>c)};
     const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='orange-session-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -691,7 +718,7 @@ class Component extends DCLogic {
   // Serializable state only: no abort controllers, prefetched audio, queued speech or transient busy flags.
   snapshot() {
     return {owner:this.ownerId(),takeover:!!this.takeover,startedAt:this.started,session:this.state.session,seq:this.seq,scIdx:this.scIdx,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,lineQueue,linePolling,opSample,...c})=>c)};
   }
   persist(final=false) {
     if(this.disposed||this.restoring||this.readOnly||this.state.session.status==='idle'&&!this.state.calls.length)return;
@@ -730,6 +757,58 @@ class Component extends DCLogic {
     if(!window.confirm('Effacer la session enregistrée sur la passerelle et recharger la page ?'))return;
     this.readOnly=true;
     fetch('/api/session/clear',{method:'POST'}).catch(()=>{}).finally(()=>location.reload());
+  }
+  // ---------------- Mobile line: a real caller on a phone (page /appel) ----------------
+  // The gateway lists the lines that are ringing; the console adopts each as an incoming call, then pulls its events
+  // every second: the caller's recordings (transcribed, answered by the AI or by the operator who took the call) and the
+  // hang-up. Replies are posted back as audio for the phone to play (deliver()).
+  lineFetch(path,init) {
+    const signal=typeof AbortSignal!=='undefined'&&AbortSignal.timeout?AbortSignal.timeout(10000):undefined;
+    return fetch(path,{...(init||{}),...(signal?{signal}:{})});
+  }
+  async pollLines() {
+    if(this.disposed||this.readOnly||this.linesBusy||typeof fetch!=='function')return;this.linesBusy=true;
+    try{const r=await this.lineFetch('/api/line/pending');if(!r.ok)return;const d=await r.json();
+      for(const l of d.lines||[])if(!this.state.calls.some(c=>c.lineId===l.id))this.adoptLine(l);
+    }catch(e){}finally{this.linesBusy=false;}
+  }
+  adoptLine(l) {
+    const c=this.createCall(false,{background:true,line:l});if(!c)return null;  // four manual calls at most: the line keeps ringing
+    this.append(c,'Système','Appel réel depuis un téléphone (ligne mobile de démonstration). Rien n’est transmis aux secours.','line_open');
+    c.alerted=true;c.alertAt=this.state.shift;  // a person is waiting: straight to « À traiter »
+    if(typeof fetch==='function')fetch('/api/line/'+l.id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({call:c.id})}).catch(()=>{});
+    this.touch();return c;
+  }
+  pollLineEvents() {
+    if(this.disposed||this.readOnly||typeof fetch!=='function')return;
+    for(const c of this.state.calls.filter(c=>c.lineId&&!c.ended&&!c.linePolling)){
+      c.linePolling=true;
+      (async()=>{try{
+        const r=await this.lineFetch('/api/line/'+c.lineId+'/events?since='+(c.lineSeen||0));if(!r.ok)return;const d=await r.json();
+        for(const e of d.events||[]){c.lineSeen=Math.max(c.lineSeen||0,e.idx+1);
+          if(e.type==='speech')this.lineSpeech(c,e);
+          else if(e.type==='end'&&e.by!=='console'&&!c.ended){this.append(c,'Système','L’appelant a raccroché.','line_end');this.endCall(c,'Appel terminé · à revoir');}
+        }
+      }catch(e){}finally{c.linePolling=false;}})();
+    }
+  }
+  // One recording from the phone: fetched, played to the operator when the call is open, transcribed, then answered
+  // by the AI (or left to the operator who took the call; the AI only suggests).
+  lineSpeech(c,e) {
+    if(c.ended)return;
+    if(c.busy){(c.lineQueue=c.lineQueue||[]).push(e);return;}
+    return this.run(c,async()=>{
+      const r=await this.lineFetch('/api/line/'+c.lineId+'/audio/'+e.idx);if(!r.ok)throw Error('Enregistrement de l’appelant indisponible.');
+      const blob=await r.blob();if(c.ended)return;
+      const speaking=this.play(c,blob,c.revision,'caller','');
+      const text=await this.transcribe(c,blob,e.filename||'speech.webm');if(c.ended)return;
+      this.append(c,'Appelant',text,'line_stt');c.callerLineAt=performance.now();
+      await this.analyzeCall(c,speaking,{location:'ligne',requested:'ligne',fallback:false,handler:c.takenOver?'operator':'ai',stt_ms:c.lastStt?.ms??null});
+    });
+  }
+  deliver(c,blob,text,speaker) {
+    if(!c.lineId||typeof fetch!=='function')return Promise.resolve();
+    return fetch('/api/line/'+c.lineId+'/reply',{method:'POST',headers:{'Content-Type':'audio/wav','X-Text':encodeURIComponent(text||''),'X-Speaker':speaker},body:blob}).catch(()=>{});
   }
   // ---------------- Rendering: one console (list · selected call · copilot) over the mockup's header ----------------
   // One button system (NVIDIA Elements) everywhere, styled per theme through its CSS variables.
@@ -778,6 +857,7 @@ class Component extends DCLogic {
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
       this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),
+      typeof location!=='undefined'?h('span',{key:'line',className:'oc-muted',title:'Une personne peut appeler cette console depuis son téléphone : ouvrez cette adresse sur le mobile (identifiants de la console), puis « Appeler ».'},'Appel réel : '+location.origin+'/appel'):null,
       ...(active?[this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call')]:[]),
       this.button(this.state.tools?'Masquer les outils de test':'Outils de test',()=>this.setState({tools:!this.state.tools}),false,'orange-tools'),
       ...(this.state.tools?[h('span',{key:'sep',className:'oc-vsep'}),
@@ -795,9 +875,12 @@ class Component extends DCLogic {
     const perSite=names.map(n=>{const st=(lat?.sites||[]).find(x=>x.name===n);return this.siteName(n)+' '+(st?.caller_ms?fmtMs(st.caller_ms.median):'—');});
     const con=lat?.console,steps=con?[['STT',con.stt_ms],['analyse',con.analyze_ms],['voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
     const figure=(key,text,title)=>h('span',{key,className:'oc-chip oc-chip-plain oc-kpis',title},text);
+    const op=lat?.handlers?.operator,phone=lat?.phone?.phone_ms;
     return h('div',{key:'analytics',className:'oc-settings oc-analytics'},h('span',{key:'l',className:'oc-h'},'Analytique'),progress,
       names.length?figure('sites','Appelant · '+perSite.join(' · '),'Latence médiane de l’appelant simulé par site, derniers tours'):null,
-      steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null);
+      steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null,
+      op?.operator_ms?figure('operator','Opérateur · réaction '+fmtMs(op.operator_ms.median),'Médiane du temps de réaction de l’opérateur après prise en charge (dernières paroles de l’appelant → réponse)'):null,
+      phone?figure('phone','Téléphone · aller-retour '+fmtMs(phone.median),'Médiane du délai mesuré par les téléphones des appelants réels (phrase envoyée → réponse reçue)'):null);
   }
   entry() {
     return h('div',{style:{minHeight:'calc(100vh - 180px)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'32px'}},
@@ -839,7 +922,8 @@ class Component extends DCLogic {
     const [sev,sevColor]=c.score==null?['Entrant','purple']:SEV(c.score);
     // Progress towards the end of an AI-handled call: 24 turns, or the scripted turns once the sample's duration has elapsed.
     const progress=c.auto&&!c.ended&&!c.takenOver?Math.min(1,Math.max(c.ti/AUTO_TURNS,Math.min(c.ti/Math.max(1,c.scenario.length),c.t/c.targetDurationMs))):null;
-    return {id:c.id,c,sev,sevColor,progress,category:c.liveCaller?c.sc.cat:c.score==null?'Nouvel appel · évaluation en cours':c.sc.cat,place:c.sc.place,dur:fmt(c.t),
+    // A real caller's line and the user's own test call keep their names from the start; scenario calls are « new » until analysed.
+    return {id:c.id,c,sev,sevColor,progress,category:c.liveCaller||c.lineId?c.sc.cat:c.score==null?'Nouvel appel · évaluation en cours':c.sc.cat,place:c.sc.place,dur:fmt(c.t),
       status:this.floorStatus(c),headline:this.headline(c),selected:c.id===this.state.selId&&this.state.view==='call',fresh:this.state.shift-(c.alertAt??-1e9)<800};
   }
   consoleModel() {
@@ -852,9 +936,10 @@ class Component extends DCLogic {
   }
   modeFor(c) {
     const taken=c.takenOver;
-    return {title:c.ended?'Appel clôturé · à revoir':c.liveCaller?'Appel de test · vous êtes l’appelant':taken?'Prise en charge opérateur · assistance IA':c.auto?'Écoute · appel pris en charge par l’IA':c.callerFacts?'Scénario de test':'Appel de test · saisie / micro',
+    return {title:c.ended?'Appel clôturé · à revoir':c.liveCaller?'Appel de test · vous êtes l’appelant':c.lineId?(taken?'Prise en charge opérateur · ligne mobile':'Appel réel · ligne mobile · pris en charge par l’IA'):taken?'Prise en charge opérateur · assistance IA':c.auto?'Écoute · appel pris en charge par l’IA':c.callerFacts?'Scénario de test':'Appel de test · saisie / micro',
       sub:c.ended?c.endLabel+' · historique conservé dans cette session de navigateur.':
         c.liveCaller?'Parler, puis Envoyer ma phrase ; l’assistance IA répond. Micro fermé pendant la réponse, 30 s maximum par prise.':
+        c.lineId?(taken?'« Envoyer » ou « Parler » énonce votre réponse sur le téléphone de l’appelant.':'Une personne parle depuis son téléphone (page /appel) ; l’IA lui répond. Prenez l’appel pour répondre vous-même.'):
         taken?'« Envoyer » ou « Parler » énonce votre réponse ; l’appelant répond. « Rendre à l’IA » rétablit la prise en charge automatique.':
         c.auto?'Prenez l’appel pour répondre vous-même. Échap ferme l’écoute.':
         c.callerFacts?'« Réplique suivante » fait parler l’appelant du scénario ; « Envoyer » saisit une réplique.':
@@ -996,8 +1081,12 @@ class Component extends DCLogic {
         h('span',{className:'oc-mono'},st?.caller_ms?'appelant '+fmtMs(st.caller_ms.median)+' · p95 '+fmtMs(st.caller_ms.p95):'aucune mesure'),
         st?.fallbacks?h('span',{className:'oc-mono oc-right oc-site-warn',title:'Tours repris par l’appelant intégré de la passerelle, ce site étant injoignable'},st.fallbacks+' repli'+(st.fallbacks>1?'s':'')):null);};
     const con=lat?.console,steps=con?[['Transcription',con.stt_ms],['Analyse',con.analyze_ms],['Voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
+    const op=lat?.handlers?.operator,phone=lat?.phone?.phone_ms;
     return h('div',{className:'oc-sites'},h('div',{className:'oc-feedhead'},'Sites appelants · latence'),...names.map(row),
-      steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null);
+      steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null,
+      // The human side, measured apart: the operator's reaction after a takeover, and what a real caller's phone saw.
+      op?.operator_ms?h('div',{className:'oc-muted'},'Opérateur (prise en charge, médianes) : réaction '+fmtMs(op.operator_ms.median)+(op.op_tts_ms?' · voix '+fmtMs(op.op_tts_ms.median):'')):null,
+      phone?h('div',{className:'oc-muted'},'Téléphone (ligne mobile, médiane) : aller-retour '+fmtMs(phone.median)):null);
   }
   // Where the selected call's caller voice comes from, and the last turn's round trip; shown on scenario calls once a
   // site is configured or was used.
@@ -1013,23 +1102,36 @@ class Component extends DCLogic {
   // last measured round trip (the same figure as the board's « appelant »); the call's median and the network share
   // sit in the tooltip. Its own line, so the status text and the action keep their room.
   callLatency(c) {
+    const turn=(c.latency||[]).at(-1);
+    // The operator's own turns (after a takeover) are measured apart: their reaction time, on the card as « vous ».
+    const op=turn?.handler==='operator'&&turn.operator_ms!=null?' · vous '+fmtMs(turn.operator_ms):'';
+    if(c.lineId){
+      // A real caller: what matters is how long they waited for an answer (transcription + analysis + voice, or the operator).
+      if(!turn)return null;
+      const wait=turn.handler==='operator'?turn.operator_ms:(turn.stt_ms||0)+(turn.analyze_ms||0)+(turn.reply_tts_ms||0);
+      return h('div',{key:'lat',className:'oc-callmeta oc-latency',title:'Ligne mobile · délai de réponse du dernier tour'+(turn.handler==='operator'?' (opérateur)':' (transcription + analyse + voix)')},
+        'ligne mobile · réponse '+fmtMs(wait));
+    }
     const last=c.lastCaller;if(!c.callerFacts||!last||last.caller_ms==null)return null;
     const rows=(c.latency||[]).map(r=>r.caller_ms).filter(v=>v!=null).sort((a,b)=>a-b),median=rows.length?rows[Math.floor(rows.length/2)]:null;
     const title='Appelant simulé · '+this.siteName(last.location)+' · dernier tour '+fmtMs(last.caller_ms)+(last.network_ms!=null?' dont réseau '+fmtMs(last.network_ms):'')
-      +(rows.length>1?' · médiane '+fmtMs(median):'')+(last.fallback?' · repli sur la passerelle':'');
-    return h('div',{key:'lat',className:'oc-callmeta oc-latency'+(last.fallback?' oc-site-warn':''),title},this.siteName(last.location)+' · appelant '+fmtMs(last.caller_ms));
+      +(rows.length>1?' · médiane '+fmtMs(median):'')+(last.fallback?' · repli sur la passerelle':'')+(op?' · réaction de l’opérateur '+fmtMs(turn.operator_ms):'');
+    return h('div',{key:'lat',className:'oc-callmeta oc-latency'+(last.fallback?' oc-site-warn':''),title},this.siteName(last.location)+' · appelant '+fmtMs(last.caller_ms)+op);
   }
   // Latency of the last turn in the copilot: one line folded, the breakdown and the call's medians behind Détails.
   latencyBlock(c) {
-    const rows=c.latency||[],last=rows.at(-1);
-    const line=last?[['Appelant',last.caller_ms],['STT',last.stt_ms],['Analyse',last.analyze_ms],['Voix IA',last.reply_tts_ms]].filter(([,v])=>v!=null).map(([k,v])=>k+' '+fmtMs(v)).join(' · ')||'Mesure en cours.':'Aucune mesure pour l’instant.';
+    const rows=c.latency||[],last=rows.at(-1),operator=last?.handler==='operator';
+    const line=last?[...(operator?[['Vous',last.operator_ms]]:[]),['Appelant',last.caller_ms],['STT',last.stt_ms],['Analyse',last.analyze_ms],['Voix IA',last.reply_tts_ms]].filter(([,v])=>v!=null).map(([k,v])=>k+' '+fmtMs(v)).join(' · ')||'Mesure en cours.':'Aucune mesure pour l’instant.';
     const body=[h('span',{key:'line',className:'oc-muted oc-ellipsis'},line)];
     if(this.more('latency')&&last){
-      const median=k=>{const v=rows.map(r=>r[k]).filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;};
-      const kv=[['Site',this.siteName(last.location)+(last.fallback?' · repli (site demandé : '+this.siteName(last.requested)+')':'')],
-        ['Appelant',fmtMs(last.caller_ms)+(last.llm_ms!=null?' · modèle '+fmtMs(last.llm_ms):'')+(last.tts_ms!=null?' · voix '+fmtMs(last.tts_ms):'')+(last.network_ms!=null?' · réseau '+fmtMs(last.network_ms):'')],
-        ['Transcription',fmtMs(last.stt_ms)],['Analyse',fmtMs(last.analyze_ms)],['Voix IA',fmtMs(last.reply_tts_ms)],
-        ['Médianes',fmtMs(median('caller_ms'))+' appelant · '+fmtMs(median('analyze_ms'))+' analyse']];
+      const median=(k,only)=>{const v=rows.filter(r=>!only||r.handler===only).map(r=>r[k]).filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;};
+      const kv=[['Site',c.lineId?'ligne mobile (appelant réel)':this.siteName(last.location)+(last.fallback?' · repli (site demandé : '+this.siteName(last.requested)+')':'')],
+        ['Réponse par',operator?'l’opérateur (prise en charge)':'l’assistance IA'],
+        // The operator's turn is its own measurement: reaction, their voice, their mic transcription when they spoke.
+        ...(operator?[['Opérateur','réaction '+fmtMs(last.operator_ms)+(last.op_tts_ms!=null?' · voix '+fmtMs(last.op_tts_ms):'')+(last.op_stt_ms!=null?' · STT '+fmtMs(last.op_stt_ms):'')]]:[]),
+        ...(c.lineId?[]:[['Appelant',fmtMs(last.caller_ms)+(last.llm_ms!=null?' · modèle '+fmtMs(last.llm_ms):'')+(last.tts_ms!=null?' · voix '+fmtMs(last.tts_ms):'')+(last.network_ms!=null?' · réseau '+fmtMs(last.network_ms):'')]]),
+        ['Transcription',fmtMs(last.stt_ms)],['Analyse',fmtMs(last.analyze_ms)+(operator?' (suggestion)':'')],['Voix IA',fmtMs(last.reply_tts_ms)],
+        ['Médianes',(c.lineId?'':fmtMs(median('caller_ms'))+' appelant · ')+fmtMs(median('analyze_ms'))+' analyse'+(median('operator_ms','operator')!=null?' · '+fmtMs(median('operator_ms','operator'))+' réaction opérateur':'')]];
       body.push(h('div',{key:'kv',className:'oc-kv'},...kv.flatMap(([k,v],i)=>[h('span',{key:'k'+i,className:'oc-muted'},k),h('span',{key:'v'+i},v)])));
     }
     return h('div',{key:'Latence',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Latence · dernier tour'),this.moreButton('latency')),...body);
@@ -1041,7 +1143,7 @@ class Component extends DCLogic {
   }
   // The talk box is for the operator after takeover, or for the user playing the caller in a manual test.
   talkBox(c) {
-    if(c.ended||!(c.takenOver||!c.auto))return null;
+    if(c.ended||!(c.takenOver||(!c.auto&&!c.lineId)))return null;  // a real caller's line: the operator talks only after taking the call
     const S=this.state;
     return h('div',{className:'oc-talk'},
       c.liveCaller?h('div',{id:'orange-live-call','nve-layout':'column gap:sm'},
@@ -1066,7 +1168,7 @@ class Component extends DCLogic {
     const row=(...items)=>h('div',{className:'oc-ctlrow','nve-layout':'row gap:sm wrap align:vertical-center'},...items);
     if(c.ended){const next=this.nextLiveCall(c);
       return next?row(this.button('Écouter l’appel suivant → '+next.sc.cat,()=>this.open(next.id),false,'orange-next-call')):null;}
-    const test=!c.auto,listening=c.auto&&!c.takenOver;
+    const test=!c.auto&&!c.lineId,listening=c.auto&&!c.takenOver;
     // Closing lives in the header with the other call-level actions; this row only carries test and recovery tools.
     const items=[
       ...(test&&!c.liveCaller?[this.button(this.state.mic?'Arrêter le micro':'Micro appelant',()=>this.toggleMic('Appelant'),c.busy,'orange-caller-mic')]:[]),

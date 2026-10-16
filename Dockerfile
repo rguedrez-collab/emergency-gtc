@@ -21,6 +21,7 @@ RUN useradd --create-home --uid 10001 orange && mkdir -p /app/state && chown -R 
 COPY --chown=orange:orange backend/server.py ./backend/
 COPY --chown=orange:orange caller/__init__.py caller/simulation.py ./caller/
 COPY --chown=orange:orange tools/db_report.py ./tools/
+COPY --chown=orange:orange frontend/src/line.html ./frontend/src/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
 USER orange
 # Inside the container the gateway must listen on all interfaces; publish or proxy it as you see fit.
@@ -51,7 +52,7 @@ COPY --chown=orange:orange backend/server.py ./backend/
 COPY --chown=orange:orange caller/__init__.py caller/simulation.py caller/service.py ./caller/
 COPY --chown=orange:orange tests/e2e/verify_local.py ./tests/e2e/
 COPY --chown=orange:orange tools/preview_local.py tools/db_report.py ./tools/
-COPY --chown=orange:orange frontend/src/logic.js ./frontend/src/
+COPY --chown=orange:orange frontend/src/logic.js frontend/src/line.html ./frontend/src/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
 USER orange
 ENV ORANGE_STATE_DIR=/app/state

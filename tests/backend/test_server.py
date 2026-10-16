@@ -671,6 +671,81 @@ class GatewayTests(unittest.TestCase):
         finally:
             gate.release(); gate.release()
 
+    def test_latency_handler_fields_and_schema_migration(self):
+        import sqlite3, tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"), patch.dict("os.environ", {"ORANGE_CALLERS": ""}):
+            # A database from before the operator/phone columns: the gateway adds them on open.
+            with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:
+                conn.execute("CREATE TABLE latency (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, base INTEGER, call_id TEXT, turn INTEGER, "
+                             "location TEXT NOT NULL, requested TEXT, fallback INTEGER, caller_ms INTEGER, network_ms INTEGER, llm_ms INTEGER, tts_ms INTEGER, "
+                             "stt_ms INTEGER, analyze_ms INTEGER, reply_tts_ms INTEGER)")
+                conn.execute("INSERT INTO latency (at, location, caller_ms, analyze_ms) VALUES (1, 'local', 1500, 1600)")
+            columns = {row[1] for row in server.db().execute("PRAGMA table_info(latency)")}
+            self.assertTrue({"handler", "operator_ms", "op_tts_ms", "op_stt_ms", "phone_ms"} <= columns)
+            # The AI's turns and the operator's turns are aggregated apart; a phone's round trip has its own figure.
+            for sample in ({"location": "local", "handler": "operator", "operator_ms": 4200, "op_tts_ms": 700, "analyze_ms": 1700, "call": "TEST-1", "turn": 3},
+                           {"location": "local", "handler": "operator", "operator_ms": 3800, "op_stt_ms": 350, "call": "TEST-1", "turn": 4},
+                           {"location": "ligne", "requested": "ligne", "handler": "ai", "stt_ms": 300, "analyze_ms": 1600, "reply_tts_ms": 700},
+                           {"location": "ligne", "requested": "ligne", "phone_ms": 2300, "call": "LIGNE-abc123"}):
+                self.assertEqual(self.request("/api/latency", sample)[0], 200, sample)
+            self.assertEqual(self.request("/api/latency", {"location": "local", "handler": "robot", "analyze_ms": 10})[0], 400)
+            report = json.loads(self.request("/api/latency")[1])
+            self.assertEqual((report["handlers"]["operator"]["n"], report["handlers"]["operator"]["operator_ms"]["median"], report["handlers"]["operator"]["op_tts_ms"]["n"]), (2, 4000, 1))
+            self.assertEqual((report["handlers"]["ai"]["n"], report["handlers"]["ai"]["analyze_ms"]["median"]), (2, 1600))
+            self.assertEqual((report["phone"]["n"], report["phone"]["phone_ms"]["median"]), (1, 2300))
+            self.assertEqual([s["name"] for s in report["sites"]], ["local"], "a real caller's line is not a caller site")
+            self.assertEqual(report["recent"][0]["handler"], "ai")
+
+    def test_mobile_line_lifecycle(self):
+        import tempfile
+        from urllib.parse import quote
+        server.lines.clear()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"):
+            status, body = self.request("/api/line", {"name": "Camille <b>"})
+            self.assertEqual(status, 200, body)
+            line = json.loads(body)
+            self.assertEqual(line["name"], "Camille b"); self.assertTrue(line["id"] and line["token"])
+            lid, phone = line["id"], {"X-Line-Token": line["token"]}
+            pending = json.loads(self.request("/api/line/pending")[1])["lines"]
+            self.assertEqual((pending[0]["id"], pending[0]["status"]), (lid, "ringing")); self.assertNotIn("token", pending[0])
+            # The phone pushes a recording: its own token only.
+            speech = b"\x1aE\xdf\xa3" + b"\0" * 300
+            self.assertEqual(self.request(f"/api/line/{lid}/speech", raw=speech, headers={"Content-Type": "application/octet-stream", "X-Filename": "speech.webm"})[0], 400)
+            self.assertEqual(self.request(f"/api/line/{lid}/speech", raw=speech, headers={**phone, "X-Line-Token": "wrong", "Content-Type": "application/octet-stream", "X-Filename": "speech.webm"})[0], 403)
+            self.assertEqual(self.request(f"/api/line/{lid}/speech", raw=speech, headers={**phone, "Content-Type": "application/octet-stream", "X-Filename": "speech.exe"})[0], 400)
+            status, body = self.request(f"/api/line/{lid}/speech", raw=speech, headers={**phone, "Content-Type": "application/octet-stream", "X-Filename": "speech.webm"})
+            self.assertEqual((status, json.loads(body)["idx"]), (200, 0))
+            # The console reads the line without a token, fetches the audio, claims the line and answers with a WAV.
+            events = json.loads(self.request(f"/api/line/{lid}/events")[1])
+            self.assertEqual((events["status"], events["events"][0]["type"], events["events"][0]["size"], events["events"][0]["filename"]), ("ringing", "speech", len(speech), "speech.webm"))
+            self.assertNotIn("audio", events["events"][0])
+            req = Request(self.base + f"/api/line/{lid}/audio/0", headers={"Authorization": self.httpd.expected_auth})
+            with urlopen(req, timeout=3) as resp:
+                self.assertEqual((resp.read(), resp.headers["Content-Type"]), (speech, "audio/webm"))
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/claim", {"call": "TEST-7"})[1])["status"], "live")
+            self.assertEqual(self.request(f"/api/line/{lid}/reply", raw=b"<html>", headers={"Content-Type": "audio/wav", "X-Text": "x"})[0], 400)
+            status, body = self.request(f"/api/line/{lid}/reply", raw=b"RIFF" + b"\0" * 60, headers={"Content-Type": "audio/wav", "X-Text": quote("Je vous écoute. Où êtes-vous ?"), "X-Speaker": "assistant"})
+            self.assertEqual((status, json.loads(body)["idx"]), (200, 2))
+            # The phone sees the claim and the reply (text + speaker), fetches the audio, reports its round trip.
+            events = json.loads(self.request(f"/api/line/{lid}/events?since=1", headers=phone)[1])
+            self.assertEqual([e["type"] for e in events["events"]], ["claimed", "reply"]); self.assertEqual(events["status"], "live")
+            self.assertEqual((events["events"][1]["text"], events["events"][1]["speaker"]), ("Je vous écoute. Où êtes-vous ?", "assistant"))
+            req = Request(self.base + f"/api/line/{lid}/audio/2?token={line['token']}", headers={"Authorization": self.httpd.expected_auth})
+            with urlopen(req, timeout=3) as resp:
+                self.assertTrue(resp.read().startswith(b"RIFF")); self.assertEqual(resp.headers["Content-Type"], "audio/wav")
+            self.assertEqual(self.request(f"/api/line/{lid}/latency", {"rtt_ms": 2300, "handler": "ai"}, headers=phone)[0], 200)
+            self.assertEqual(json.loads(self.request("/api/latency")[1])["phone"]["phone_ms"]["median"], 2300)
+            # Hang-up from the phone: the line ends, leaves the pending list, and the console sees who ended it.
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/end", {}, headers=phone)[1])["status"], "ended")
+            self.assertEqual(json.loads(self.request("/api/line/pending")[1])["lines"], [])
+            end = json.loads(self.request(f"/api/line/{lid}/events?since=3")[1])["events"]
+            self.assertEqual((end[0]["type"], end[0]["by"]), ("end", "phone"))
+            self.assertEqual(self.request("/api/line/nope/events")[0], 404)
+            self.assertEqual(self.request("/api/line/nope/events", headers={"X-Line-Token": "t"})[0], 403)
+            if server.LINE_FILE.exists():
+                status, body = self.request("/appel")
+                self.assertEqual(status, 200); self.assertIn("Maintenir pour parler".encode(), body)
+
     def test_original_html_is_served(self):
         if not server.STATIC_FILE.exists():
             self.skipTest("build the frontend first: make build")

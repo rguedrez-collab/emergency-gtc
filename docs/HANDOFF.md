@@ -77,10 +77,23 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
 - Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`, `location`,
   `lastCaller`, `latency[]` (per-turn samples, at most 60 per call); the root carries `caller_sites` and the gateway's
   `latency` aggregates.
-- Latency sample (browser → `POST /api/latency`, table `latency`): `location` (site that answered, or `local`),
-  `requested`, `fallback`, `caller_ms`, `network_ms`, `llm_ms`, `tts_ms`, `stt_ms`, `analyze_ms`, `reply_tts_ms`, plus
-  `call`, `turn`, `base` (the vacation's time base, joins `calls(base, id)`). The scripted opening line carries no
-  caller timing (`scripted: true`, ignored by the per-site statistics).
+- Latency sample (browser → `POST /api/latency`, table `latency`): `location` (site that answered, `local`, or `ligne`
+  for a real caller's phone), `requested`, `fallback`, `handler` (`ai` | `operator`: who answered that turn),
+  `caller_ms`, `network_ms`, `llm_ms`, `tts_ms`, `stt_ms`, `analyze_ms`, `reply_tts_ms`, the operator's own
+  `operator_ms` (reaction: caller's last words → answer sent / started speaking), `op_tts_ms`, `op_stt_ms`, and
+  `phone_ms` (a round trip measured by the phone, posted through `/api/line/<id>/latency`), plus `call`, `turn`, `base`
+  (the vacation's time base, joins `calls(base, id)`). The scripted opening line carries no caller timing
+  (`scripted: true`, ignored by the per-site statistics). `GET /api/latency` returns `sites`, `console`, `handlers`
+  (ai / operator aggregates kept apart) and `phone`. Columns added later are created on open (`LATENCY_ADDED_COLUMNS`).
+- Mobile line (a real caller on a phone, page `/appel` = `frontend/src/line.html`, `ORANGE_LINE_FILE`): `POST /api/line`
+  creates a line `{id, token}`; the phone posts recordings to `/api/line/<id>/speech` (its token, `X-Line-Token`), polls
+  `/api/line/<id>/events?since=`, fetches `/api/line/<id>/audio/<idx>`, posts `/api/line/<id>/latency` and
+  `/api/line/<id>/end`. The console (operator credentials, no token) lists `/api/line/pending` every second, adopts
+  each line as a manual call (`createCall(false, {line})` → `c.lineId`, category « Appel entrant · ligne mobile »,
+  alerted at once), `claim`s it, pulls its events (`pollLineEvents` → `lineSpeech`: play to the operator when open,
+  transcribe, `analyzeCall`), and posts every spoken reply (AI or operator) as WAV to `/api/line/<id>/reply`
+  (`deliver`). Lines live in memory, expire after 30 min, keep at most 80 events. The fake models answer a non-WAV
+  recording with one canned sentence so the preview and e2e can exercise the loop.
 
 ## Behaviour worth knowing before changing anything
 
@@ -111,9 +124,9 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
 ## How to verify
 
 ```bash
-make test                                      # 50 controller checks (vm, stubbed React/Audio) + 59 backend + 10 caller-service tests
+make test                                      # 53 controller checks (vm, stubbed React/Audio) + 61 backend + 10 caller-service tests
 make build MOCKUP=/path/to/urgence.html        # frontend/dist/urgence.html (one backend test skips until it exists)
-make e2e                                       # 13 headless checks with fake models and two fake caller sites (needs Playwright + Chromium)
+make e2e                                       # 14 headless checks: fake models, two fake caller sites, one simulated phone line (needs Playwright + Chromium)
 python3 tests/e2e/verify_local.py --guarded | --oob | --realproxy | --soak 300 | --no-sites
 ```
 The fake models (`tests/e2e/verify_local.py`) follow an intake protocol so the preview reads like a real call, but

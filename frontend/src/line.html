@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Appeler · démonstration</title>
+<style>
+  /* The caller's side of the demonstration: one screen, one big button. Works in Android Chrome (and as a page added to the
+     home screen, or inside a WebView app). Everything goes through the console's gateway over HTTPS: recordings up,
+     spoken replies down. Nothing here is a real emergency line. */
+  :root{color-scheme:dark;--bg:#0f1114;--panel:#15181c;--line:#2b3139;--text:#f3f4f6;--muted:#a3abb5;--orange:#ff7900;--green:#8ccf3a;--red:#e0516a;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,"Segoe UI",Roboto,Inter,sans-serif;}
+  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
+  header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:#000;border-bottom:2px solid var(--orange);}
+  header .mark{width:14px;height:14px;background:var(--orange);border-radius:3px;}
+  header b{font-size:15px;} header span{color:var(--muted);font-size:13px;margin-left:auto;}
+  main{flex:1;display:flex;flex-direction:column;gap:14px;padding:18px;max-width:560px;width:100%;margin:0 auto;}
+  .status{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);min-height:20px;}
+  .status::before{content:"";width:8px;height:8px;border-radius:50%;background:#5c6670;flex:none;}
+  .status.live::before{background:var(--green);} .status.talk::before{background:var(--orange);} .status.off::before{background:#5c6670;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;}
+  input{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#0f1114;color:var(--text);font-size:16px;}
+  button{font:inherit;border-radius:6px;border:1px solid var(--line);background:#1c2026;color:var(--text);padding:12px 16px;cursor:pointer;}
+  button:disabled{opacity:.45;cursor:default;}
+  .call{width:100%;padding:18px;font-size:18px;font-weight:600;background:#000;border-color:#000;color:#fff;}
+  .talk{width:100%;padding:34px 16px;font-size:22px;font-weight:700;border-radius:999px;background:var(--orange);border-color:var(--orange);color:#111;user-select:none;-webkit-user-select:none;touch-action:none;}
+  .talk.on{background:#fff;color:#111;box-shadow:0 0 0 6px rgba(255,121,0,.35);}
+  .hang{width:100%;border-color:var(--red);color:#ff8a9a;background:transparent;}
+  .tr{display:flex;flex-direction:column;gap:10px;}
+  .turn{max-width:88%;padding:10px 14px;border-radius:14px;font-size:15px;line-height:1.45;}
+  .turn.me{align-self:flex-end;background:#2a1f14;border:1px solid #5a3a1a;border-bottom-right-radius:4px;}
+  .turn.ai{align-self:flex-start;background:#000;border:1px solid #3a424c;color:#fff;border-bottom-left-radius:4px;}
+  .turn.op{align-self:flex-start;background:#1c2026;border:1px solid #5a636e;border-bottom-left-radius:4px;}
+  .turn.sys{align-self:center;color:var(--muted);font-size:13px;font-style:italic;}
+  .meta{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);}
+  .hint{font-size:13px;color:var(--muted);line-height:1.5;}
+  footer{padding:10px 18px 16px;font-size:12px;color:var(--muted);text-align:center;}
+  [hidden]{display:none!important;}
+</style>
+</head>
+<body>
+<header><span class="mark"></span><b>Orange · Appel de démonstration</b><span id="site"></span></header>
+<main>
+  <div id="status" class="status off" role="status">Prêt à appeler</div>
+  <section id="setup" class="card">
+    <label for="name">Prénom ou pseudonyme (facultatif, fictif)</label>
+    <input id="name" maxlength="40" autocomplete="off" placeholder="Ex. Camille">
+    <p class="hint">Vous allez parler à une plateforme de régulation de démonstration : une assistance IA vous répond, un opérateur peut reprendre l’appel. Aucune donnée n’est transmise à des secours réels. Ne décrivez pas une urgence réelle ici : appelez le 112.</p>
+    <button id="call" class="call">Appeler</button>
+  </section>
+  <section id="live" class="card" hidden>
+    <button id="talk" class="talk">Maintenir pour parler</button>
+    <p class="hint" id="talkhint">Maintenez le bouton, parlez, relâchez : votre phrase part vers la plateforme (30 s maximum).</p>
+    <div id="rtt" class="meta"></div>
+  </section>
+  <section id="transcript" class="tr" aria-live="polite"></section>
+  <button id="hang" class="hang" hidden>Raccrocher</button>
+</main>
+<footer>Démonstration · données fictives · pas une ligne d’urgence</footer>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const status = (text, cls) => { const el = $('status'); el.textContent = text; el.className = 'status ' + cls; };
+  const say = (cls, text, meta) => { const d = document.createElement('div'); d.className = 'turn ' + cls; d.textContent = text;
+    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
+    $('transcript').appendChild(d); d.scrollIntoView({block: 'end'}); return d; };
+  $('site').textContent = location.host;
+  let line = null, since = 0, polling = null, recorder = null, chunks = [], sentAt = null, player = null, queue = [], playing = false, ended = false;
+  const headers = () => ({'X-Line-Token': line.token});
+
+  // Audio out: replies are played one after the other; the first tap on « Appeler » unlocks playback.
+  function unlock() {
+    player = player || new Audio();
+    const pcm = new ArrayBuffer(44 + 4800), v = new DataView(pcm), str = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, pcm.byteLength - 8, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, 4800, true);
+    player.src = URL.createObjectURL(new Blob([pcm], {type: 'audio/wav'})); player.play().catch(() => {});
+  }
+  async function playNext() {
+    if (playing || !queue.length || ended) return;
+    playing = true; const e = queue.shift();
+    try {
+      const r = await fetch(`/api/line/${line.id}/audio/${e.idx}`, {headers: headers()});
+      const blob = await r.blob(); const url = URL.createObjectURL(blob);
+      await new Promise(resolve => { player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
+    } catch (err) { /* the text is on screen anyway */ }
+    playing = false; playNext();
+  }
+
+  async function poll() {
+    if (!line || ended) return;
+    try {
+      const r = await fetch(`/api/line/${line.id}/events?since=${since}`, {headers: headers()});
+      if (r.status === 403 || r.status === 404) { finish('Ligne fermée.'); return; }
+      const d = await r.json();
+      if (d.status === 'live' && !$('live').classList.contains('seen')) { $('live').classList.add('seen'); status('En ligne · un opérateur ou l’assistance vous écoute', 'live'); }
+      for (const e of d.events || []) {
+        since = Math.max(since, e.idx + 1);
+        if (e.type === 'reply') {
+          const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null;
+          say(e.speaker === 'operator' ? 'op' : 'ai', e.text || '(réponse vocale)', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
+          if (rtt) { $('rtt').textContent = `Dernier aller-retour : ${(rtt / 1000).toFixed(1)} s (votre phrase envoyée → réponse reçue)`;
+            fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {}); }
+          queue.push(e); playNext();
+        } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel.'); return; }
+      }
+    } catch (err) { /* network hiccup: next poll */ }
+    polling = setTimeout(poll, 700);
+  }
+
+  async function startCall() {
+    $('call').disabled = true;
+    try {
+      unlock();
+      const r = await fetch('/api/line', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim()})});
+      if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ').');
+      line = await r.json(); since = 0; ended = false;
+      $('setup').hidden = true; $('live').hidden = false; $('hang').hidden = false;
+      status('Appel en cours · en attente de la plateforme', 'live');
+      say('sys', 'Appel établi. Maintenez « Maintenir pour parler » pour vous exprimer.');
+      poll();
+    } catch (err) { status(err.message, 'off'); $('call').disabled = false; }
+  }
+
+  // Push-to-talk: hold to record, release to send. One recording = one utterance for the console.
+  async function talkStart(ev) {
+    ev.preventDefault();
+    if (!line || ended || recorder) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}, video: false});
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+      if (!mime) { stream.getTracks().forEach(t => t.stop()); throw Error('Enregistrement non pris en charge par ce navigateur.'); }
+      chunks = []; recorder = new MediaRecorder(stream, {mimeType: mime}); recorder.mime = mime; recorder.startedAt = performance.now();
+      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); send(new Blob(chunks, {type: mime}), mime, performance.now() - recorder.startedAt); recorder = null; };
+      recorder.start(); $('talk').classList.add('on'); $('talk').textContent = 'Je vous écoute… relâchez pour envoyer'; status('Vous parlez', 'talk');
+      recorder.timer = setTimeout(() => { if (recorder && recorder.state === 'recording') recorder.stop(); }, 30000);
+    } catch (err) {
+      status(err.name === 'NotAllowedError' ? 'Micro refusé : autorisez le microphone pour ce site.' : err.message, 'off');
+    }
+  }
+  function talkStop(ev) {
+    if (ev) ev.preventDefault();
+    if (recorder && recorder.state === 'recording') { clearTimeout(recorder.timer); recorder.stop(); }
+    $('talk').classList.remove('on'); $('talk').textContent = 'Maintenir pour parler'; if (line && !ended) status('En ligne', 'live');
+  }
+  async function send(blob, mime, durationMs) {
+    if (!line || ended) return;
+    if (blob.size < 2000 || durationMs < 400) { say('sys', 'Phrase trop courte : maintenez le bouton pendant que vous parlez.'); return; }
+    const ext = mime.includes('mp4') ? '.mp4' : mime.includes('ogg') ? '.ogg' : '.webm';
+    const bubble = say('me', `Vous · ${(durationMs / 1000).toFixed(1)} s`, 'envoi…');
+    try {
+      sentAt = performance.now();
+      const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': 'speech' + ext}, body: blob});
+      bubble.querySelector('.meta').textContent = r.ok ? 'envoyé · la plateforme écoute' : 'échec de l’envoi (' + r.status + ')';
+      if (!r.ok) sentAt = null;
+    } catch (err) { bubble.querySelector('.meta').textContent = 'réseau indisponible'; sentAt = null; }
+  }
+  function finish(reason) {
+    if (ended) return; ended = true; clearTimeout(polling); talkStop();
+    $('live').hidden = true; $('hang').hidden = true; status('Appel terminé', 'off'); say('sys', reason);
+    const again = document.createElement('button'); again.className = 'call'; again.textContent = 'Nouvel appel'; again.onclick = () => location.reload(); $('transcript').appendChild(again);
+  }
+  async function hangUp() {
+    if (!line) return;
+    try { await fetch(`/api/line/${line.id}/end`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); } catch (err) {}
+    finish('Vous avez raccroché.');
+  }
+
+  $('call').onclick = startCall;
+  const talk = $('talk');
+  talk.addEventListener('pointerdown', talkStart); talk.addEventListener('pointerup', talkStop); talk.addEventListener('pointercancel', talkStop); talk.addEventListener('pointerleave', e => { if (recorder) talkStop(e); });
+  talk.addEventListener('contextmenu', e => e.preventDefault());
+  $('hang').onclick = hangUp;
+  window.addEventListener('pagehide', () => { if (line && !ended) navigator.sendBeacon && navigator.sendBeacon(`/api/line/${line.id}/end?token=${encodeURIComponent(line.token)}`, '{}'); });
+})();
+</script>
+</body>
+</html>

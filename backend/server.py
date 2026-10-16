@@ -13,13 +13,14 @@ from contextlib import closing
 import os
 import re
 from pathlib import Path
+import secrets
 import socketserver
 import statistics
 import sys
 import threading
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent          # backend/
@@ -282,15 +283,23 @@ CREATE TABLE IF NOT EXISTS turns (base INTEGER NOT NULL, call_id TEXT NOT NULL, 
 CREATE INDEX IF NOT EXISTS calls_started ON calls (started_at);
 CREATE TABLE IF NOT EXISTS latency (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, base INTEGER, call_id TEXT, turn INTEGER,
   location TEXT NOT NULL, requested TEXT, fallback INTEGER, caller_ms INTEGER, network_ms INTEGER, llm_ms INTEGER, tts_ms INTEGER,
-  stt_ms INTEGER, analyze_ms INTEGER, reply_tts_ms INTEGER);
+  stt_ms INTEGER, analyze_ms INTEGER, reply_tts_ms INTEGER, handler TEXT, operator_ms INTEGER, op_tts_ms INTEGER, op_stt_ms INTEGER,
+  phone_ms INTEGER);
 CREATE INDEX IF NOT EXISTS latency_location ON latency (location, at);
 """
+# Columns added after the first release; an existing database gets them on open (CREATE TABLE IF NOT EXISTS never alters).
+LATENCY_ADDED_COLUMNS = (("handler", "TEXT"), ("operator_ms", "INTEGER"), ("op_tts_ms", "INTEGER"), ("op_stt_ms", "INTEGER"), ("phone_ms", "INTEGER"))
 _written = {}  # (base, call id) -> fingerprint of the last version written, so unchanged calls are not rewritten every 2 s
 # Per-turn latency samples posted by the browser (POST /api/latency): where the caller's line came from and how long
 # each step took, so sites can be compared from the console (GET /api/latency) or from tools/db_report.py --latency.
-LATENCY_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms", "stt_ms", "analyze_ms", "reply_tts_ms")
+# `handler` says who answered the caller on that turn: the AI ('ai') or the operator who took the call over ('operator');
+# operator turns carry the human's reaction time (caller's last words -> answer sent), their voice synthesis and, when
+# they spoke, their own transcription. `phone_ms` is a round trip measured by a real caller's phone (mobile line).
+LATENCY_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms", "stt_ms", "analyze_ms", "reply_tts_ms", "operator_ms", "op_tts_ms", "op_stt_ms", "phone_ms")
 LATENCY_SITE_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms")      # what a caller site is responsible for
 LATENCY_CONSOLE_FIELDS = ("stt_ms", "analyze_ms", "reply_tts_ms")          # what the console's own models take
+LATENCY_OPERATOR_FIELDS = ("operator_ms", "op_tts_ms", "op_stt_ms")       # what the human operator takes, after a takeover
+LATENCY_HANDLERS = ("ai", "operator")
 LATENCY_WINDOW = 500
 
 
@@ -299,6 +308,10 @@ def db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    present = {row[1] for row in conn.execute("PRAGMA table_info(latency)")}
+    for column, kind in LATENCY_ADDED_COLUMNS:
+        if column not in present:
+            conn.execute(f"ALTER TABLE latency ADD COLUMN {column} {kind}")
     return conn
 
 
@@ -397,16 +410,19 @@ def save_latency(sample):
     call = sample.get("call")
     if call is not None and not (isinstance(call, str) and CALL_ID.match(call)):
         raise ValueError("invalid call id")
+    handler = sample.get("handler", "ai")
+    if handler not in LATENCY_HANDLERS:
+        raise ValueError("invalid handler")
     values = {k: _ms(sample.get(k)) for k in LATENCY_FIELDS}
     if all(v is None for v in values.values()):
         raise ValueError("a latency sample needs at least one timing")
     base, turn = sample.get("base"), sample.get("turn")
     with state_lock, closing(db()) as conn, conn:
         cur = conn.execute(
-            "INSERT INTO latency (at, base, call_id, turn, location, requested, fallback, caller_ms, network_ms, llm_ms, tts_ms, stt_ms, analyze_ms, reply_tts_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO latency (at, base, call_id, turn, location, requested, fallback, handler, " + ", ".join(LATENCY_FIELDS) + ") "
+            "VALUES (" + ", ".join("?" * (8 + len(LATENCY_FIELDS))) + ")",
             (time.time(), int(base) if isinstance(base, (int, float)) else None, call, int(turn) if isinstance(turn, int) and 0 <= turn < 1000 else None,
-             location, requested, int(bool(sample.get("fallback"))), *(values[k] for k in LATENCY_FIELDS)))
+             location, requested, int(bool(sample.get("fallback"))), handler, *(values[k] for k in LATENCY_FIELDS)))
         return cur.lastrowid
 
 
@@ -425,7 +441,7 @@ def latency_report(window=LATENCY_WINDOW):
         rows = [dict(r) for r in conn.execute("SELECT * FROM latency ORDER BY at DESC, id DESC LIMIT ?", (window,))]
     names = [s["name"] for s in caller_sites()]
     for r in rows:
-        if r["location"] not in names:
+        if r["location"] not in names and r["caller_ms"] is not None:  # a site is somewhere a simulated caller's line came from
             names.append(r["location"])
     sites = []
     for name in names:
@@ -435,9 +451,81 @@ def latency_report(window=LATENCY_WINDOW):
                 "last_at": max((r["at"] for r in mine), default=None)}
         site.update({k: _stats(r[k] for r in mine) for k in LATENCY_SITE_FIELDS})
         sites.append(site)
+    # Who answered: the AI's turns and the operator's (after a takeover) are two different latencies, kept apart.
+    handlers = {}
+    for handler in LATENCY_HANDLERS:
+        theirs = [r for r in rows if (r.get("handler") or "ai") == handler and any(r[k] is not None for k in LATENCY_CONSOLE_FIELDS + LATENCY_OPERATOR_FIELDS)]
+        handlers[handler] = {"n": len(theirs), **{k: _stats(r[k] for r in theirs) for k in LATENCY_CONSOLE_FIELDS + LATENCY_OPERATOR_FIELDS}}
+    phone = [r for r in rows if r.get("phone_ms") is not None]
     return {"samples": len(rows), "window": window, "sites": sites,
             "console": {k: _stats(r[k] for r in rows) for k in LATENCY_CONSOLE_FIELDS},
-            "recent": [{k: r[k] for k in ("at", "call_id", "turn", "location", "requested", "fallback", *LATENCY_FIELDS)} for r in rows[:20]]}
+            "handlers": handlers, "phone": {"n": len(phone), "phone_ms": _stats(r["phone_ms"] for r in phone)},
+            "recent": [{k: r.get(k) for k in ("at", "call_id", "turn", "location", "requested", "fallback", "handler", *LATENCY_FIELDS)} for r in rows[:20]]}
+
+
+# --- Mobile line: a real person calls from a phone through the page served at /appel (frontend/src/line.html). The phone
+# pushes its utterances (push-to-talk recordings) and pulls the console's spoken replies; the console picks the line up
+# as an incoming call, transcribes, lets the AI or the operator answer and posts the reply audio back. Plain HTTP(S), so
+# it works through the demo tunnel in Android Chrome or in a WebView app; a WebRTC transport could replace the polling.
+# Lines live in memory (nothing of a real caller's voice is kept beyond the call) and expire after LINE_TTL_S of silence.
+LINE_FILE = Path(os.environ.get("ORANGE_LINE_FILE", str(REPO / "frontend" / "src" / "line.html")))
+LINE_TTL_S = 1800
+LINE_MAX_EVENTS = 80       # events kept per line; the audio of older ones is dropped first
+LINE_ID = re.compile(r"^[A-Za-z0-9_-]{6,24}$")
+LINE_SPEAKERS = ("assistant", "operator")
+lines, lines_lock = {}, threading.Lock()
+
+
+def line_create(payload):
+    name = payload.get("name") if isinstance(payload, dict) else None
+    name = re.sub(r"[^\w .'’\-]", "", name, flags=re.UNICODE)[:40].strip() if isinstance(name, str) else ""
+    line = {"id": secrets.token_urlsafe(6), "token": secrets.token_urlsafe(18), "name": name, "created": time.time(), "seen": time.time(),
+            "status": "ringing", "events": [], "call": None}
+    with lines_lock:
+        for stale in [k for k, v in lines.items() if time.time() - v["seen"] > LINE_TTL_S]:
+            del lines[stale]
+        lines[line["id"]] = line
+    return line
+
+
+def line_get(line_id, token=None):
+    """The line, or None; with a token (the phone's requests) it must be the line's own."""
+    with lines_lock:
+        line = lines.get(line_id) if isinstance(line_id, str) and LINE_ID.match(line_id) else None
+    if line is None or (token is not None and not hmac.compare_digest(str(token), line["token"])):
+        return None
+    line["seen"] = time.time()
+    return line
+
+
+def line_event(line, kind, audio=None, **data):
+    with lines_lock:
+        event = {"idx": len(line["events"]), "at": time.time(), "type": kind, **data}
+        if audio is not None:
+            event["audio"] = audio
+        line["events"].append(event)
+        for old in line["events"][:-LINE_MAX_EVENTS]:
+            old.pop("audio", None)
+    return event
+
+
+def line_public(line, since=0):
+    """What a poller sees: metadata only (audio is fetched by index); the token never leaves the gateway."""
+    events = []
+    for e in line["events"]:
+        if e["idx"] >= since:
+            item = {k: v for k, v in e.items() if k != "audio"}
+            if e.get("audio") is not None:
+                item["size"] = len(e["audio"])
+            events.append(item)
+    return {"id": line["id"], "name": line["name"], "status": line["status"], "created": line["created"], "call": line["call"], "events": events, "now": time.time()}
+
+
+def lines_pending():
+    now = time.time()
+    with lines_lock:
+        live = [l for l in lines.values() if l["status"] != "ended" and now - l["seen"] <= LINE_TTL_S]
+    return {"lines": [{"id": l["id"], "name": l["name"], "status": l["status"], "created": l["created"], "call": l["call"], "events": len(l["events"])} for l in live]}
 
 
 QUESTIONS = {
@@ -973,10 +1061,107 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, state) if state else self.reply(404, {"error": "aucune session enregistrée"})
         elif path == "/api/latency":
             self.reply(200, latency_report())
+        elif path == "/appel":
+            self.reply(200, LINE_FILE.read_bytes(), "text/html; charset=utf-8")
+        elif path == "/api/line/pending":
+            self.reply(200, lines_pending())
+        elif path.startswith("/api/line/"):
+            self.line_get_route(path)
         else:
             self.reply(404, {"error": "not found"})
 
     do_HEAD = do_GET
+
+    def line_token(self):
+        return self.headers.get("X-Line-Token") or (parse_qs(urlsplit(self.path).query).get("token") or [None])[0]
+
+    def line_get_route(self, path):
+        parts = path.split("/")[3:]  # ['<id>', 'events' | 'audio', ...]
+        token = self.line_token()
+        line = line_get(parts[0] if parts else None, token)  # the console (no token) reads any line; a phone only its own
+        if line is None:
+            self.reply(404 if token is None else 403, {"error": "ligne inconnue"})
+            return
+        if len(parts) == 2 and parts[1] == "events":
+            since = (parse_qs(urlsplit(self.path).query).get("since") or ["0"])[0]
+            self.reply(200, line_public(line, int(since) if since.isdigit() else 0))
+        elif len(parts) == 3 and parts[1] == "audio" and parts[2].isdigit():
+            event = next((e for e in line["events"] if e["idx"] == int(parts[2])), None)
+            if event is None or event.get("audio") is None:
+                self.reply(404, {"error": "audio indisponible"})
+            else:
+                self.reply(200, event["audio"], event.get("mime") or "application/octet-stream")
+        else:
+            self.reply(404, {"error": "not found"})
+
+    def line_post_route(self, path):
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+            self.reply(403, {"error": "cross-origin requests are disabled"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or length > MAX_AUDIO or self.headers.get("Transfer-Encoding"):
+                self.reply(413 if length > MAX_AUDIO else 400, {"error": "invalid request size"})
+                return
+            body = self.rfile.read(length) if length else b""
+            parts = path.split("/")[3:]
+            if not parts or parts == [""]:
+                payload = json.loads(body) if body else {}
+                line = line_create(payload)
+                self.reply(200, {"id": line["id"], "token": line["token"], "name": line["name"], "poll_ms": 700})
+                return
+            action = parts[1] if len(parts) == 2 else None
+            token = self.line_token()
+            # The phone must present the line's token for what it sends; the console (operator) acts on any line.
+            line = line_get(parts[0], token)
+            if line is None:
+                self.reply(404 if token is None else 403, {"error": "ligne inconnue"})
+                return
+            if action == "speech":
+                if token is None:
+                    raise ValueError("line token required")
+                ext = Path(self.headers.get("X-Filename", "speech.webm")).suffix.lower()
+                if ext not in (".wav", ".webm", ".ogg", ".mp3", ".m4a", ".mp4") or len(body) < 100:
+                    raise ValueError("unsupported or empty audio")
+                mime = {".wav": "audio/wav", ".webm": "audio/webm", ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": "audio/mp4"}[ext]
+                event = line_event(line, "speech", audio=body, mime=mime, filename="speech" + ext)
+                self.reply(200, {"idx": event["idx"], "status": line["status"]})
+            elif action == "reply":
+                if not body.startswith(b"RIFF"):
+                    raise ValueError("WAV reply required")
+                speaker = self.headers.get("X-Speaker", "assistant")
+                if speaker not in LINE_SPEAKERS:
+                    raise ValueError("unsupported speaker")
+                text = unquote(self.headers.get("X-Text", ""))[:1200]
+                event = line_event(line, "reply", audio=body, mime="audio/wav", speaker=speaker, text=text)
+                self.reply(200, {"idx": event["idx"]})
+            elif action == "claim":
+                payload = json.loads(body) if body else {}
+                call = payload.get("call")
+                if not isinstance(call, str) or not CALL_ID.match(call):
+                    raise ValueError("invalid call id")
+                line["call"], line["status"] = call, "live"
+                line_event(line, "claimed", call=call)
+                self.reply(200, {"status": "live"})
+            elif action == "end":
+                if line["status"] != "ended":
+                    line["status"] = "ended"
+                    line_event(line, "end", by="phone" if token is not None else "console")
+                self.reply(200, {"status": "ended"})
+            elif action == "latency":
+                if token is None:
+                    raise ValueError("line token required")
+                payload = json.loads(body) if body else {}
+                sample = {"location": "ligne", "requested": "ligne", "call": "LIGNE-" + line["id"], "phone_ms": payload.get("rtt_ms"),
+                          "handler": payload.get("handler") if payload.get("handler") in LATENCY_HANDLERS else "ai"}
+                self.reply(200, {"saved": True, "id": save_latency(sample)})
+            else:
+                self.reply(404, {"error": "not found"})
+        except (ValueError, TypeError) as exc:
+            self.reply(400, {"error": str(exc)[:240]})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def latency_route(self):
         origin = self.headers.get("Origin")
@@ -1029,6 +1214,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/latency":
             self.latency_route()
+            return
+        if path == "/api/line" or path.startswith("/api/line/"):
+            self.line_post_route(path)
             return
         if path not in ROUTE_GATES:
             self.reply(404, {"error": "not found; no dispatch API is implemented"})

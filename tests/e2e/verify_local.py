@@ -181,7 +181,10 @@ def fake_request_model(url, payload=None, headers=None, timeout=120):
         return b"ok", {}
     if url.endswith("/transcribe"):
         time.sleep(DELAY_S["stt"])
-        return json.dumps({"text": simulation.text_in_wav(payload) or spoken.get(hashlib.sha256(payload).hexdigest(), ""), "ms": 300}).encode(), {}
+        text = simulation.text_in_wav(payload) or spoken.get(hashlib.sha256(payload).hexdigest(), "")
+        if not text and not payload.startswith(b"RIFF"):  # a real recording (phone or microphone) under fake models: one canned line
+            text = "Allô, c'est un appel depuis mon téléphone : il y a eu un accident devant chez moi, quelqu'un est blessé."
+        return json.dumps({"text": text, "ms": 300}).encode(), {}
     if url.endswith("/v1/audio/speech"):
         time.sleep(DELAY_S["tts"])
         return wav_for(payload["input"]), {}
@@ -595,6 +598,32 @@ def main():
             receipt["checks"]["caller_sites_measured"] = "PASS"
             receipt["caller_latency"] = {name: {"turns": stats[name]["n"], "caller_ms_median": stats[name]["caller_ms"]["median"],
                                                 "network_ms_median": (stats[name]["network_ms"] or {}).get("median")} for name in names}
+
+        # 12. A real caller on a phone, simulated here over HTTP: the console adopts the line, transcribes the recording,
+        #     answers with audio the phone can play, and closes the call when the phone hangs up.
+        auth = {"Authorization": httpd.expected_auth}
+        created = json.loads(REAL_URLOPEN(base + "/api/line", {"name": "Téléphone test"}, {**auth, "Content-Type": "application/json"}, timeout=5)[0])
+        token = {**auth, "X-Line-Token": created["token"]}
+        wait_for(page, "window.orangeCards().some(c=>c.text.includes('ligne mobile'))", 20000)
+        REAL_URLOPEN(base + f"/api/line/{created['id']}/speech", simulation.fake_wav("Il y a eu un accident devant chez moi, quelqu'un est blessé."),
+                     {**token, "Content-Type": "application/octet-stream", "X-Filename": "speech.wav"}, timeout=10)
+        deadline, replies, events = time.monotonic() + 60, [], []
+        while time.monotonic() < deadline:
+            events = json.loads(REAL_URLOPEN(base + f"/api/line/{created['id']}/events?since=0", headers=token, timeout=5)[0])["events"]
+            replies = [e for e in events if e["type"] == "reply"]
+            if len(replies) >= 2:  # the greeting, then the answer to the recording
+                break
+            time.sleep(1)
+        assert len(replies) >= 2 and replies[-1]["speaker"] == "assistant" and replies[-1]["text"], events
+        assert REAL_URLOPEN(base + f"/api/line/{created['id']}/audio/{replies[-1]['idx']}", headers=token, timeout=5)[0].startswith(b"RIFF")
+        REAL_URLOPEN(base + f"/api/line/{created['id']}/end", {}, {**token, "Content-Type": "application/json"}, timeout=5)
+        wait_for(page, "window.orangeRows().some(r=>r.text.includes('ligne mobile')&&r.text.includes('à revoir'))", 20000)
+        data = export(page)
+        line_call = next(c for c in data["calls"] if c.get("lineId") == created["id"])
+        assert line_call["ended"] and any(t["source"] == "line_stt" and "accident" in t["text"] for t in line_call["tr"]), line_call["tr"]
+        assert any(t["source"] == "line_end" for t in line_call["tr"]) and any(row.get("location") == "ligne" for row in line_call.get("latency", [])), line_call["tr"]
+        receipt["checks"]["mobile_line_call"] = "PASS"
+        receipt["mobile_line"] = {"replies": len(replies), "last_reply": replies[-1]["text"][:80]}
 
         receipt["guard_rewrites_served"] = counters["rewrite"]
         assert counters["rewrite"] >= 1, "blocked reply path not exercised"

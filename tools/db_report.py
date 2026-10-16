@@ -49,6 +49,14 @@ def latency(conn, limit):
     for key, label in (("stt_ms", "transcription"), ("analyze_ms", "analysis"), ("reply_tts_ms", "AI voice")):
         values = [r[key] for r in rows if r[key] is not None]
         print(f"{label:<14}{len(values):>6} {stats(values)}")
+    columns = rows[0].keys()
+    get = lambda r, k: r[k] if k in columns else None  # databases from before the operator/phone columns
+    print(f"\n{'answered by':<14}{'turns':>6} {'react med':>10} {'p95':>8} {'op voice':>9} {'p95':>8} {'op STT':>9} {'p95':>8}")
+    for handler in ("ai", "operator"):
+        theirs = [r for r in rows if (get(r, "handler") or "ai") == handler]
+        print(f"{handler:<14}{len(theirs):>6} {stats(get(r, 'operator_ms') for r in theirs)} {stats(get(r, 'op_tts_ms') for r in theirs):>18} {stats(get(r, 'op_stt_ms') for r in theirs):>18}")
+    phone = [get(r, "phone_ms") for r in rows if get(r, "phone_ms") is not None]
+    print(f"\nphone round trips (mobile line): {len(phone)}  median/p95 {stats(phone)}")
 
 
 def main():
