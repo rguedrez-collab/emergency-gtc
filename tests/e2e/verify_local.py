@@ -497,7 +497,7 @@ def main():
         call = page.locator("#orange-console").get_attribute("data-call")
         launched = arrived(page)
         page.locator(".oc-head").get_by_text("Prendre l'appel", exact=True).click()  # nve-button: match the slotted label
-        page.get_by_text("Prise en charge opérateur · assistance IA", exact=True).wait_for(timeout=5000)
+        page.get_by_text("Vous êtes en ligne · IA en appui", exact=True).wait_for(timeout=5000)
         wait_for(page, "window.audioTiming.at(-1).event==='ended' && window.audioTiming.at(-1).role==='caller'", 30000)
         timing = page.evaluate("window.audioTiming")
         assert not any(e["event"] == "cut" and e["call"] == call for e in timing[-3:]), timing[-3:]
@@ -535,16 +535,16 @@ def main():
         wait_for(page, "window.orangeCards().some(c=>c.text.includes('«'))", 5000)
         receipt["checks"]["escape_to_silent_overview_with_taken_over_call_and_quotes"] = "PASS"
 
-        # 7. « Laisser l'IA continuer » (behind the chevron) holds across later AI turns without a new signal.
+        # 7. « Plus tard » (behind the chevron) lets the AI continue; the card holds across later AI turns without a new signal.
         page.evaluate("window.orangeCards().filter(c=>!c.text.includes('en ligne · opérateur')).forEach(c=>c.expand())")
-        wait_for(page, "window.orangeCards().some(c=>c.text.includes(\"Laisser l'IA continuer\"))", 5000)
-        title = page.evaluate("""() => {const c=window.orangeCards().find(c=>!c.text.includes('en ligne · opérateur')&&c.text.includes("Laisser l'IA continuer"));
-          c.press("Laisser l'IA continuer");return c.title;}""")
+        wait_for(page, "window.orangeCards().some(c=>c.text.includes('Plus tard'))", 5000)
+        title = page.evaluate("""() => {const c=window.orangeCards().find(c=>!c.text.includes('en ligne · opérateur')&&c.text.includes('Plus tard'));
+          c.press('Plus tard');return c.title;}""")
         wait_for(page, f"window.orangeRows().some(r=>r.title==={json.dumps(title)})", 10000)
         before = len(page.evaluate("window.audioTiming"))
         page.evaluate(f"window.orangeRows().find(r=>r.title==={json.dumps(title)}).open()")
         wait_for(page, f"window.audioTiming.slice({before}).filter(e=>e.event==='playing'&&e.role==='assistant').length>=2", 90000)
-        page.locator(".oc-head").get_by_text("Fermer l'écoute", exact=True).click()
+        page.locator(".oc-head").get_by_text("Fermer", exact=True).click()
         wait_for(page, "window.orangeCards().length>0", 10000)
         titles = page.evaluate("window.orangeCards().map(c=>c.title)")
         assert title not in titles, (title, titles)
@@ -567,7 +567,7 @@ def main():
         before = len(page.evaluate("window.audioTiming"))
         page.locator(".oc-head").get_by_text("Rendre à l'IA", exact=True).click()
         wait_for(page, f"window.audioTiming.slice({before}).some(e=>e.event==='playing'&&e.role==='assistant')", 30000)
-        page.get_by_text("Appel clôturé · à revoir", exact=True).first.wait_for(timeout=30000)
+        page.get_by_text("Appel clôturé", exact=True).first.wait_for(timeout=30000)
         receipt["checks"]["handback_after_stop_answers_then_closes"] = "PASS"
 
         # 10. A reload restores the vacation from the gateway (status, calls) instead of showing the start screen.

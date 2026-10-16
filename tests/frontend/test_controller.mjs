@@ -290,9 +290,9 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const auto=app.createCall(true,{index:0,auto:true,background:true}),other=app.createCall(true,{index:1,auto:true,background:true});
   app.open(auto.id);assert.equal(app.callControls(),null,'listening: no control row; closing sits in the header');
   app.waveMode={amp:0,color:'#3a3a3a'};assert.ok(JSON.stringify(app.callPane(app.consoleModel())).includes('"id":"orange-close"'));
-  assert.equal(app.talkBox(auto),null);assert.equal(app.modeFor(auto).title,'Écoute · appel pris en charge par l’IA');
+  assert.equal(app.talkBox(auto),null);assert.equal(app.modeFor(auto).title,'IA en ligne');
   app.takeOverCall(auto);assert.equal(ids().join(),'orange-next,orange-retry');assert.ok(app.talkBox(auto));
-  assert.equal(app.modeFor(auto).title,'Prise en charge opérateur · assistance IA');
+  assert.equal(app.modeFor(auto).title,'Vous êtes en ligne · IA en appui');
   const manual=app.createCall(false);assert.equal(ids().join(),'orange-caller-mic,orange-retry');assert.ok(app.talkBox(manual));
   const scenario=app.createCall(true,{index:2});assert.equal(ids().join(),'orange-caller-mic,orange-next,orange-retry');
   app.endCall(scenario);assert.equal(ids().join(),'orange-next-call');
@@ -312,14 +312,15 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.match(card(quiet.id).status,/^tour 2 · /);assert.equal(m.alerts[0].id,flagged.id,'signal calls first');
   const row=m.ai.find(r=>r.id===ringing.id);assert.equal(row.status,'décroché en cours');assert.equal(row.sev,'Entrant');assert.equal(row.category,'Nouvel appel · évaluation en cours');
   const shown=texts(app.consoleView()).join(' ');
-  for(const expected of ["Prendre l'appel",'Signal à vérifier : « il ne respire plus »','absence de signal ≠ absence de danger','Sélectionnez un appel','TEST-3 · décroché en cours'])
+  for(const expected of ["Prendre l'appel",'Signal à vérifier : « il ne respire plus »','Sélectionnez un appel','TEST-3 · décroché en cours'])
     assert.ok(shown.includes(expected),expected);
   assert.ok(!shown.includes('tour 2 · ')&&!shown.includes('IA · '),'cards carry no processing status (« IA · tour n · … »); rows keep their state');
   quiet.takenOver=true;assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('en ligne · opérateur'),'a call the operator holds says so');quiet.takenOver=false;
   // Progressive disclosure: collapsed cards hold back the quote, the id and the secondary actions until the chevron (or selection).
-  assert.ok(!shown.includes('« il y a de la fumée dans le hall »')&&!shown.includes("Laisser l'IA continuer")&&!shown.includes(quiet.id),'collapsed card');
+  assert.ok(!shown.includes('« il y a de la fumée dans le hall »')&&!shown.includes('Plus tard')&&!shown.includes(quiet.id),'collapsed card');
   app.state.more={['card:'+quiet.id]:true};const opened=texts(app.consoleView()).join(' ');
-  for(const expected of ['« il y a de la fumée dans le hall »',quiet.id,"Écouter d'abord","Laisser l'IA continuer"])assert.ok(opened.includes(expected),'expanded card: '+expected);
+  for(const expected of ['« il y a de la fumée dans le hall »',quiet.id,'Plus tard'])assert.ok(opened.includes(expected),'expanded card: '+expected);
+  assert.ok(!opened.includes("Écouter d'abord"),'one secondary action only');
   app.state.more={};app.state.view='call';app.state.selId=quiet.id;app.waveMode={amp:0,color:'#3a3a3a'};
   assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('« il y a de la fumée dans le hall »'),'selected card opens by default');
   app.state.view='floor';app.state.selId=null;
@@ -433,11 +434,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   c.tools.push({name:'Gemma 4',args:'extraction + résumé',status:'done',result:'1602 ms · citations vérifiées'},{name:'STT',args:'nemotron',status:'running'});
   let shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('Journal des traitements · 2')&&shown.includes('STT · nemotron · en cours…')&&!shown.includes('1602 ms'),'folded log: count and latest call only');
-  assert.ok(shown.includes('Signal IA ≠ gravité clinique · validation humaine requise')&&!shown.includes('Nemotron / Parakeet'),'short footnote');
-  assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Prenez l’appel pour répondre'),'mode explanation folded');
+  assert.ok(shown.includes('Validation humaine requise')&&!shown.includes('Nemotron / Parakeet'),'short footnote');
+  assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Prenez l’appel pour répondre'),'no mode explanation on screen (it is the state’s tooltip)');
   app.state.more={details:true,tools:true,note:true,mode:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('1602 ms')&&shown.includes('Nemotron / Parakeet'),'Détails opens the log and the full footnote');
-  assert.ok(texts(app.callPane(app.consoleModel())).join(' ').includes('Prenez l’appel pour répondre'),'Aide opens the mode explanation');
   app.state.more={};const ids=JSON.stringify(app.copilot(app.consoleModel())).match(/"id":"orange-more-[a-z]+"/g)||[];
   assert.ok(ids.includes('"id":"orange-more-details"')&&ids.includes('"id":"orange-more-note"')&&!ids.includes('"id":"orange-more-tools"'),'one Détails toggle for the folded blocks: '+ids.join());
 }

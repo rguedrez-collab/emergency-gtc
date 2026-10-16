@@ -674,7 +674,7 @@ class Component extends DCLogic {
     // The caller may finish the sentence in progress; automatic AI speech stops now.
     if(this.audioCallId===c.id&&this.audioSpeaker==='assistant')this.stopAudio();
     c.revision++;c.prefetch=null;c.takenOver=true;c.takenAt=this.state.shift;c.alerted=false;c.snoozed=false;
-    this.append(c,'Système','Prise en charge opérateur. L’assistance IA reste active ; aucune réponse automatique ne sera énoncée.','operator_takeover');
+    this.append(c,'Système','Vous avez pris l’appel · l’IA suggère, vous répondez.','operator_takeover');
     c.audit.push({action:'takeover',at:new Date().toISOString()});if(!c.busy)this.setPhase(c,'operator');
   }
   handBackCall(c) {
@@ -975,12 +975,11 @@ class Component extends DCLogic {
   arrivalLabel() {
     const s=this.state.session,wait=Math.ceil(((this.nextArrivalAt||0)-Date.now())/1000);
     return s.status==='paused'?'Session en pause':s.status!=='running'?'Session fermée':
-      s.launched>=s.total?`File vide · ${s.total} appels reçus`:this.aiCalls()>=AI_CALLS?`Capacité IA atteinte (${AI_CALLS} appels) · prochain appel à la prochaine clôture ou prise en charge`:
+      s.launched>=s.total?`File vide · ${s.total} appels reçus`:this.aiCalls()>=AI_CALLS?`${AI_CALLS} appels en cours · file en attente`:
       wait>0?`Prochain appel dans ${wait} s`:'Prochain appel imminent';
   }
   noAlertsLabel() {
-    return ['running','paused'].includes(this.state.session.status)?'Aucun appel en attente de revue. Un appel apparaît ici après sa première analyse.':
-      'Aucun appel en attente de revue. Ouvrez la session ou lancez un appel de test.';
+    return ['running','paused'].includes(this.state.session.status)?'Aucun appel à traiter.':'Aucun appel. Ouvrez la session ou lancez un appel de test.';
   }
   activity(c) {const p=this.state.playback;
     return p&&p.callId===c.id&&!p.paused?SPEAKING[p.speaker]:STATUS[c.phase]||'Traitement…';}
@@ -1013,7 +1012,7 @@ class Component extends DCLogic {
   }
   modeFor(c) {
     const taken=c.takenOver;
-    return {title:c.ended?'Appel clôturé · à revoir':c.liveCaller?'Appel de test · vous êtes l’appelant':c.lineId?(taken?'Prise en charge opérateur · ligne mobile':'Appel réel · ligne mobile · pris en charge par l’IA'):taken?'Prise en charge opérateur · assistance IA':c.auto?'Écoute · appel pris en charge par l’IA':c.callerFacts?'Scénario de test':'Appel de test · saisie / micro',
+    return {title:c.ended?'Appel clôturé':c.liveCaller?'Test · vous êtes l’appelant':c.lineId?(taken?'Vous êtes en ligne · ligne mobile':'IA en ligne · ligne mobile'):taken?'Vous êtes en ligne · IA en appui':c.auto?'IA en ligne':c.callerFacts?'Scénario':'Test · saisie / micro',
       sub:c.ended?c.endLabel+' · historique conservé dans cette session de navigateur.':
         c.liveCaller?'Parler, puis Envoyer ma phrase ; l’assistance IA répond. Micro fermé pendant la réponse, 30 s maximum par prise.':
         c.lineId?(taken?'« Envoyer » ou « Parler » énonce votre réponse sur le téléphone de l’appelant.':'Une personne parle depuis son téléphone (page /appel) ; l’IA lui répond. Prenez l’appel pour répondre vous-même.'):
@@ -1059,8 +1058,7 @@ class Component extends DCLogic {
           signal?null:h('div',{className:'oc-quote'},this.latestWords(d.c)),
           h('div',{className:'oc-muted'},d.id+' · '+d.c.phone+(/non renseigné/.test(d.place)?'':' · '+d.place)),
           d.c.liveCaller||d.c.takenOver?null:h('div',{className:'oc-actions',onClick:stop},
-            this.button(d.selected?'En écoute':"Écouter d'abord",()=>this.open(d.id),false,undefined,undefined,{tone:'quiet',key:'listen'}),
-            this.button("Laisser l'IA continuer",()=>{d.c.snoozed=true;d.c.alerted=false;this.touch();},false,undefined,undefined,{tone:'quiet'}))):null,
+            this.button('Plus tard',()=>{d.c.snoozed=true;d.c.alerted=false;this.touch();},false,undefined,'Laisser l’IA continuer ; l’appel revient ici au prochain signal',{tone:'quiet'}))):null,
         d.progress!=null?h('span',{className:'oc-progress',style:{width:Math.round(d.progress*100)+'%'},title:'Avancement de l’appel'}):null);};
     const row=d=>h('div',{key:d.id,className:'oc-row'+(d.selected?' sel':''),...pressable(d.id),
         style:{animation:d.c.phase==='ringing'?'slidein .5s':'none'}},
@@ -1073,11 +1071,11 @@ class Component extends DCLogic {
       d.progress!=null?h('span',{className:'oc-progress',style:{width:Math.round(d.progress*100)+'%'},title:'Avancement de l’appel'}):null);
     const alerts=[...m.mine,...m.alerts];
     return h('div',{className:'oc-col oc-list'},
-      section('À traiter','#FF7900',alerts.length,'absence de signal ≠ absence de danger'),
+      section('À traiter','#FF7900',alerts.length),
       alerts.length?alerts.map(card):empty('e1',this.noAlertsLabel()),
       section('Pris en charge par l’IA','var(--color-green-500)',m.ai.length,m.arrival),
-      m.ai.length?m.ai.map(row):empty('e2','Aucun appel en cours de prise en charge.'),
-      m.history.length?section('Clôturés','var(--color-gray-500)',m.history.length,'à relire, puis clore le dossier'):null,
+      m.ai.length?m.ai.map(row):empty('e2','Aucun appel en cours.'),
+      m.history.length?section('Clôturés','var(--color-gray-500)',m.history.length):null,
       ...m.history.map(row),
       // Filed cases stay out of the way: a count, and the list on demand.
       m.closed.length?section('Dossiers clos','var(--color-gray-700)',m.closed.length,this.moreButton('closed','Afficher')):null,
@@ -1093,16 +1091,15 @@ class Component extends DCLogic {
     const d=this.decorate(c),mode=this.modeFor(c),taken=c.takenOver;
     const header=h('div',{className:'oc-head'},
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
-        h('span',{className:'oc-muted'},c.id+' · ',h('span',{className:'oc-mono',title:'Numéro fictif, deux chiffres masqués'},c.phone),' · '+c.sc.place),h('span',{className:'oc-mono oc-right'},d.dur)),
+        h('span',{className:'oc-muted oc-ellipsis'},c.id+' · ',h('span',{className:'oc-mono',title:'Numéro fictif, deux chiffres masqués'},c.phone),' · '+c.sc.place),h('span',{className:'oc-mono oc-right'},d.dur)),
       // One line: the mode (with its help) on the left, every call-level action on the right — no separate control band.
       h('div',{className:'oc-mode'+(taken?' taken':'')},
-        h('div',{className:'oc-modetext'},h('span',{className:'oc-modetitle'},h('span',{style:{color:mode.color}},mode.title),this.moreButton('mode','Aide')),
-          this.more('mode')?h('span',{className:'oc-muted'},mode.sub):null),
+        h('div',{className:'oc-modetext'},h('span',{className:'oc-modetitle',title:mode.sub},h('span',{style:{color:mode.color}},mode.title))),
         h('div',{className:'oc-modebtns'},
           ...(c.ended||c.liveCaller?[]:taken?[this.button("Rendre à l'IA",()=>this.handBackCall(c),false,undefined,undefined,{tone:'quiet'})]
             :[this.button("Prendre l'appel",()=>this.takeOverCall(c),false,undefined,undefined,{emphasis:true})]),
-          ...(c.ended?[]:[this.button(c.liveCaller?'Terminer mon appel':c.auto?'Clôturer l’appel':'Clôturer le test',()=>this.endCall(c),false,'orange-close',undefined,{tone:'quiet'})]),
-          this.button("Fermer l'écoute",()=>this.goFloor(),false,undefined,'Échap',{tone:'quiet'}))));
+          ...(c.ended?[]:[this.button(c.liveCaller?'Terminer mon appel':c.auto?'Clôturer':'Clôturer le test',()=>this.endCall(c),false,'orange-close',undefined,{tone:'quiet'})]),
+          this.button('Fermer',()=>this.goFloor(),false,undefined,'Fermer l’écoute · Échap',{tone:'quiet'}))));
     // Each speaker's look lives in CSS (.oc-turn-caller/-ai/-op/-sys) so the style toggle can restyle the bubbles.
     const kind=who=>who==='Agent IA'?'ai':who==='Vous'?'op':who==='Système'?'sys':'caller';
     const p=this.state.playback,playing=!!p&&p.callId===c.id&&!p.paused,spoken=playing?c.tr.map(t=>t.who).lastIndexOf(SPEAKER_ROW[p.speaker]):-1;
@@ -1330,7 +1327,7 @@ class Component extends DCLogic {
     return h('div',{key:'Détails',className:'oc-block'},head,...lines);
   }
   footnote() {
-    return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?footnoteText(this.labels()):'Signal IA ≠ gravité clinique · validation humaine requise'),this.moreButton('note'));
+    return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?footnoteText(this.labels()):'Validation humaine requise'),this.moreButton('note'));
   }
   // What is audible right now, exposed as data attributes on the console root (scripts read them; the user sees it in
   // the wave row and the transcript cursor). The fixed audio player strip was removed on request.

@@ -56,6 +56,11 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
 - Caller identity: `c.phone` is a fictional European number generated per sample (`fakePhone`: mostly +33 in the ARCEP
   fictional mobile range 06 39 98 xx xx, some +49 / +34 / +39), always with two digits masked (`••`) so nothing shown
   is dialable; shown in the call header and the card details, exported with the call. No caller-ID integration exists.
+- Wording cut to the essentials (asked for a simple, to-the-point UI): list sections without explanatory subtitles,
+  one secondary card action (« Plus tard » = let the AI continue), call states « IA en ligne », « Vous êtes en ligne ·
+  IA en appui », « Appel clôturé », header buttons « Clôturer » / « Fermer », no « Aide » fold (the explanation is the
+  state's tooltip), takeover note « Vous avez pris l’appel · l’IA suggère, vous répondez. », footnote « Validation humaine
+  requise ». The local preview container must be rebuilt after UI changes (the user looks at its tunnel).
 - Bar: actions on the left (open / pause / close), on the right the read-only notice when any, the services chip
   **only as an exception** (a service down, a guardrail configured, a caller site unreachable; nothing otherwise),
   « Analytique » (counter + latency medians) and « Réglages ». The « Démonstration » tag, the mockup's header shift
