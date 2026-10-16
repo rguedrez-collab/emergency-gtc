@@ -1288,25 +1288,30 @@ def analyze(payload):
     elif raw.get("question") not in QUESTIONS and result["question"] != "location":
         result["question"] = "location" if state["next"] == "location_again" else state["next"]
     result["intake"] = {k: state[k] for k in ("known", "missing", "next", "critical")}
-    retries = 0
+    retries, reply_source = 0, "contextual_gemma"
     try:
         reply = spoken_reply(raw.get("reply"), bool(dispatched))
     except ValueError:
-        # A blocked line gets one rewrite, checked by the same guard. A second
-        # block is an explicit failure, never a canned substitute.
+        # A blocked line gets one rewrite, checked by the same guard. A second block is an explicit failure, never a
+        # canned substitute; a rewrite the model truncates or garbles is a model failure, and the checklist's line stands in.
         retries = 1
-        rewrite, again = chat_json(retry_prompt(REPLY_RETRY), 0.5, 200, headers=correlation_headers(payload))
+        try:
+            rewrite, again = chat_json(retry_prompt(REPLY_RETRY), 0.5, 1200, headers=correlation_headers(payload))
+        except ModelOutputError:
+            rewrite, again = None, {"guardrail": {}}
         if again["guardrail"].get("outcome"):  # keep the first verdict when the rewrite carries none
             meta["guardrail"] = again["guardrail"]
-        try:
-            reply = spoken_reply(rewrite.get("reply"), bool(dispatched))
-        except ValueError as exc:
-            raise ModelOutputError("Réponse IA bloquée par le filtre de sécurité : revue humaine requise.") from exc
+        if rewrite is None:
+            reply, reply_source = fallback_reply(state, previous, bool(dispatched)), "checklist"
+        else:
+            try:
+                reply = spoken_reply(rewrite.get("reply"), bool(dispatched))
+            except ValueError as exc:
+                raise ModelOutputError("Réponse IA bloquée par le filtre de sécurité : revue humaine requise.") from exc
     # A reply that repeats (or nearly) what the AI already said, reads the address back or echoes the caller is a stalled
     # dialogue, not a reply: one rewrite under the same guard, then the checklist's own question.
-    reply_source = "contextual_gemma"
     unfit = lambda line: stalled(line, previous, result["facts"], messages) or overloaded(line) or bool(CALL_US.search(line))
-    if unfit(reply):
+    if reply_source == "contextual_gemma" and unfit(reply):
         retries += 1
         if CALL_US.search(reply):
             nudge = CALLS_US_RETRY
@@ -1314,10 +1319,10 @@ def analyze(payload):
             nudge = REPEAT_RETRY + f" Prochaine question à poser : {state['next']}."
         else:
             nudge = OVERLOAD_RETRY
-        rewrite, _ = chat_json(retry_prompt(nudge), 0.7, 200, headers=correlation_headers(payload))
         try:
+            rewrite, _ = chat_json(retry_prompt(nudge), 0.7, 1200, headers=correlation_headers(payload))
             candidate = spoken_reply(rewrite.get("reply"), bool(dispatched))
-        except ValueError:
+        except (ModelOutputError, ValueError):
             candidate = None
         if candidate and not unfit(candidate):
             reply = candidate

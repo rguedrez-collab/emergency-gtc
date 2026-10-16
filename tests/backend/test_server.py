@@ -279,6 +279,14 @@ class ExtractionTests(unittest.TestCase):
             result = server.analyze({"messages": fall})
         self.assertEqual((result["reply"], result["reply_retries"], result["reply_source"]), ("Il respire ?", 1, "contextual_gemma"))
         self.assertEqual(json.loads(request.call_args.args[1]["messages"][-1]["content"])["reprise"]["consigne"], server.OVERLOAD_RETRY)
+        # A rewrite the model truncates (it started a whole analysis again) is not a failed turn: the checklist's line stands in.
+        with patch.object(server, "request_model", side_effect=[self.completion(pile), self.completion({"summary": "Chute à domicile, la personne"}, finish="length")]):
+            result = server.analyze({"messages": fall})
+        self.assertEqual((result["reply_source"], result["reply_retries"]), ("checklist", 1)); self.assertIn(result["reply"], server.QUESTIONS.values())
+        blocked = dict(pile, reply="Je préviens les secours.")
+        with patch.object(server, "request_model", side_effect=[self.completion(blocked), self.completion({"summary": "Chute à domicile, la personne"}, finish="length")]):
+            result = server.analyze({"messages": fall})
+        self.assertEqual((result["reply_source"], result["reply_retries"]), ("checklist", 1)); self.assertIn(result["reply"], server.QUESTIONS.values())
         analysis = {"summary": "Chute à domicile.", "facts": [{"field": "Lieu", "quote": "12 rue des Lilas"}], "signals": [], "question": "access", "reply": "C'est à quel étage ?"}
         actions = [{"tool": "dispatch_ambulance", "status": "done"}, {"tool": "lookup_address", "status": "done", "label": "12 Rue des Lilas 91160 Longjumeau"},
                    {"tool": "dispatch_police", "status": "declined"}, "junk"]
