@@ -869,10 +869,9 @@ class Component extends DCLogic {
       const signal=!d.c.takenOver&&(d.c.phase==='error'||d.c.phase==='blocked'||!!d.c.lastAnalysis?.signals?.length);
       // No processing chatter on cards (« tour n · transcription STT »…): the line under the title carries the signal to
       // check, or « en ligne · opérateur » for a call the operator holds; the per-call latency and the primary action
-      // share the last line, with a quiet live dot while no latency is measured yet.
-      const live=this.voiceMark(d.c)||h('span',{className:'oc-dot oc-pulse',style:{background:d.c.takenOver?OP:'var(--color-green-400)'}});
+      // share the last line (left empty, no dot, until the first latency is measured).
       const lead=signal?h('div',{key:'lead',className:'oc-cardline'},h('span',{className:'oc-signal oc-ellipsis'},this.voiceMark(d.c),d.headline))
-        :d.c.takenOver?h('div',{key:'lead',className:'oc-cardline'},h('span',{className:'oc-status'},live,h('span',{className:'oc-ellipsis'},d.status))):null;
+        :d.c.takenOver?h('div',{key:'lead',className:'oc-cardline'},h('span',{className:'oc-status'},this.voiceMark(d.c)||h('span',{className:'oc-dot oc-pulse',style:{background:OP}}),h('span',{className:'oc-ellipsis'},d.status))):null;
       const primary=d.c.liveCaller?this.button('Reprendre mon appel',()=>this.open(d.id),false,'orange-resume-'+d.id)
         :d.c.takenOver?this.button("Rendre à l'IA",()=>this.handBackCall(d.c),false,undefined,undefined,{tone:'quiet'})
         :this.button("Prendre l'appel",()=>{this.takeOverCall(d.c);this.open(d.id);},false,undefined,undefined,{emphasis:true});
@@ -881,7 +880,7 @@ class Component extends DCLogic {
           h('button',{type:'button',className:'oc-cardtoggle','aria-expanded':String(open),'aria-label':open?'Réduire':'Détails',title:open?'Réduire':'Détails',
             onClick:e=>{stop(e);this.setState({more:{...this.state.more,[key]:!open}});}},open?'▴':'▾')),
         lead,
-        h('div',{className:'oc-cardline'},this.callLatency(d.c)||h('span',{className:'oc-status'},lead?null:live),h('span',{className:'oc-cardact',onClick:stop},primary)),
+        h('div',{className:'oc-cardline'},this.callLatency(d.c)||h('span',{className:'oc-status'}),h('span',{className:'oc-cardact',onClick:stop},primary)),
         open?h('div',{className:'oc-cardmore'},
           h('div',{className:'oc-quote'},this.latestWords(d.c)),
           h('div',{className:'oc-muted'},d.id+(/non renseigné/.test(d.place)?'':' · '+d.place)),
