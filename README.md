@@ -51,9 +51,10 @@ Every turn is measured and the sample is stored by the gateway (`latency` table,
 | `network_ms` | gateway | Round trip to the site minus the time the site reports: the distance. Built-in caller: none. |
 | `stt_ms`, `analyze_ms`, `reply_tts_ms` | browser | The console's own steps: transcription, analysis + reply, the AI's voice (audible call only). |
 
-What the console shows: the site and the last round trip in the call header, « Latence · dernier tour » in the copilot
-(breakdown and the call's medians behind Détails), « Sites appelants · latence » on the overview (readiness and
-round trip from the health probe, median / p95 per site, fallbacks). `GET /api/latency` aggregates the last 500 turns;
+What the console shows: a line on every call card and row (`<site> · appelant <ms>`, the call's median and the
+network share in its tooltip), the site and the last round trip in the call header, « Latence · dernier tour » in
+the copilot (breakdown and the call's medians behind Détails), « Sites appelants · latence » on the overview
+(readiness and round trip from the health probe, median / p95 per site, fallbacks). `GET /api/latency` aggregates the last 500 turns;
 `python3 tools/db_report.py --latency` prints the same table from the database. A site that fails is bypassed for
 30 s (the built-in caller answers, marked « repli ») and shows as a warning dot in the services chip; set
 `ORANGE_CALLER_FALLBACK=0` to fail the turn instead. The site's answer is treated as model output: the line goes

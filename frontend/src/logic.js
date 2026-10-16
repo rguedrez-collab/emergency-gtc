@@ -856,6 +856,7 @@ class Component extends DCLogic {
           h('button',{type:'button',className:'oc-cardtoggle','aria-expanded':String(open),'aria-label':open?'Réduire':'Détails',title:open?'Réduire':'Détails',
             onClick:e=>{stop(e);this.setState({more:{...this.state.more,[key]:!open}});}},open?'▴':'▾')),
         h('div',{className:'oc-cardline'},signal?h('span',{className:'oc-signal oc-ellipsis'},this.voiceMark(d.c),d.headline):status,h('span',{className:'oc-cardact',onClick:stop},primary)),
+        this.callLatency(d.c),
         open?h('div',{className:'oc-cardmore'},
           h('div',{className:'oc-quote'},this.latestWords(d.c)),
           signal?status:null,
@@ -868,7 +869,8 @@ class Component extends DCLogic {
         style:{animation:d.c.phase==='ringing'?'slidein .5s':'none'}},
       this.kui('Badge',{color:d.sevColor,kind:'outline'},d.sev),
       h('div',{className:'oc-rowtext'},h('span',{className:'oc-title'},d.category),
-        h('span',{className:'oc-muted oc-rowstatus'},this.voiceMark(d.c),d.c.ended?(d.c.reviewed?'Dossier clos':d.c.endLabel)+' · '+(d.c.takenOver?'vous':'IA')+' · '+d.id:d.id+' · '+d.status)),
+        h('span',{className:'oc-muted oc-rowstatus'},this.voiceMark(d.c),d.c.ended?(d.c.reviewed?'Dossier clos':d.c.endLabel)+' · '+(d.c.takenOver?'vous':'IA')+' · '+d.id:d.id+' · '+d.status),
+        d.c.ended?null:this.callLatency(d.c)),
       h('span',{className:'oc-mono oc-right',title:d.c.ended?'Heure de clôture':'Durée de l’appel'},d.c.ended?fmt(d.c.reviewed?d.c.reviewedAt:d.c.endedAt):d.dur),
       d.progress!=null?h('span',{className:'oc-progress',style:{width:Math.round(d.progress*100)+'%'},title:'Avancement de l’appel'}):null);
     const alerts=[...m.mine,...m.alerts];
@@ -970,6 +972,16 @@ class Component extends DCLogic {
     const title='Site de l’appelant simulé'+(last?` · dernier tour ${fmtMs(last.caller_ms)} (modèle ${fmtMs(last.llm_ms)}, voix ${fmtMs(last.tts_ms)}${last.network_ms!=null?', réseau '+fmtMs(last.network_ms):''})`:'')
       +(last?.fallback?' · site demandé injoignable, appelant intégré de la passerelle en repli':'');
     return h('span',{key:'site',className:'oc-site'+(last?.fallback?' oc-site-warn':''),title},this.siteName(used)+(last?' · '+fmtMs(last.caller_ms):''));
+  }
+  // Per-call latency at a glance: one compact line on every list card and row with the site playing the caller and the
+  // last measured round trip (the same figure as the board's « appelant »); the call's median and the network share
+  // sit in the tooltip. Its own line, so the status text and the action keep their room.
+  callLatency(c) {
+    const last=c.lastCaller;if(!c.callerFacts||!last||last.caller_ms==null)return null;
+    const rows=(c.latency||[]).map(r=>r.caller_ms).filter(v=>v!=null).sort((a,b)=>a-b),median=rows.length?rows[Math.floor(rows.length/2)]:null;
+    const title='Appelant simulé · '+this.siteName(last.location)+' · dernier tour '+fmtMs(last.caller_ms)+(last.network_ms!=null?' dont réseau '+fmtMs(last.network_ms):'')
+      +(rows.length>1?' · médiane '+fmtMs(median)+' sur '+rows.length+' tours':'')+(last.fallback?' · repli sur la passerelle':'');
+    return h('div',{key:'lat',className:'oc-callmeta oc-latency'+(last.fallback?' oc-site-warn':''),title},this.siteName(last.location)+' · appelant '+fmtMs(last.caller_ms));
   }
   // Latency of the last turn in the copilot: one line folded, the breakdown and the call's medians behind Détails.
   latencyBlock(c) {

@@ -604,7 +604,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.callers=[{name:'paris',ready:true,rtt_ms:14,label:'Paris · Saint-Denis'},{name:'montreal',ready:false,rtt_ms:null}];
   app.state.latency={samples:7,sites:[{name:'paris',n:5,fallbacks:0,caller_ms:{n:5,median:1180,p95:1600,max:1700}},{name:'montreal',n:0,fallbacks:2,caller_ms:null},{name:'local',n:2,fallbacks:0,caller_ms:{n:2,median:1900,p95:2100,max:2100}}],
     console:{stt_ms:{n:7,median:300,p95:330},analyze_ms:{n:7,median:1600,p95:1800},reply_tts_ms:null}};
-  const shown=texts(app.callPane(app.consoleModel())).join(' ').replace(/ /g,' ');  // durations use a narrow no-break space as thousands separator
+  const shown=texts(app.callPane(app.consoleModel())).join(' ').replace(/\u202f/g,' ');  // durations use a narrow no-break space as thousands separator
   for(const expected of ['Sites appelants · latence','paris · Paris · Saint-Denis','aller-retour 14 ms','appelant 1 180 ms · p95 1 600 ms','5 tours','montreal','injoignable','aucune mesure','0 tours · 2 replis','passerelle','sur place','appelant 1 900 ms','Console (médianes) : Transcription 300 ms · Analyse 1 600 ms'])
     assert.ok(shown.includes(expected),'board: '+expected+' in '+shown);
   app.state.callers=[];app.state.latency=null;assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Sites appelants'),'nothing configured, nothing measured: no block');
@@ -614,4 +614,18 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const c=app.createCall(true,{index:0,auto:true,background:true});delete c.latency;app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
   assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('Aucune mesure pour l’instant.'));
 }
-console.log('PASS: 49 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+// Per-call latency in the list: every card and AI row names the caller's site and the last round trip once measured.
+{
+  const app=make();app.state.session={status:'running',id:1,launched:3,total:100,finished:0,failed:0};app.state.callers=[{name:'lyon',ready:true},{name:'montreal',ready:true}];
+  const card=app.createCall(true,{index:0,auto:true,background:true}),row=app.createCall(true,{index:1,auto:true,background:true}),fresh=app.createCall(true,{index:2,auto:true,background:true});
+  card.ti=2;card.phase='gap';card.alerted=true;card.lastAnalysis={signals:[]};card.score=40;
+  card.lastCaller={location:'lyon',requested:'lyon',fallback:false,caller_ms:1655,network_ms:42,llm_ms:900,tts_ms:700,at:Date.now()};card.latency=[{caller_ms:1655},{caller_ms:1800},{stt_ms:300}];
+  row.ti=2;row.phase='gap';row.lastCaller={location:'local',requested:'montreal',fallback:true,caller_ms:2100,llm_ms:900,tts_ms:1200,at:Date.now()};
+  const list=app.callList(app.consoleModel()),shown=texts(list).join(' ').replace(/\u202f/g,' '),json=JSON.stringify(list).replace(/\u202f/g,' ');
+  assert.ok(shown.includes('lyon · appelant 1 655 ms'),'collapsed card shows site and last round trip: '+shown);
+  assert.ok(shown.includes('passerelle · appelant 2 100 ms')&&json.includes('oc-latency oc-site-warn'),'a fallback row is marked');
+  assert.ok(json.includes('médiane 1 800 ms sur 2 tours')&&json.includes('dont réseau 42 ms'),'tooltip carries the median and the network share');
+  assert.equal(app.callLatency(fresh),null,'no measurement yet: nothing shown');assert.equal(app.callLatency(app.createCall(false)),null,'manual tests have no simulated caller');
+  app.endCall(row,'Appel terminé · à revoir');assert.ok(!texts(app.callList(app.consoleModel())).join(' ').includes('passerelle · appelant'),'ended rows keep their closing label only');
+}
+console.log('PASS: 50 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

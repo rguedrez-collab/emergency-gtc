@@ -57,6 +57,9 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   separator; the built-in caller is named `passerelle` on screen and `local` in payloads and the database.
 - Tool log names: `Appelant · <site>` for a caller line (result `<ms> ms`, `· repli sur la passerelle` on fallback),
   `<LLM label>` for analysis, `<TTS label> TTS`, `STT`.
+- Per-call latency line: `.oc-callmeta.oc-latency` under the status of every live card and row, text
+  `<site> · appelant <ms>` (`oc-site-warn` on fallback), tooltip with the median and the network share; absent until
+  the first generated caller line, and on ended rows.
 - List DOM: alert items are `.oc-card[data-call]` (with `.oc-cardtoggle`, `.oc-title`), AI/ended items are
   `.oc-row[data-call]`; the harness helpers `orangeCards()/orangeRows()/orangeOpenFirst()` live in `tests/e2e/verify_local.py`.
 - Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`, `location`,
@@ -96,7 +99,7 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
 ## How to verify
 
 ```bash
-make test                                      # 49 controller checks (vm, stubbed React/Audio) + 59 backend + 9 caller-service tests
+make test                                      # 50 controller checks (vm, stubbed React/Audio) + 59 backend + 10 caller-service tests
 make build MOCKUP=/path/to/urgence.html        # frontend/dist/urgence.html (one backend test skips until it exists)
 make e2e                                       # 13 headless checks with fake models and two fake caller sites (needs Playwright + Chromium)
 python3 tests/e2e/verify_local.py --guarded | --oob | --realproxy | --soak 300 | --no-sites
