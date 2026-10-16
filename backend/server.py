@@ -820,9 +820,12 @@ def similar_line(a, b):
         return True
     if not wa or not wb:
         return False
-    jaccard = len(set(wa) & set(wb)) / len(set(wa) | set(wb))
+    shared = set(wa) & set(wb)
+    jaccard = len(shared) / len(set(wa) | set(wb))
     grams = lambda w: {tuple(w[i:i + 3]) for i in range(len(w) - 2)}
-    return jaccard >= 0.5 or bool(grams(wa) & grams(wb))
+    # Two questions about the same three things are the same question (« depuis quand ça dure ? » / « depuis combien de temps ça dure ? »).
+    both_questions = a.strip().endswith("?") and b.strip().endswith("?")
+    return jaccard >= 0.5 or bool(grams(wa) & grams(wb)) or (both_questions and len(shared) >= 3)
 
 
 def restates(reply, facts):

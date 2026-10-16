@@ -234,6 +234,8 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(server.similar_line("Je reste avec vous. Ne la déplacez pas, surveillez sa respiration et dites-moi si elle réagit.",
                                             "Restez près d'elle, surveillez sa respiration et dites-moi si elle réagit."))
         self.assertFalse(server.similar_line("Elle respire encore ? Dites-moi si elle bouge ou réagit.", server.QUESTIONS["state"]))
+        self.assertTrue(server.similar_line("Camille, depuis quand cette situation dure-t-elle ?", "Depuis combien de temps la situation dure-t-elle exactement ?"))
+        self.assertFalse(server.similar_line("Vous êtes à quelle adresse ? Dans quelle ville ?", "Vous voyez un repère à côté, un commerce, un arrêt ?"))
         # That help is coming is said only once the operator validated a dispatch, never with a delay, and only once.
         with self.assertRaises(ValueError):
             server.spoken_reply("Les secours sont prévenus, ils arrivent.")
