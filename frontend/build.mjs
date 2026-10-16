@@ -228,7 +228,8 @@ html.flat .oc-talk{border-top-color:#ff7900;}
 html.flat .oc-entrycard{border:1px solid var(--border-color-base);border-radius:4px;padding:40px 48px;}
 html.flat .oc-mode,html.flat .oc-emptybox,html.flat .oc-settings{border-radius:4px;}
 html.flat nve-button{--border-radius:4px;}
-html.flat nve-button[interaction=emphasis]{--background:#ff7900;--border:1px solid #ff7900;--color:#111;}
+/* Primary actions (« Prendre l'appel », « Ouvrir la vacation », « Clore le dossier ») are black with white text (asked for). */
+html.flat nve-button[interaction=emphasis]{--background:#000;--border:1px solid #000;--color:#fff;}
 html.flat .oc-card:focus-visible,html.flat .oc-row:focus-visible,html.flat .oc-more:focus-visible,html.flat .oc-cardtoggle:focus-visible{outline-color:#ff7900;}
 /* Light palette */
 html.sober{color-scheme:light;--oc-caller:#5c6670;--oc-ai:#3f8500;--oc-op:#ff7900;--oc-idle:#d3d7dc;}
@@ -276,6 +277,7 @@ html.dark .oc-turn-op .oc-bubble{background:#2a1f14;border-color:#5a3a1a;}
 html.dark .oc-player{background:#15181c;border-top:1px solid #2b3139;}
 html.dark .oc-tile{background:#1a1e23;border-color:#2b3139;}
 html.dark nve-button{--background:#1c2026;--border:1px solid #3a424c;--color:#fff;}
+html.dark nve-button[interaction=emphasis]{--background:#000;--border:1px solid #5a636e;--color:#fff;}
 html.dark nve-button[disabled]{--background:#15181c;--border:1px solid #2b3139;--color:#6b7480;}
 html.dark nve-button[data-tone=quiet]{--background:transparent;--border:1px solid transparent;--color:#e6e9ed;}
 html.dark nve-button[data-tone=danger]{--background:transparent;--border:1px solid #e0516a;--color:#ff8a9a;}
@@ -306,7 +308,7 @@ html.glass .oc-bar{background:var(--g-bg);backdrop-filter:var(--g-blur);-webkit-
 html.glass .oc-settings{background:rgba(255,255,255,.05);border-radius:var(--g-r2);}
 html.glass .oc-chip{background:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);}
 html.glass nve-button{--background:rgba(255,255,255,.10);--border:1px solid rgba(255,255,255,.18);--border-radius:999px;}
-html.glass nve-button[interaction=emphasis]{--background:#76b900;--border:1px solid rgba(255,255,255,.28);}  /* solid: the button paints --background as a colour */
+html.glass nve-button[interaction=emphasis]{--background:rgba(0,0,0,.85);--border:1px solid rgba(255,255,255,.35);--color:#fff;}  /* solid black: the button paints --background as a colour */
 html.glass nve-button[disabled]{--background:rgba(255,255,255,.04);--border:1px solid rgba(255,255,255,.08);--color:rgba(255,255,255,.45);}
 html.glass nve-button[data-tone=quiet]{--background:transparent;--border:1px solid transparent;}
 html.glass nve-button[data-tone=danger]{--background:rgba(255,122,122,.08);--border:1px solid rgba(255,122,122,.5);--color:#ff8a8a;}
