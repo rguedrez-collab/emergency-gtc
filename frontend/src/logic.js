@@ -560,9 +560,7 @@ class Component extends DCLogic {
     // Every call requires human review; the model cannot clear or close it.
     // « Laisser l'IA continuer » holds until a new signal appears.
     if(!c.takenOver&&(!c.snoozed||fresh.length)){if(!c.alerted)c.alertAt=this.state.shift;c.alerted=true;c.snoozed=false;}
-    const place=c.facts.find(f=>f.k==='Lieu');
-    c.sc.place=place?'Déclaré : '+place.v:'Lieu non renseigné';
-    c.info.find(f=>f.k==='Adresse').v=place?'Déclarée, non vérifiée : '+place.v:'Non confirmée';
+    this.placeLine(c);
     if(c.takenOver){this.recordLatency(c,sample);this.setPhase(c,'operator');return;}
     const rev=c.revision;let voice=null;
     // Nobody hears a call that is not selected, so its reply needs no voice synthesis — except a real caller on the line.
@@ -698,6 +696,14 @@ class Component extends DCLogic {
   // ---------------- Tool calls proposed by the AI (copilot « Actions · outils ») ----------------
   // The address lookup runs at once (read-only, the national address base). Dispatch tools wait for the operator's
   // validation and are then recorded as simulated decisions — nothing is transmitted, the spoken reply never says otherwise.
+  // The header's place line and the « Adresse » row: the address base's match once a lookup found one, else the caller's words.
+  verifiedAddress(c) {const a=(c.actions||[]).filter(x=>x.tool==='lookup_address'&&x.status==='done'&&x.result?.label).at(-1);return a?a.result:null;}
+  placeLine(c) {
+    const place=c.facts.find(f=>f.k==='Lieu'),v=this.verifiedAddress(c);
+    c.sc.place=v?'Vérifié : '+v.label:place?'Déclaré : '+place.v:'Lieu non renseigné';
+    const info=c.info&&c.info.find(f=>f.k==='Adresse');
+    if(info)info.v=v?`Vérifiée (${v.source||'base adresse'}) : ${v.label}${v.score!=null?' · confiance '+Math.round(v.score*100)+' %':''}`:place?'Déclarée, non vérifiée : '+place.v:'Non confirmée';
+  }
   // What the operator validated so far, for the AI's next line: done tool calls (service dispatched, address verified).
   doneActions(c) {return (c.actions||[]).filter(a=>a.status==='done').map(a=>({tool:a.tool,status:'done',label:a.result?.label||null}));}
   proposeTools(c,tools) {
@@ -716,6 +722,7 @@ class Component extends DCLogic {
     try{
       const r=await this.api(c,'/api/tool',{call:c.id,turn:c.ti,tool:a.tool,args:a.args,approve});const d=await r.json();
       a.status=d.status==='error'?'error':'done';a.result=d.result??null;a.note=d.note||d.error||null;a.simulated=!!d.simulated;a.ms=d.ms??Math.round(performance.now()-t0);a.doneAt=this.state.shift;
+      if(a.tool==='lookup_address')this.placeLine(c);
       if(a.kind==='dispatch'&&a.status==='done'){
         c.audit.push({action:'simulated_dispatch',tool:a.tool,actor:'demo_operator',at:new Date().toISOString(),external_action:false});
         this.append(c,'Système',a.label+' · décision enregistrée (simulation, aucune transmission aux secours).','simulated_dispatch');

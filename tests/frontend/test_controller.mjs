@@ -739,6 +739,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(c.actions.length,3);const lookup=c.actions.find(a=>a.tool==='lookup_address'),fire=c.actions.find(a=>a.tool==='dispatch_fire');
   assert.equal(lookup.status,'done');assert.equal(lookup.result.label,'8 Cours Gambetta 69007 Lyon');assert.equal(lookup.ms,240);assert.equal(fire.status,'proposed');
+  assert.equal(c.sc.place,'Vérifié : 8 Cours Gambetta 69007 Lyon','the header shows the verified address once the lookup found it');
+  assert.ok(c.info.find(f=>f.k==='Adresse').v.includes('confiance 93 %'),c.info.find(f=>f.k==='Adresse').v);
   assert.deepEqual(posts.map(p=>p.tool),['lookup_address'],'only the read-only lookup ran by itself');
   await app.analyzeCall(c);await tick(10);assert.equal(c.actions.length,3,'the same proposals are not added twice');
   app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
@@ -757,4 +759,4 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-console.log('PASS: 55 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+console.log('PASS: 56 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

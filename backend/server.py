@@ -588,6 +588,7 @@ Réponds uniquement en JSON avec cette structure exacte :
  "signals":["extrait EXACT justifiant une revue humaine prioritaire, sans diagnostic"],
  "question":"location|state|danger|people|incident|access|callback|safety|clarify|handoff|breathing|response_check",
  "reply":"ta prochaine réplique naturelle au téléphone, 1 à 3 phrases courtes",
+ "alt_reply":"une autre réplique possible, vraiment différente (autre question utile ou consigne), même registre",
  "tools":[{"tool":"lookup_address|dispatch_ambulance|dispatch_fire|dispatch_police","args":{"address":"citation exacte"},"reason":"motif court"}]}
 Outils : propose lookup_address dès qu'une adresse est prononcée (args.address = la
 citation exacte), dispatch_ambulance pour une personne blessée, inconsciente ou qui
@@ -1377,6 +1378,15 @@ def analyze(payload):
     # A reply that repeats (or nearly) what the AI already said, reads the address back or echoes the caller is a stalled
     # dialogue, not a reply: one rewrite under the same guard, then the checklist's own question.
     unfit = lambda line: stalled(line, previous, result["facts"], messages) or overloaded(line) or bool(CALL_US.search(line))
+    if reply_source == "contextual_gemma" and unfit(reply):
+        # The model's own second wording first (no second call behind a guardrail proxy), then one rewrite.
+        alternative = raw.get("alt_reply") if isinstance(raw.get("alt_reply"), str) else None
+        try:
+            spare = spoken_reply(alternative, bool(dispatched)) if alternative else None
+        except ValueError:
+            spare = None
+        if spare and not unfit(spare):
+            reply, reply_source = spare, "alternative"
     if reply_source == "contextual_gemma" and unfit(reply):
         retries += 1
         if CALL_US.search(reply):

@@ -292,6 +292,13 @@ class ExtractionTests(unittest.TestCase):
             result = server.analyze({"messages": fall})
         self.assertEqual((result["reply"], result["reply_retries"], result["reply_source"]), ("Il respire ?", 1, "contextual_gemma"))
         self.assertEqual(json.loads(request.call_args.args[1]["messages"][-1]["content"])["reprise"]["consigne"], server.OVERLOAD_RETRY)
+        # The model's own alternative wording is used before any second call: one request, no rewrite.
+        with patch.object(server, "request_model", return_value=self.completion(dict(pile, alt_reply="Il respire ? Regardez sa poitrine."))) as request:
+            result = server.analyze({"messages": fall})
+        self.assertEqual((result["reply"], result["reply_retries"], result["reply_source"], request.call_count), ("Il respire ? Regardez sa poitrine.", 0, "alternative", 1))
+        with patch.object(server, "request_model", side_effect=[self.completion(dict(pile, alt_reply="Que fait-il, respire-t-il, saigne-t-il ?")), self.completion({"reply": "Il respire ?"})]):
+            result = server.analyze({"messages": fall})
+        self.assertEqual((result["reply"], result["reply_retries"]), ("Il respire ?", 1), "an alternative as unfit as the first line still costs one rewrite")
         # A rewrite the model truncates (it started a whole analysis again) is not a failed turn: the checklist's line stands in.
         with patch.object(server, "request_model", side_effect=[self.completion(pile), self.completion({"summary": "Chute à domicile, la personne"}, finish="length")]):
             result = server.analyze({"messages": fall})
