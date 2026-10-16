@@ -1,4 +1,5 @@
 """The Dynamo bridge (backend/gcore_bridge.py): audio conversion, the speech request mapping, per-model origins."""
+import base64
 import json
 import os
 import struct
@@ -63,6 +64,44 @@ class MappingTests(unittest.TestCase):
         with patch.object(bridge, "urlopen", fake_urlopen), patch.dict(bridge._models["ASR"], {"ids": None, "at": 0.0}):
             self.assertIn("nemotron-asr-streaming", bridge.model_ids("ASR"))
         self.assertEqual(seen, ["http://asr.invalid:8000/v1/models"])
+
+
+class SpeechQualityTests(unittest.TestCase):
+    """What the bridge does for intelligibility: text the voice can read, audio the recogniser can settle."""
+
+    def test_french_normalisation_for_the_voice(self):
+        cases = {
+            "Nous sommes au 12 rue des Lilas, au 3e étage, porte gauche.": "Nous sommes au douze rue des Lilas, au troisième étage, porte gauche.",
+            "Il est 14h30, Mme Durand et M. Martin attendent au n° 7, bd Saint-Michel": "Il est quatorze heures trente, Madame Durand et Monsieur Martin attendent au numéro sept, boulevard Saint-Michel.",
+            "Ça fait 10 min… elle a 80 ans ! Appelez le 06 39 98 12 42": "Ça fait dix minutes... elle a quatre-vingts ans ! Appelez le zéro six trente-neuf quatre-vingt-dix-huit douze quarante-deux.",
+            "dites‑moi « où exactement »": "dites-moi où exactement.",
+            "1er étage, 2e porte, 21e siècle, 100 % sûr": "premier étage, deuxième porte, vingt et unième siècle, cent pour cent sûr.",
+            "Restez en ligne.": "Restez en ligne.",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(bridge.normalize_fr(text), expected)
+        for n, words in ((71, "soixante et onze"), (80, "quatre-vingts"), (81, "quatre-vingt-un"), (91, "quatre-vingt-onze"), (200, "deux cents"), (231, "deux cent trente et un"), (1001, "mille un")):
+            self.assertEqual(bridge.number_words(n), words)
+        self.assertEqual((bridge.ordinal_words(1, True), bridge.ordinal_words(5), bridge.ordinal_words(9), bridge.ordinal_words(80)), ("première", "cinquième", "neuvième", "quatre-vingtième"))
+
+    def test_transcript_spacing_and_utterance_padding(self):
+        self.assertEqual(bridge.clean_transcript("Bonjour, ici, la plateforme  Pouvez vous me dire ,où vous êtes ?  "), "Bonjour, ici, la plateforme Pouvez vous me dire, où vous êtes?")
+        self.assertEqual(bridge.clean_transcript("Ça fait 10 min... oui"), "Ça fait 10 min... oui")
+        sent = []
+        class FakeWS:
+            def __init__(self, url): sent.append(("open", url))
+            def send_json(self, obj): sent.append(obj)
+            def recv_json(self):
+                last = sent[-1]
+                if last[0] == "open" if isinstance(last, tuple) else False: return {"type": "session.created"}
+                if isinstance(last, dict) and last.get("type") == "session.update": return {"type": "session.updated"}
+                return {"type": "conversation.item.input_audio_transcription.completed", "transcript": " deux  mots ,ici "}
+            def close(self): pass
+        with patch.object(bridge, "WebSocket", FakeWS):
+            text = bridge.transcribe(b"\x01\x00" * 2400)  # 100 ms of audio
+        appended = sum(len(base64.b64decode(e["audio"])) for e in sent if isinstance(e, dict) and e.get("type") == "input_audio_buffer.append")
+        self.assertEqual(appended, 2 * 24000 * (bridge.ASR_PAD_MS[0] + 100 + bridge.ASR_PAD_MS[1]) // 1000, "silence before and after the utterance")
+        self.assertEqual(text, "deux mots, ici")
 
 
 if __name__ == "__main__":

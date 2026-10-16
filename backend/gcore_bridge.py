@@ -19,8 +19,11 @@ ones. This bridge listens on loopback and translates:
 
 Environment: GCORE_BASE_URL (one origin for the three models, e.g. a Dynamo global gateway) or GCORE_LLM_BASE_URL /
 GCORE_ASR_BASE_URL / GCORE_TTS_BASE_URL (one frontend each; each falls back to GCORE_BASE_URL), GCORE_API_KEY (optional
-bearer token), GCORE_LLM_MODEL (else ORANGE_LLM_MODEL), GCORE_ASR_MODEL, GCORE_ASR_LANGUAGE, GCORE_TTS_RATE,
-GCORE_TTS_VOICES, GCORE_BRIDGE_BIND, GCORE_BRIDGE_PORT.
+bearer token), GCORE_LLM_MODEL (else ORANGE_LLM_MODEL), GCORE_ASR_MODEL, GCORE_ASR_LANGUAGE, GCORE_ASR_PAD_MS (silence added before,after each utterance, default
+"300,700": the streaming recogniser then settles the first and last words and their liaisons), GCORE_TTS_RATE,
+GCORE_TTS_VOICES, GCORE_TTS_NORMALIZE (1: French text normalisation before synthesis — numbers and ordinals in words,
+usual abbreviations expanded, typographic characters plain — so the voice does not stumble), GCORE_BRIDGE_BIND,
+GCORE_BRIDGE_PORT.
 Audio other than WAV (browser or phone microphone: webm/opus, ogg, mp4) is decoded with ffmpeg when it is on the PATH.
 """
 import array
@@ -29,6 +32,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
 import socketserver
@@ -53,6 +57,8 @@ TTS_VOICES = dict(item.split("=", 1) for item in os.environ.get(
     "GCORE_TTS_VOICES", "fr_female=Magpie-Multilingual.FR-FR.Louise,fr_male=Magpie-Multilingual.FR-FR.Pascal").split(",") if "=" in item)
 LANGUAGES = {"fr": "fr-FR", "en": "en-US"}  # the TTS worker wants a locale, the gateway sends a bare code
 ASR_RATE = 24000                             # the realtime adapter accepts 24 kHz PCM16 only
+ASR_PAD_MS = tuple(int(x) for x in (os.environ.get("GCORE_ASR_PAD_MS", "300,700").split(",") + ["0"])[:2])
+TTS_NORMALIZE = os.environ.get("GCORE_TTS_NORMALIZE", "1") not in ("0", "false", "no")
 MAX_TURN_S = 55                              # the adapter refuses utterances over 60 s: longer audio is several commits
 APPEND_BYTES = 48000                         # 1 s of audio per input_audio_buffer.append
 MAX_BODY = 20 * 1024 * 1024
@@ -268,7 +274,17 @@ def wait_for(ws, *types):
             return event
 
 
+def clean_transcript(text):
+    """Streaming output as the console shows it: one space between words, none before punctuation."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    text = re.sub(r"\s+([,.;:!?…])", r"\1", text)
+    return re.sub(r"([,;:!?])(?=[^\s\d.,;:!?…])", r"\1 ", text)
+
+
 def transcribe(pcm):
+    # Silence around the utterance: the recogniser's first and last words (and their liaisons) are decided with context,
+    # instead of being cut by the start of the stream or the commit.
+    pcm = b"\0\0" * (ASR_RATE * ASR_PAD_MS[0] // 1000) + pcm + b"\0\0" * (ASR_RATE * ASR_PAD_MS[1] // 1000)
     ws = WebSocket(realtime_url())
     try:
         wait_for(ws, "session.created")
@@ -285,9 +301,87 @@ def transcribe(pcm):
                 ws.send_json({"type": "input_audio_buffer.append", "audio": base64.b64encode(piece[i:i + APPEND_BYTES]).decode()})
             ws.send_json({"type": "input_audio_buffer.commit"})
             texts.append(wait_for(ws, "conversation.item.input_audio_transcription.completed").get("transcript") or "")
-        return " ".join(t.strip() for t in texts if t.strip())
+        return clean_transcript(" ".join(t.strip() for t in texts if t.strip()))
     finally:
         ws.close()
+
+
+# ---- French text normalisation for the speech model ----
+# Magpie reads what it is given; numerals, ordinals, abbreviations and typographic characters are where a voice
+# stumbles or mis-links words. Numbers up to 9999 become words, longer digit runs are read digit by digit.
+
+UNITS = ["zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix", "onze", "douze", "treize", "quatorze", "quinze", "seize",
+         "dix-sept", "dix-huit", "dix-neuf"]
+TENS = {20: "vingt", 30: "trente", 40: "quarante", 50: "cinquante", 60: "soixante"}
+ABBREVIATIONS = {"M.": "Monsieur", "Mme": "Madame", "Mlle": "Mademoiselle", "Dr": "Docteur", "Pr": "Professeur", "n°": "numéro", "N°": "numéro",
+                 "bd": "boulevard", "Bd": "boulevard", "av.": "avenue", "Av.": "avenue", "St": "Saint", "Ste": "Sainte", "km": "kilomètres", "min": "minutes",
+                 "etc.": "et cætera", "SAMU": "SAMU", "RDC": "rez-de-chaussée", "rdc": "rez-de-chaussée"}
+TYPOGRAPHY = {"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"', "\u2011": "-", "\u2013": "-", "\u2014": "-", "\u2026": "...", "\u00ab": "", "\u00bb": "",
+              "\u00b7": ", ", "\u202f": " ", "\u00a0": " ", "*": "", "[": "", "]": "", "_": " "}
+
+
+def number_words(n):
+    """A French cardinal (0..9999) in words."""
+    if n < 20:
+        return UNITS[n]
+    if n < 100:
+        tens, unit = divmod(n, 10)
+        if tens == 7 or tens == 9:  # soixante-dix, quatre-vingt-dix count on from 60 and 80
+            tens, unit = tens - 1, unit + 10
+        base = "quatre-vingt" if tens == 8 else TENS[tens * 10]
+        if unit == 0:
+            return "quatre-vingts" if tens == 8 else base
+        if unit == 1 and tens not in (8,):
+            return base + " et un"
+        if unit == 11 and tens == 6:
+            return "soixante et onze"
+        return base + "-" + UNITS[unit]
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        head = "cent" if hundreds == 1 else UNITS[hundreds] + " cent"
+        if rest == 0:
+            return head + ("s" if hundreds > 1 else "")
+        return head + " " + number_words(rest)
+    thousands, rest = divmod(n, 1000)
+    head = "mille" if thousands == 1 else number_words(thousands) + " mille"
+    return head if rest == 0 else head + " " + number_words(rest)
+
+
+def ordinal_words(n, feminine=False):
+    if n == 1:
+        return "première" if feminine else "premier"
+    base = number_words(n)
+    if base.endswith("e"):
+        base = base[:-1]
+    elif base.endswith("cinq"):
+        base += "u"
+    elif base.endswith("neuf"):
+        base = base[:-1] + "v"
+    elif base.endswith("s") and n % 100 in (0, 80):
+        base = base[:-1]
+    return base + "ième"
+
+
+def normalize_fr(text):
+    """Text as a French voice should read it: plain characters, numbers in words, abbreviations expanded, final punctuation."""
+    for char, plain in TYPOGRAPHY.items():
+        text = text.replace(char, plain)
+    text = re.sub(r"(\d+)\s*h\s*(\d{2})\b", lambda m: f"{number_words(int(m.group(1)))} heures {number_words(int(m.group(2)))}", text)
+    text = re.sub(r"(\d+)\s*h\b", lambda m: f"{number_words(int(m.group(1)))} heures", text)
+    text = re.sub(r"(\d+)\s*%", lambda m: f"{number_words(int(m.group(1)))} pour cent", text)
+    text = re.sub(r"\b(\d{1,4})\s*(er|re|ère|e|ème|eme)\b", lambda m: ordinal_words(int(m.group(1)), m.group(2) in ("re", "ère")), text)
+    text = re.sub(r"\d+", lambda m: number_words(int(m.group(0))) if len(m.group(0)) <= 4 and not m.group(0).startswith("0")
+                  else " ".join(number_words(int(d)) for d in m.group(0)), text)
+    def expand(word):
+        for core in (word, word.rstrip(",;:!?()."), word.strip(",;:!?().")):  # « M. » keeps its dot, « min... » loses the dots
+            if core in ABBREVIATIONS:
+                return word.replace(core, ABBREVIATIONS[core], 1)
+        return word
+    text = " ".join(expand(w) for w in text.split(" "))
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
 
 
 # ---- HTTP ----
@@ -362,8 +456,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def speech(self, payload):
         if not isinstance(payload, dict) or not isinstance(payload.get("input"), str):
             raise ValueError("input text required")
-        # The router's TTS takes pcm only, at speed 1.0, with a Magpie voice and a locale.
-        request = {"input": payload["input"], "model": payload.get("model"),
+        # The frontend's TTS takes pcm only, at speed 1.0, with a Magpie voice and a locale; the text is normalised first.
+        request = {"input": normalize_fr(payload["input"]) if TTS_NORMALIZE else payload["input"], "model": payload.get("model"),
                    "voice": TTS_VOICES.get(payload.get("voice"), payload.get("voice")),
                    "language": LANGUAGES.get(payload.get("language"), payload.get("language"))}
         pcm, _ = upstream("/v1/audio/speech", {k: v for k, v in request.items() if v}, kind="TTS")

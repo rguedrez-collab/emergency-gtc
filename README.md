@@ -231,6 +231,11 @@ bridge (`backend/gcore_bridge.py`, started by the images' entrypoints when `GCOR
 ASR, the Voxtral-style speech request to the Magpie TTS (preset voices → `GCORE_TTS_VOICES`) and passes chat
 completions through; model names and labels then default to the Gcore stack's. See `deploy/k8s/README.md`.
 
+Speech quality knobs of the bridge: `GCORE_ASR_PAD_MS` (default `300,700`) adds silence before and after each utterance
+so the streaming recogniser settles the first and last words and their liaisons; `GCORE_TTS_NORMALIZE` (default on)
+rewrites the text for the voice — numbers and ordinals in words, usual abbreviations expanded, typographic characters
+made plain, final punctuation — so Magpie does not stumble on « 12 rue », « 3e étage », « M. », « dites‑moi ».
+
 ## Storage
 
 The gateway keeps everything in a SQLite database, `state/orange.db` (`ORANGE_DB_PATH`; in Docker the
