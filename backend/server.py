@@ -679,13 +679,14 @@ def intake_state(messages):
     callers = " ".join(m["text"] for m in messages if m["role"] == "caller")
     assistants = [m["text"] for m in messages if m["role"] == "assistant"]
     known = [k for k in INTAKE_ITEMS if re.search(INTAKE_RULES[k], callers, re.I)]
-    asked = [k for k in INTAKE_ITEMS if any(re.search(ASKED_RULES[k], a, re.I) for a in assistants)]
+    times_asked = {k: sum(1 for a in assistants if re.search(ASKED_RULES[k], a, re.I)) for k in INTAKE_ITEMS}
+    asked = [k for k in INTAKE_ITEMS if times_asked[k]]
     critical = bool(CRITICAL.search(callers))
     missing = [k for k in INTAKE_ITEMS if k not in known]
     # The person's state and the dangers come before the administrative items in a critical situation; a question the
-    # caller did not answer comes back after the others, never twice in a row.
+    # caller did not answer comes back after the others, never twice in a row, and is dropped after the second time.
     urgent = (lambda items: [k for k in items if k in ("state", "danger")] + [k for k in items if k not in ("state", "danger")]) if critical else (lambda items: items)
-    order = urgent([k for k in missing if k not in asked]) + urgent([k for k in missing if k in asked])
+    order = urgent([k for k in missing if k not in asked]) + urgent([k for k in missing if times_asked[k] == 1])
     return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": order[0] if order else "handoff"}
 
 

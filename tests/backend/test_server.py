@@ -139,6 +139,11 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(state["asked"], ["location", "state", "access"])
         self.assertEqual(state["next"], "danger", "critical: dangers before people, then the administrative items")
         self.assertEqual(server.intake_state(messages[:2])["next"], "location")
+        # An item asked twice without an answer is dropped: the call moves on (observation, changes, handoff) instead of nagging.
+        nagging = messages + [{"role": "assistant", "text": "Y a-t-il un danger autour de vous ?"}, {"role": "caller", "text": "Je ne sais pas."},
+                              {"role": "assistant", "text": "Y a-t-il du feu ou de la fumée ?"}, {"role": "caller", "text": "Je ne sais pas, venez."}]
+        self.assertNotEqual(server.intake_state(nagging)["next"], "danger")
+        self.assertEqual(server.intake_state(nagging)["next"], "people")
         self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois, il est inconscient, porte 12, mon numéro est le 06 12 34 56 78"}])["next"], "handoff")
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
