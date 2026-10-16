@@ -403,7 +403,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.api=async()=>({json:async()=>result});app.tts=async()=>({});app.play=async()=>{};
   app.takeOverCall(c);app.handBackCall(c);await idle(c);assert.equal(c.phase,'gap','handback lets the AI answer the pending line again');
   let shown=texts(app.copilot(app.consoleModel())).join(' ');assert.ok(shown.includes('Dernier verdict : bloqué')&&!shown.includes('scan scan-1'),shown);
-  app.state.more={guard:true};shown=texts(app.copilot(app.consoleModel())).join(' ');assert.ok(shown.includes('scan scan-1'),'scan id behind Détails');
+  app.state.more={details:true,guard:true};shown=texts(app.copilot(app.consoleModel())).join(' ');assert.ok(shown.includes('scan scan-1'),'scan id behind Détails');
 }
 // Verdicts on normal analyses appear in the tool log and the copilot; the health line says the guardrail is active.
 {
@@ -414,7 +414,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   c.guardrail={configured:true,name:'F5 AI Guardrails',mode:'enforce · hors bande',kind:'flagged',scan_id:'scan-r',request:{kind:'flagged',scan_id:'scan-r',scanners:[{scannerId:'0195-topic-xyz'}]},response:{kind:'allowed',scan_id:'scan-s'}};
   app.state.guardrail={configured:true,name:'F5 AI Guardrails',mode:'enforce · hors bande'};let shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('Dernier verdict : signalé')&&!shown.includes('sur le chemin LLM'),'folded: verdict only');
-  app.state.more={guard:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
+  app.state.more={details:true,guard:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
   for(const expected of ['F5 AI Guardrails · enforce · hors bande sur le chemin LLM','propos de l’appelant : signalé · 0195-top','réponse de l’IA : conforme'])assert.ok(shown.includes(expected),expected);
   context.fetch=async()=>({ok:true,json:async()=>({ready:true,services:{guardrail:{ready:true}},guardrail:{configured:true,name:'F5 AI Guardrails',mode:'enforce · hors bande'},
     models:{llm:'org/llama-3',llm_label:'Llama 3',tts:'org/kokoro',tts_label:'Kokoro',stt:['whisper']}})});context.AbortSignal={timeout:()=>undefined};
@@ -435,11 +435,11 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(shown.includes('Journal des traitements · 2')&&shown.includes('STT · nemotron · en cours…')&&!shown.includes('1602 ms'),'folded log: count and latest call only');
   assert.ok(shown.includes('Signal IA ≠ gravité clinique · validation humaine requise')&&!shown.includes('Nemotron / Parakeet'),'short footnote');
   assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Prenez l’appel pour répondre'),'mode explanation folded');
-  app.state.more={tools:true,note:true,mode:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
+  app.state.more={details:true,tools:true,note:true,mode:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('1602 ms')&&shown.includes('Nemotron / Parakeet'),'Détails opens the log and the full footnote');
   assert.ok(texts(app.callPane(app.consoleModel())).join(' ').includes('Prenez l’appel pour répondre'),'Aide opens the mode explanation');
-  const ids=JSON.stringify(app.copilot(app.consoleModel())).match(/"id":"orange-more-[a-z]+"/g)||[];
-  assert.ok(ids.includes('"id":"orange-more-tools"')&&ids.includes('"id":"orange-more-note"'),ids.join());
+  app.state.more={};const ids=JSON.stringify(app.copilot(app.consoleModel())).match(/"id":"orange-more-[a-z]+"/g)||[];
+  assert.ok(ids.includes('"id":"orange-more-details"')&&ids.includes('"id":"orange-more-note"')&&!ids.includes('"id":"orange-more-tools"'),'one Détails toggle for the folded blocks: '+ids.join());
 }
 // Case lifecycle: an ended call waits under « Clôturés » until « Clore le dossier » files it under « Dossiers clos » (folded).
 {
@@ -588,9 +588,9 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.waveMode={amp:0,color:'#3a3a3a'};let shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('Latence · dernier tour')&&/Appelant \d+ ms · STT 21 ms · Analyse \d+ ms · Voix IA 33 ms/.test(shown),shown);
   assert.ok(!shown.includes('modèle 450 ms'),'breakdown folded');
-  app.state.more={latency:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
+  app.state.more={details:true,latency:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
   assert.ok(shown.includes('modèle 450 ms · voix 140 ms · réseau 50 ms')&&shown.includes('Médianes')&&!shown.includes('tours'),shown);
-  const head=texts(app.callPane(app.consoleModel())).join(' ');assert.match(head,/lyon · \d+ ms/);
+  app.state.more={};assert.match(texts(app.copilot(app.consoleModel())).join(' '),/lyon · \d+ ms/,'folded details name the site and its round trip; the header stays clean');
   // The export carries the per-turn samples and the site list.
   let exported=null;context.URL.createObjectURL=b=>{exported=JSON.parse(b.parts[0]);return 'blob:test';};
   context.document={createElement:()=>({click(){}})};app.download();
@@ -608,9 +608,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const sample=c.latency.at(-1);assert.equal(sample.location,'local');assert.equal(sample.requested,'lyon');assert.equal(sample.fallback,true);assert.equal(sample.tts_ms,700);assert.equal(sample.llm_ms,900);
   assert.ok(tts>=1,'the text-only answer is spoken through /api/tts');
   assert.ok(c.tools.find(t=>t.name==='Appelant · lyon').result.includes('repli sur la passerelle'));
-  app.waveMode={amp:0,color:'#3a3a3a'};const head=JSON.stringify(app.callPane(app.consoleModel()));
-  assert.ok(head.includes('oc-site-warn')&&head.includes('passerelle · '),head.slice(0,300));
-  app.state.more={latency:true};assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('repli (site demandé : lyon)'));
+  app.waveMode={amp:0,color:'#3a3a3a'};const side=JSON.stringify(app.copilot(app.consoleModel()));
+  assert.ok(side.includes('oc-site-warn')&&side.includes('passerelle · '),'the site and its fallback mark sit on the details line: '+side.slice(0,300));
+  assert.ok(!JSON.stringify(app.callPane(app.consoleModel())).includes('oc-site'),'the call header stays clean');
+  app.state.more={details:true,latency:true};assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('repli (site demandé : lyon)'));
 }
 // The situation board lists the caller sites: readiness and round trip from health, caller latency per site from the gateway's log.
 {
@@ -618,13 +619,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.callers=[{name:'paris',ready:true,rtt_ms:14,label:'Paris · Saint-Denis'},{name:'montreal',ready:false,rtt_ms:null}];
   app.state.latency={samples:7,sites:[{name:'paris',n:5,fallbacks:0,caller_ms:{n:5,median:1180,p95:1600,max:1700}},{name:'montreal',n:0,fallbacks:2,caller_ms:null},{name:'local',n:2,fallbacks:0,caller_ms:{n:2,median:1900,p95:2100,max:2100}}],
     console:{stt_ms:{n:7,median:300,p95:330},analyze_ms:{n:7,median:1600,p95:1800},reply_tts_ms:null}};
-  const shown=texts(app.callPane(app.consoleModel())).join(' ').replace(/\u202f/g,' ');  // durations use a narrow no-break space as thousands separator
+  const shown=texts(app.analyticsPanel(null)).join(' ').replace(/\u202f/g,' ');  // durations use a narrow no-break space as thousands separator
   for(const expected of ['Sites appelants · latence','paris · Paris · Saint-Denis','aller-retour 14 ms','appelant 1 180 ms · p95 1 600 ms','montreal','injoignable','aucune mesure','2 replis','passerelle','sur place','appelant 1 900 ms','Console (médianes) : Transcription 300 ms · Analyse 1 600 ms'])
     assert.ok(shown.includes(expected),'board: '+expected+' in '+shown);
   assert.ok(!/\btours?\b/.test(shown),'no turn counts on the board');
-  app.state.callers=[];app.state.latency=null;assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Sites appelants'),'nothing configured, nothing measured: no block');
+  assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Sites appelants'),'the overview keeps the figures and the activity only');
+  app.state.callers=[];app.state.latency=null;assert.ok(!texts(app.analyticsPanel(null)).join(' ').includes('Sites appelants'),'nothing configured, nothing measured: no block');
   app.state.latency={samples:1,sites:[{name:'local',n:1,fallbacks:0,caller_ms:{n:1,median:1500,p95:1500,max:1500}}],console:{}};
-  assert.ok(texts(app.callPane(app.consoleModel())).join(' ').includes('passerelle'),'the built-in caller is measured too');
+  assert.ok(texts(app.analyticsPanel(null)).join(' ').includes('passerelle'),'the built-in caller is measured too');
   // Restored calls from an older snapshot get an empty latency log instead of crashing the copilot.
   const c=app.createCall(true,{index:0,auto:true,background:true});delete c.latency;app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
   assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('Aucune mesure pour l’instant.'));
@@ -636,8 +638,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   card.ti=2;card.phase='gap';card.alerted=true;card.lastAnalysis={signals:[]};card.score=40;
   card.lastCaller={location:'lyon',requested:'lyon',fallback:false,caller_ms:1655,network_ms:42,llm_ms:900,tts_ms:700,at:Date.now()};card.latency=[{caller_ms:1655},{caller_ms:1800},{stt_ms:300}];
   row.ti=2;row.phase='gap';row.lastCaller={location:'local',requested:'montreal',fallback:true,caller_ms:2100,llm_ms:900,tts_ms:1200,at:Date.now()};
-  const list=app.callList(app.consoleModel()),shown=texts(list).join(' ').replace(/\u202f/g,' '),json=JSON.stringify(list).replace(/\u202f/g,' ');
-  assert.ok(shown.includes('lyon · appelant 1 655 ms'),'collapsed card shows site and last round trip: '+shown);
+  let list=app.callList(app.consoleModel()),shown=texts(list).join(' ').replace(/\u202f/g,' ');
+  assert.ok(!shown.includes('lyon · appelant 1 655 ms'),'a collapsed card keeps the figures out of the way: '+shown);
+  app.state.more={['card:'+card.id]:true};list=app.callList(app.consoleModel());shown=texts(list).join(' ').replace(/\u202f/g,' ');const json=JSON.stringify(list).replace(/\u202f/g,' ');
+  assert.ok(shown.includes('lyon · appelant 1 655 ms'),'the open card shows the site and the last round trip: '+shown);
   assert.ok(shown.includes('passerelle · appelant 2 100 ms')&&json.includes('oc-latency oc-site-warn'),'a fallback row is marked');
   assert.ok(json.includes('médiane 1 800 ms')&&json.includes('dont réseau 42 ms')&&!json.includes('tours'),'tooltip carries the median and the network share');
   assert.equal(app.callLatency(fresh),null,'no measurement yet: nothing shown');assert.equal(app.callLatency(app.createCall(false)),null,'manual tests have no simulated caller');
@@ -675,7 +679,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const s=c.latency.at(-1);
   assert.equal(s.handler,'operator');assert.equal(s.operator_ms,4200,'reaction measured from the caller’s last words to the answer');
   assert.equal(s.op_tts_ms,640);assert.equal(s.op_stt_ms,null,'typed, not spoken');assert.ok(s.caller_ms>=0,'the simulated caller’s answer is still timed');assert.equal(s.analyze_ms>=0,true,'the AI suggestion is timed');
-  app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};app.state.more={latency:true};
+  app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};app.state.more={details:true,latency:true};
   const shown=texts(app.copilot(app.consoleModel())).join(' ').replace(/ /g,' ');
   assert.ok(/Vous 4 \d{3} ms/.test(shown)&&shown.includes('l’opérateur (prise en charge)')&&/réaction 4 \d{3} ms · voix 640 ms/.test(shown),shown);
   assert.ok(texts(app.callList(app.consoleModel())).join(' ').replace(/ /g,' ').includes(' · vous 4 '),'the card names the operator’s reaction');
@@ -686,7 +690,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   // The gateway aggregates the two handlers apart; the board and Analytique show the operator’s reaction.
   app.state.latency={samples:5,sites:[],console:{},handlers:{ai:{n:3},operator:{n:2,operator_ms:{n:2,median:4000,p95:4200},op_tts_ms:{n:2,median:650,p95:700}}},phone:{n:1,phone_ms:{n:1,median:2300,p95:2300}}};
   app.state.view='floor';app.state.selId=null;app.state.callers=[{name:'lyon',ready:true}];
-  const board=texts(app.callPane(app.consoleModel())).join(' ').replace(/ /g,' ');
+  const board=texts(app.analyticsPanel(null)).join(' ').replace(/ /g,' ');
   assert.ok(board.includes('Opérateur (prise en charge, médianes) : réaction 4 000 ms · voix 650 ms')&&board.includes('Téléphone (ligne mobile, médiane) : aller-retour 2 300 ms'),board);
   app.state.analytics=true;const bar=texts(app.controls()).join(' ').replace(/ /g,' ');assert.ok(bar.includes('Opérateur · réaction 4 000 ms')&&bar.includes('Téléphone · aller-retour 2 300 ms'),bar);
 }
@@ -745,7 +749,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.refreshHealth();assert.ok(!app.state.health.includes('désactivé'));
   delete context.fetch;
 }
-// Tool calls: the AI's proposals land in « Actions · outils »; the lookup runs at once, a dispatch waits for the operator.
+// Tool calls: the AI's proposals land in « Actions »; the lookup runs at once, a dispatch waits for the operator.
 {
   const app=make(),c=app.createCall(false);app.append(c,'Appelant','Il y a le feu au huit cours Gambetta à Lyon, mon voisin est blessé','typed_test');
   const posts=[];
@@ -763,7 +767,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);assert.equal(c.actions.length,3,'the same proposals are not added twice');
   app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
   let shown=texts(app.copilot(app.consoleModel())).join(' ').replace(/ /g,' ');
-  for(const expected of ['Actions · outils · 3','Rechercher l\'adresse','→ 8 Cours Gambetta 69007 Lyon · confiance 93 %','fait · 240 ms','Déclencher les pompiers','à valider','Valider','Refuser'])assert.ok(shown.includes(expected),'copilot: '+expected+' in '+shown);
+  for(const expected of ['Actions · 3','Rechercher l\'adresse','→ 8 Cours Gambetta 69007 Lyon · confiance 93 %','fait · 240 ms','Déclencher les pompiers','à valider','Valider','Refuser','Autre décision…'])assert.ok(shown.includes(expected),'copilot: '+expected+' in '+shown);
   assert.ok(!shown.includes('simulation ·'),'nothing recorded yet');
   // The operator validates the fire brigade and declines the ambulance: recorded as a simulated decision, nothing transmitted.
   await app.approveTool(c,fire);assert.equal(fire.status,'done');assert.equal(fire.by,'opérateur');assert.ok(posts.at(-1).approve===true&&posts.at(-1).tool==='dispatch_fire');

@@ -54,6 +54,7 @@ nve-button[data-tone=ai]{--background:transparent;--border:1px solid rgba(118,18
 .oc-svc{display:inline-flex;align-items:center;gap:5px;}
 .oc-svc::before{content:"";width:7px;height:7px;border-radius:50%;flex:none;background:var(--color-gray-500);}
 .oc-svc-ok{color:var(--text-color-primary);} .oc-svc-ok::before{background:var(--color-green-500);} .oc-svc-warn::before{background:#FF7900;}
+.oc-details>.oc-block{padding:0;border:0;background:none;box-shadow:none;}
 .oc-switch{display:inline-flex;align-items:center;gap:8px;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;}
 .oc-switch-track{position:relative;width:30px;height:16px;border-radius:999px;background:var(--color-gray-500);transition:background .15s;flex:none;}
 .oc-switch-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.35);transition:transform .15s;}

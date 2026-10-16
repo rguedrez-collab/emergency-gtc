@@ -760,8 +760,13 @@ class Component extends DCLogic {
       a.status==='proposed'&&a.kind==='dispatch'&&!c.ended?h('div',{className:'oc-actions'},
         this.button('Valider',()=>this.approveTool(c,a),false,'orange-approve-'+a.id,'Enregistre la décision · simulation, aucune transmission aux secours',{emphasis:true}),
         this.button('Refuser',()=>this.declineTool(c,a),false,'orange-decline-'+a.id,undefined,{tone:'quiet'})):null));
-    return h('div',{key:'Actions',className:'oc-block'},h('span',{className:'oc-h'},'Actions · outils'+(acts.length?' · '+acts.length:'')),
-      ...(rows.length?rows:[h('span',{className:'oc-muted'},'L’IA propose ici ses actions : recherche de l’adresse, déclenchement des secours à valider.')]));
+    // The call's decisions end here too: the free-form decision while the call is live, filing the case once it ended.
+    const footer=c.ended?(c.reviewed?[h('span',{key:'closed',className:'oc-end'},'Dossier clos · '+fmt(c.reviewedAt))]
+        :[h('div',{key:'close',className:'oc-actions'},this.button('Clore le dossier',()=>this.closeCase(c),false,'orange-close-case',undefined,{emphasis:true})),
+          h('span',{key:'end',className:'oc-muted'},c.endLabel+' · relecture, puis clôture du dossier')])
+      :[h('div',{key:'other',className:'oc-actions'},this.button('Autre décision…',()=>this.dispatch(),false,'orange-decision','Enregistre une décision opérateur · démonstration, aucune transmission aux secours',{tone:'quiet'}))];
+    return h('div',{key:'Actions',className:'oc-block'},h('span',{className:'oc-h'},'Actions'+(acts.length?' · '+acts.length:'')),
+      ...(rows.length?rows:c.ended?[]:[h('span',{className:'oc-muted'},'Les actions proposées par l’IA apparaissent ici : adresse, secours à valider.')]),...footer);
   }
   dispatch() {
     const c=this.sel();if(!c||c.ended)return;
@@ -951,7 +956,8 @@ class Component extends DCLogic {
       names.length?figure('sites','Appelant · '+perSite.join(' · '),'Latence médiane de l’appelant simulé par site, derniers tours'):null,
       steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null,
       op?.operator_ms?figure('operator','Opérateur · réaction '+fmtMs(op.operator_ms.median),'Médiane du temps de réaction de l’opérateur après prise en charge (dernières paroles de l’appelant → réponse)'):null,
-      phone?figure('phone','Téléphone · aller-retour '+fmtMs(phone.median),'Médiane du délai mesuré par les téléphones des appelants réels (phrase envoyée → réponse reçue)'):null);
+      phone?figure('phone','Téléphone · aller-retour '+fmtMs(phone.median),'Médiane du délai mesuré par les téléphones des appelants réels (phrase envoyée → réponse reçue)'):null,
+      this.sitesBoard());
   }
   entry() {
     return h('div',{style:{minHeight:'calc(100vh - 180px)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'32px'}},
@@ -1048,9 +1054,9 @@ class Component extends DCLogic {
           h('button',{type:'button',className:'oc-cardtoggle','aria-expanded':String(open),'aria-label':open?'Réduire':'Détails',title:open?'Réduire':'Détails',
             onClick:e=>{stop(e);this.setState({more:{...this.state.more,[key]:!open}});}},open?'▴':'▾')),
         lead,
-        h('div',{className:'oc-cardline'},this.callLatency(d.c)||h('span',{className:'oc-status'}),h('span',{className:'oc-cardact',onClick:stop},primary)),
+        h('div',{className:'oc-cardline'},(open?this.callLatency(d.c):null)||h('span',{className:'oc-status'}),h('span',{className:'oc-cardact',onClick:stop},primary)),
         open?h('div',{className:'oc-cardmore'},
-          h('div',{className:'oc-quote'},this.latestWords(d.c)),
+          signal?null:h('div',{className:'oc-quote'},this.latestWords(d.c)),
           h('div',{className:'oc-muted'},d.id+' · '+d.c.phone+(/non renseigné/.test(d.place)?'':' · '+d.place)),
           d.c.liveCaller||d.c.takenOver?null:h('div',{className:'oc-actions',onClick:stop},
             this.button(d.selected?'En écoute':"Écouter d'abord",()=>this.open(d.id),false,undefined,undefined,{tone:'quiet',key:'listen'}),
@@ -1060,7 +1066,8 @@ class Component extends DCLogic {
         style:{animation:d.c.phase==='ringing'?'slidein .5s':'none'}},
       this.kui('Badge',{color:d.sevColor,kind:'outline'},d.sev),
       h('div',{className:'oc-rowtext'},h('span',{className:'oc-title'},d.category),
-        h('span',{className:'oc-muted oc-rowstatus'},this.voiceMark(d.c),d.c.ended?(d.c.reviewed?'Dossier clos':d.c.endLabel)+' · '+(d.c.takenOver?'vous':'IA')+' · '+d.id:d.id+' · '+d.status),
+        // A row names the call; the only state worth a word is the pick-up (« décroché en cours »), not the processing steps.
+        h('span',{className:'oc-muted oc-rowstatus'},this.voiceMark(d.c),d.c.ended?(d.c.reviewed?'Dossier clos':d.c.endLabel)+' · '+(d.c.takenOver?'vous':'IA')+' · '+d.id:d.id+(d.c.phase==='ringing'?' · '+d.status:'')),
         d.c.ended?null:this.callLatency(d.c)),
       h('span',{className:'oc-mono oc-right',title:d.c.ended?'Heure de clôture':'Durée de l’appel'},d.c.ended?fmt(d.c.reviewed?d.c.reviewedAt:d.c.endedAt):d.dur),
       d.progress!=null?h('span',{className:'oc-progress',style:{width:Math.round(d.progress*100)+'%'},title:'Avancement de l’appel'}):null);
@@ -1086,7 +1093,7 @@ class Component extends DCLogic {
     const d=this.decorate(c),mode=this.modeFor(c),taken=c.takenOver;
     const header=h('div',{className:'oc-head'},
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
-        h('span',{className:'oc-muted'},c.id+' · ',h('span',{className:'oc-mono',title:'Numéro fictif, deux chiffres masqués'},c.phone),' · '+c.sc.place),this.siteChip(c),h('span',{className:'oc-mono oc-right'},d.dur)),
+        h('span',{className:'oc-muted'},c.id+' · ',h('span',{className:'oc-mono',title:'Numéro fictif, deux chiffres masqués'},c.phone),' · '+c.sc.place),h('span',{className:'oc-mono oc-right'},d.dur)),
       // One line: the mode (with its help) on the left, every call-level action on the right — no separate control band.
       h('div',{className:'oc-mode'+(taken?' taken':'')},
         h('div',{className:'oc-modetext'},h('span',{className:'oc-modetitle'},h('span',{style:{color:mode.color}},mode.title),this.moreButton('mode','Aide')),
@@ -1122,7 +1129,6 @@ class Component extends DCLogic {
       h('div',{className:'oc-tiles'},tile('live',m.live,m.live>1?'appels en cours':'appel en cours','neutral'),tile('ai',m.ai.length,'pris en charge par l’IA','ai'),
         tile('alerts',alerts,'à traiter','alert'),tile('done',done,'clôturés','neutral')),
       h('div',{className:'oc-arrival'},h('div',{className:'oc-arrivalbar'},h('span',{style:{width:Math.round(frac*100)+'%'}})),h('span',{className:'oc-muted oc-arrivaltext'},m.arrival)),
-      this.sitesBoard(),
       h('div',{className:'oc-feedhead'},'Activité'),
       h('div',{className:'oc-feed'},...this.activityFeed(8).map((e,i)=>h('div',{key:i,className:'oc-event oc-event-'+e.kind},h('span',{className:'oc-mono'},e.at),h('span',{className:'oc-eventtext oc-ellipsis'},e.text)))),
       h('div',{className:'oc-boardhint oc-muted'},'Sélectionnez un appel pour l’écouter · Échap pour revenir ici.')));
@@ -1194,10 +1200,13 @@ class Component extends DCLogic {
     return h('div',{key:'lat',className:'oc-callmeta oc-latency'+(last.fallback?' oc-site-warn':''),title},this.siteName(last.location)+' · appelant '+fmtMs(last.caller_ms)+op);
   }
   // Latency of the last turn in the copilot: one line folded, the breakdown and the call's medians behind Détails.
+  latencyLine(c) {
+    const last=(c.latency||[]).at(-1),operator=last?.handler==='operator';
+    return last?[...(operator?[['Vous',last.operator_ms]]:[]),['Appelant',last.caller_ms],['STT',last.stt_ms],['Analyse',last.analyze_ms],['Voix IA',last.reply_tts_ms]].filter(([,v])=>v!=null).map(([k,v])=>k+' '+fmtMs(v)).join(' · ')||'Mesure en cours.':'Aucune mesure pour l’instant.';
+  }
   latencyBlock(c) {
     const rows=c.latency||[],last=rows.at(-1),operator=last?.handler==='operator';
-    const line=last?[...(operator?[['Vous',last.operator_ms]]:[]),['Appelant',last.caller_ms],['STT',last.stt_ms],['Analyse',last.analyze_ms],['Voix IA',last.reply_tts_ms]].filter(([,v])=>v!=null).map(([k,v])=>k+' '+fmtMs(v)).join(' · ')||'Mesure en cours.':'Aucune mesure pour l’instant.';
-    const body=[h('span',{key:'line',className:'oc-muted oc-ellipsis'},line)];
+    const body=[h('span',{key:'line',className:'oc-muted oc-ellipsis'},this.latencyLine(c))];
     if(this.more('latency')&&last){
       const median=(k,only)=>{const v=rows.filter(r=>!only||r.handler===only).map(r=>r[k]).filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;};
       const kv=[['Site',c.lineId?'ligne mobile (appelant réel)':this.siteName(last.location)+(last.fallback?' · repli (site demandé : '+this.siteName(last.requested)+')':'')],
@@ -1286,29 +1295,39 @@ class Component extends DCLogic {
     const block=(title,...body)=>h('div',{key:title,className:'oc-block'},h('span',{className:'oc-h'},title),...body);
     const fold=(title,key,...body)=>h('div',{key:title,className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},title),this.moreButton(key)),...body);
     if(!show)return h('div',{className:'oc-col oc-side'},
-      block('Assistance IA',h('span',{className:'oc-muted'},'Synthèse, éléments déclarés et signaux de l’appel sélectionné.')),
-      this.guardBlock(null),
+      block('Assistance IA',h('span',{className:'oc-muted'},'Sélectionnez un appel : synthèse, actions et éléments à vérifier.')),
       this.footnote());
-    const signals=c.lastAnalysis?.signals||[],tools=[...c.tools].reverse();
+    const signals=c.lastAnalysis?.signals||[];
+    // Three things at a glance — what the caller said (with the facts), what to do, what to check — and the rest folded.
     return h('div',{className:'oc-col oc-side'},
-      block('Prochaine étape',...(c.ended?(c.reviewed?[h('span',{key:'closed',className:'oc-end'},'Dossier clos · '+fmt(c.reviewedAt))]
-          :[this.button('Clore le dossier',()=>this.closeCase(c),false,'orange-close-case',undefined,{emphasis:true}),
-            h('span',{key:'end',className:'oc-muted'},c.endLabel+' · relecture du compte rendu, puis clôture du dossier')])
-        :[this.button('Enregistrer une décision',()=>this.dispatch(),false,'orange-decision','Environnement de démonstration : la décision est enregistrée localement, rien n’est transmis aux secours.',{tone:'danger'}),
-          h('span',{key:'hint',className:'oc-muted'},'Enregistrement local · sans transmission')])),
+      block('Synthèse',h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.'),
+        c.facts.length?h('div',{className:'oc-kv'},...c.facts.flatMap((f,i)=>[h('span',{key:'k'+i,className:'oc-muted'},f.k),h('span',{key:'v'+i},f.v)])):null),
       this.actionsBlock(c),
-      this.guardBlock(c),
-      block('Synthèse IA · à valider',h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.')),
-      signals.length?block('Signaux à vérifier',...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,
-      block('Éléments déclarés',c.facts.length?h('div',{className:'oc-kv'},...c.facts.flatMap((f,i)=>[h('span',{key:'k'+i,className:'oc-muted'},f.k),h('span',{key:'v'+i},f.v)]))
-        :h('span',{className:'oc-muted'},'En attente des premiers éléments.')),
-      // The processing log shows the real model calls; folded, it keeps the count and the latest call on one line.
-      fold('Journal des traitements · '+c.tools.length,'tools',this.more('tools')?h('div',{className:'oc-tools'},...tools.slice(0,8).map((t,i)=>h('div',{key:i,className:'oc-tool'},
+      signals.length?block('À vérifier',...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,
+      this.detailsBlock(c),
+      this.footnote());
+  }
+  // The processing log: the real model calls; folded, the count and the latest call on one line.
+  toolsBlock(c) {
+    const tools=[...c.tools].reverse();
+    return h('div',{key:'Journal',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Journal des traitements · '+c.tools.length),this.moreButton('tools')),
+      this.more('tools')?h('div',{className:'oc-tools'},...tools.slice(0,8).map((t,i)=>h('div',{key:i,className:'oc-tool'},
         h('span',{className:t.status==='running'?'oc-pulse':'',style:{color:t.status==='error'?OP:t.status==='cancelled'?SEC:BRAND}},({done:'✓',error:'!',cancelled:'×'})[t.status]||'◌'),
         h('span',{className:'oc-mono'},t.name),h('span',{className:'oc-muted oc-ellipsis'},t.args),h('span',{className:'oc-toolres'},t.status==='running'?'en cours…':t.result))))
-        :h('span',{className:'oc-muted oc-ellipsis'},tools[0]?tools[0].name+' · '+tools[0].args+' · '+(tools[0].status==='running'?'en cours…':tools[0].result):'Aucun traitement pour l’instant.')),
-      this.latencyBlock(c),
-      this.footnote());
+      :h('span',{className:'oc-muted oc-ellipsis'},this.toolsLine(c)));
+  }
+  toolsLine(c) {const t=c.tools.at(-1);return t?t.name+' · '+t.args+' · '+(t.status==='running'?'en cours…':t.result):'Aucun traitement pour l’instant.';}
+  // What the operator does not need at a glance — the guardrail's verdict, the last turn's latency, the processing log —
+  // folds into one block: a line each, the full blocks on « Détails ».
+  detailsBlock(c) {
+    const head=h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Détails'),this.moreButton('details'));
+    if(this.more('details'))return h('div',{key:'Détails',className:'oc-block oc-details'},head,this.guardBlock(c),this.latencyBlock(c),this.toolsBlock(c));
+    const g=this.state.guardrail||{},v=c.guardrail,lines=[];
+    if(v)lines.push(h('span',{key:'g',className:(v.kind==='blocked'?'oc-signal':'oc-muted')+' oc-ellipsis'},'Garde-fou · Dernier verdict : '+this.guardLabel(v)+(v.note?' · '+v.note:'')));
+    else if(g.configured)lines.push(h('span',{key:'g',className:'oc-muted oc-ellipsis'},'Garde-fou · '+(g.enabled===false?'désactivé par l’opérateur':'actif · sans verdict pour cet appel')));
+    lines.push(h('span',{key:'l',className:'oc-muted oc-ellipsis'},'Latence · dernier tour · ',this.siteChip(c),this.siteChip(c)?' · ':'',this.latencyLine(c)));
+    lines.push(h('span',{key:'t',className:'oc-muted oc-ellipsis'},'Journal des traitements · '+c.tools.length+' · '+this.toolsLine(c)));
+    return h('div',{key:'Détails',className:'oc-block'},head,...lines);
   }
   footnote() {
     return h('div',{key:'foot',className:'oc-foot'},h('span',null,this.more('note')?footnoteText(this.labels()):'Signal IA ≠ gravité clinique · validation humaine requise'),this.moreButton('note'));
