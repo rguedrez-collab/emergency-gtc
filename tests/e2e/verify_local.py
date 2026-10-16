@@ -159,6 +159,9 @@ def fake_request_model(url, payload=None, headers=None, timeout=120):
         return REAL_URLOPEN(url, payload, headers, timeout)
     if REALPROXY and url.startswith(os.environ.get("ORANGE_LLM_URL", "")[: -len("/v1/chat/completions")]):
         return REAL_URLOPEN(url, payload, headers, timeout)
+    if url.startswith(server.GEOCODER_URL):  # the address lookup tool: one plausible match
+        return json.dumps({"features": [{"properties": {"label": "12 Rue des Lilas 75020 Paris", "postcode": "75020", "city": "Paris", "score": 0.91},
+                                         "geometry": {"coordinates": [2.4, 48.86]}}]}).encode(), {}
     if url.endswith(("/v1/health/ready", "/v1/models")):
         return b"{}", {}
     if url == "http://127.0.0.1:8098/":

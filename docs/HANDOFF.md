@@ -135,6 +135,15 @@ dialogue quality can only be judged with the real models. The fake caller sites 
 (`lyon +40 ms`, `montreal +150 ms`); their silent WAV carries its text in a private RIFF chunk (`simulation.fake_wav`
 / `text_in_wav`) so the fake STT reads it back.
 
+## Tool calls
+
+- `propose_tools()` (rules on the caller's words + the model's valid `tools`), `run_tool()` behind `POST /api/tool`
+  (`lookup_address` → `GEOCODER_URL`, best effort; dispatch tools need `approve: true` and only return a simulated
+  decision). The console's `proposeTools()` dedupes per call, runs lookups at once, leaves dispatches « à valider »;
+  `approveTool()` records `simulated_dispatch` in the audit and a system line, `declineTool()` records `tool_declined`.
+  Copilot block « Actions · outils » (`.oc-action`, buttons `#orange-approve-A<n>` / `#orange-decline-A<n>`); the board's
+  feed shows validated dispatches and recognised addresses. `c.actions` persists (snapshot, export, `calls.actions`).
+
 ## Kubernetes
 
 - `deploy/k8s/base` (kustomize): console Deployment (gateway + `backend/gcore_bridge.py` via `backend/entrypoint.sh`),

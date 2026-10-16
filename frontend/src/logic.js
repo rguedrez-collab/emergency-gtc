@@ -257,7 +257,7 @@ class Component extends DCLogic {
     c.voice=sc.voice||'fr_female';c.voiceStyle=sc.voiceStyle||'urgent';c.targetDurationMs=sc.durationMs||150000;
     c.callerFacts=sc.facts||null;
     // The site whose service plays this caller (voice included), and the per-turn latency log of the call.
-    c.location=scenario?this.pickLocation():'local';c.latency=[];c.lastCaller=null;
+    c.location=scenario?this.pickLocation():'local';c.latency=[];c.lastCaller=null;c.actions=[];
     if(line){c.lineId=line.id;c.lineName=line.name||'';c.lineSeen=0;c.location='ligne';}
     // Two voice presets only: a small per-sample pitch/tempo offset keeps callers from sounding identical.
     c.voiceRate=scenario&&sc.id?0.96+((sc.family*7+sc.id.charCodeAt(sc.id.length-1))%9)/100:1;
@@ -554,6 +554,7 @@ class Component extends DCLogic {
     if(c.opSample){Object.assign(sample,c.opSample);c.opSample=null;}
     sample.handler=sample.handler||(c.takenOver?'operator':'ai');
     c.summary=d.summary;c.facts=mergeFacts(c.facts,d.facts);c.suggestion=d.reply;c.score=d.signals.length?85:40;
+    this.proposeTools(c,d.tools);
     const fresh=d.signals.filter(q=>!c.seenSignals.includes(q));c.seenSignals.push(...fresh);
     c.why=d.signals.length?'Signal à vérifier : « '+(fresh[0]||d.signals[0])+' »':'Évaluation humaine requise ; absence de signal ≠ absence de danger.';
     // Every call requires human review; the model cannot clear or close it.
@@ -694,6 +695,48 @@ class Component extends DCLogic {
     c.audit.push({action:'case_closed',actor:'demo_operator',at:new Date().toISOString(),external_action:false});
     if(this.state.view==='call'&&this.state.selId===c.id)this.goFloor();else this.touch();
   }
+  // ---------------- Tool calls proposed by the AI (copilot « Actions · outils ») ----------------
+  // The address lookup runs at once (read-only, the national address base). Dispatch tools wait for the operator's
+  // validation and are then recorded as simulated decisions — nothing is transmitted, the spoken reply never says otherwise.
+  proposeTools(c,tools) {
+    if(!Array.isArray(tools))return;c.actions=c.actions||[];
+    for(const t of tools){
+      const key=t.tool+(t.args?.address?' · '+t.args.address:'');
+      if(c.actions.some(a=>a.key===key||(a.kind==='dispatch'&&a.tool===t.tool)))continue;  // proposed once; a declined dispatch is not re-proposed
+      const a={id:'A'+(++this.actionSeq||(this.actionSeq=1)),key,tool:t.tool,label:t.label,kind:t.kind,args:t.args||{},reason:t.reason||'',status:'proposed',by:'ia',at:this.state.shift,turn:c.ti,result:null,note:null,ms:null};
+      c.actions.push(a);
+      if(a.kind==='lookup')this.runTool(c,a);
+    }
+    this.touch();
+  }
+  async runTool(c,a,approve=false) {
+    a.status='running';this.touch();const t0=performance.now();
+    try{
+      const r=await this.api(c,'/api/tool',{call:c.id,turn:c.ti,tool:a.tool,args:a.args,approve});const d=await r.json();
+      a.status=d.status==='error'?'error':'done';a.result=d.result??null;a.note=d.note||d.error||null;a.simulated=!!d.simulated;a.ms=d.ms??Math.round(performance.now()-t0);a.doneAt=this.state.shift;
+      if(a.kind==='dispatch'&&a.status==='done'){
+        c.audit.push({action:'simulated_dispatch',tool:a.tool,actor:'demo_operator',at:new Date().toISOString(),external_action:false});
+        this.append(c,'Système',a.label+' · décision enregistrée (simulation, aucune transmission aux secours).','simulated_dispatch');
+      }
+    }catch(e){if(e.name==='AbortError')return;a.status='error';a.note=e.message;}
+    this.touch();
+  }
+  approveTool(c,a) {if(a.status!=='proposed'||c.ended)return;a.by='opérateur';return this.runTool(c,a,true);}
+  declineTool(c,a) {if(a.status!=='proposed')return;a.status='declined';a.by='opérateur';a.doneAt=this.state.shift;c.audit.push({action:'tool_declined',tool:a.tool,actor:'demo_operator',at:new Date().toISOString()});this.touch();}
+  actionsBlock(c) {
+    const acts=c.actions||[],words={proposed:'à valider',running:'en cours…',done:'fait',declined:'refusé',error:'échec'};
+    const rows=acts.slice().reverse().slice(0,8).map(a=>h('div',{key:a.id,className:'oc-action oc-action-'+a.status},
+      h('div',{className:'oc-actionhead'},h('span',{className:'oc-actionname'},a.label),
+        h('span',{className:'oc-actionstatus'},(a.kind==='dispatch'&&a.status==='done'?'simulation · ':'')+words[a.status]+(a.ms!=null&&a.status==='done'?' · '+fmtMs(a.ms):''))),
+      a.args?.address?h('span',{className:'oc-muted oc-ellipsis'},'« '+a.args.address+' »'):a.reason?h('span',{className:'oc-muted oc-ellipsis'},a.reason):null,
+      a.result?.label?h('span',{className:'oc-actionresult'},'→ '+a.result.label+(a.result.score!=null?' · confiance '+Math.round(a.result.score*100)+' %':'')):
+        a.result?.note?h('span',{className:'oc-muted'},a.result.note):a.note?h('span',{className:'oc-muted'},a.note):null,
+      a.status==='proposed'&&a.kind==='dispatch'&&!c.ended?h('div',{className:'oc-actions'},
+        this.button('Valider',()=>this.approveTool(c,a),false,'orange-approve-'+a.id,'Enregistre la décision · simulation, aucune transmission aux secours',{emphasis:true}),
+        this.button('Refuser',()=>this.declineTool(c,a),false,'orange-decline-'+a.id,undefined,{tone:'quiet'})):null));
+    return h('div',{key:'Actions',className:'oc-block'},h('span',{className:'oc-h'},'Actions · outils'+(acts.length?' · '+acts.length:'')),
+      ...(rows.length?rows:[h('span',{className:'oc-muted'},'L’IA propose ici ses actions : recherche de l’adresse, déclenchement des secours à valider.')]));
+  }
   dispatch() {
     const c=this.sel();if(!c||c.ended)return;
     if(!window.confirm('Enregistrer la décision opérateur ? Environnement de démonstration : aucune transmission aux secours.'))return;
@@ -743,6 +786,7 @@ class Component extends DCLogic {
       const now=Date.now();
       const calls=s.calls.map(c=>{const call={...c,controllers:new Set(),prefetch:null,queued:null,busy:false,t:now-c.started,latency:c.latency||[],
           phone:c.phone&&c.phone.startsWith('+')?c.phone:fakePhone(c.sampleId||c.id),  // snapshots from before the fictional numbers
+          actions:(c.actions||[]).map(a=>a.status==='running'?{...a,status:'error',note:'interrompu au rechargement'}:a),
           phase:c.ended?'ended':['caller','think','tts','compose'].includes(c.phase)?'gap':c.phase};
         call.tools.forEach(t=>{if(t.status==='running'){t.status='cancelled';t.result='interrompu au rechargement';}});
         // A live microphone capture does not survive a reload.
@@ -1065,6 +1109,10 @@ class Component extends DCLogic {
       if(c.takenOver&&c.takenAt!=null)events.push({t:c.takenAt,kind:'takeover',text:`${c.id} · prise en charge opérateur`});
       if(c.ended&&c.endedAt!=null)events.push({t:c.endedAt,kind:'end',text:`${c.id} · ${c.endLabel}`});
       if(c.reviewed&&c.reviewedAt!=null)events.push({t:c.reviewedAt,kind:'closed',text:`${c.id} · dossier clos`});
+      for(const a of c.actions||[]){
+        if(a.kind==='dispatch'&&a.status==='done'&&a.doneAt!=null)events.push({t:a.doneAt,kind:'takeover',text:`${c.id} · ${a.label} · simulation`});
+        if(a.kind==='lookup'&&a.status==='done'&&a.result?.label&&a.doneAt!=null)events.push({t:a.doneAt,kind:'end',text:`${c.id} · adresse reconnue : ${a.result.label}`});
+      }
     }
     return events.filter(e=>Number.isFinite(e.t)).sort((a,b)=>b.t-a.t).slice(0,n).map(e=>({...e,at:fmt(Math.max(0,e.t))}));
   }
@@ -1220,6 +1268,7 @@ class Component extends DCLogic {
             h('span',{key:'end',className:'oc-muted'},c.endLabel+' · relecture du compte rendu, puis clôture du dossier')])
         :[this.button('Enregistrer une décision',()=>this.dispatch(),false,'orange-decision','Environnement de démonstration : la décision est enregistrée localement, rien n’est transmis aux secours.',{tone:'danger'}),
           h('span',{key:'hint',className:'oc-muted'},'Enregistrement local · sans transmission')])),
+      this.actionsBlock(c),
       this.guardBlock(c),
       block('Synthèse IA · à valider',h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.')),
       signals.length?block('Signaux à vérifier',...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,

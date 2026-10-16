@@ -77,6 +77,20 @@ being sent or spoken), `op_tts_ms` (their voice synthesis) and `op_stt_ms` (thei
 aggregates (`GET /api/latency` → `handlers`, `tools/db_report.py --latency`) keep the two apart; the console shows the
 operator's reaction on the card (« vous »), in the copilot and on the overview.
 
+## Tool calls (copilot « Actions · outils »)
+
+The analysis returns the tool calls the AI proposes for the call, listed on the right with their state:
+
+| Tool | What it does |
+| --- | --- |
+| `lookup_address` | Runs at once: the caller's quoted address is looked up in the French national address base (`ORANGE_GEOCODER_URL`, default `api-adresse.data.gouv.fr`; `ORANGE_GEOCODER=0` turns it into a no-op). The best match and its confidence are shown. |
+| `dispatch_ambulance`, `dispatch_fire`, `dispatch_police` | Proposals only. The operator validates or declines; a validated one is recorded as a simulated decision (audit entry, system line) — nothing is transmitted to any service, and the spoken reply never claims otherwise. |
+
+Proposals come from rules on the caller's words (an address, « blessé », « ne respire pas », « feu », « arme »…) and from
+the model's own `tools` list, validated against the catalog; each tool is proposed once per call, a declined dispatch is
+not re-proposed. `POST /api/tool` runs a tool (`approve: true` required for a dispatch). Actions persist with the call
+(`calls.actions`) and in the export.
+
 ## A real caller from a phone
 
 A person can call the console from a phone: open the console's address followed by `/appel` on the mobile (same

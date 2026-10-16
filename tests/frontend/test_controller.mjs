@@ -727,4 +727,30 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.ok(!('lineQueue' in app.snapshot().calls[0])&&!('opSample' in app.snapshot().calls[0]),'transient line state stays out of the snapshot');
   delete context.fetch;
 }
-console.log('PASS: 53 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+// Tool calls: the AI's proposals land in « Actions · outils »; the lookup runs at once, a dispatch waits for the operator.
+{
+  const app=make(),c=app.createCall(false);app.append(c,'Appelant','Il y a le feu au huit cours Gambetta à Lyon, mon voisin est blessé','typed_test');
+  const posts=[];
+  app.api=async(call,path,payload)=>{if(path==='/api/tool'){posts.push(payload);
+      return {json:async()=>payload.tool==='lookup_address'?{tool:'lookup_address',status:'done',ms:240,result:{label:'8 Cours Gambetta 69007 Lyon',score:0.93}}:{tool:payload.tool,status:'done',simulated:true,ms:3,result:{service:'Pompiers',note:'Décision enregistrée · simulation, aucune transmission aux secours'}}};}
+    return {json:async()=>({...result,tools:[{tool:'lookup_address',label:"Rechercher l'adresse",kind:'lookup',args:{address:'huit cours Gambetta à Lyon'},reason:'adresse prononcée'},
+      {tool:'dispatch_fire',label:'Déclencher les pompiers',kind:'dispatch',args:{},reason:'« le feu »'},{tool:'dispatch_ambulance',label:'Déclencher le SAMU · ambulance',kind:'dispatch',args:{},reason:'« blessé »'}]})};};
+  app.tts=async()=>({});app.play=async()=>{};
+  await app.analyzeCall(c);await tick(10);
+  assert.equal(c.actions.length,3);const lookup=c.actions.find(a=>a.tool==='lookup_address'),fire=c.actions.find(a=>a.tool==='dispatch_fire');
+  assert.equal(lookup.status,'done');assert.equal(lookup.result.label,'8 Cours Gambetta 69007 Lyon');assert.equal(lookup.ms,240);assert.equal(fire.status,'proposed');
+  assert.deepEqual(posts.map(p=>p.tool),['lookup_address'],'only the read-only lookup ran by itself');
+  await app.analyzeCall(c);await tick(10);assert.equal(c.actions.length,3,'the same proposals are not added twice');
+  app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
+  let shown=texts(app.copilot(app.consoleModel())).join(' ').replace(/ /g,' ');
+  for(const expected of ['Actions · outils · 3','Rechercher l\'adresse','→ 8 Cours Gambetta 69007 Lyon · confiance 93 %','fait · 240 ms','Déclencher les pompiers','à valider','Valider','Refuser'])assert.ok(shown.includes(expected),'copilot: '+expected+' in '+shown);
+  assert.ok(!shown.includes('simulation ·'),'nothing recorded yet');
+  // The operator validates the fire brigade and declines the ambulance: recorded as a simulated decision, nothing transmitted.
+  await app.approveTool(c,fire);assert.equal(fire.status,'done');assert.equal(fire.by,'opérateur');assert.ok(posts.at(-1).approve===true&&posts.at(-1).tool==='dispatch_fire');
+  assert.ok(c.audit.some(e=>e.action==='simulated_dispatch'&&e.tool==='dispatch_fire'&&e.external_action===false));assert.match(c.tr.at(-1).text,/pompiers · décision enregistrée \(simulation/);
+  const amb=c.actions.find(a=>a.tool==='dispatch_ambulance');app.declineTool(c,amb);assert.equal(amb.status,'declined');assert.ok(c.audit.some(e=>e.action==='tool_declined'));
+  shown=texts(app.copilot(app.consoleModel())).join(' ');assert.ok(shown.includes('simulation · fait')&&shown.includes('refusé'),shown);
+  assert.ok(app.activityFeed(10).some(e=>e.text.includes('Déclencher les pompiers · simulation'))&&app.activityFeed(10).some(e=>e.text.includes('adresse reconnue : 8 Cours Gambetta')));
+  assert.ok(!('actions' in app.snapshot().calls[0])===false&&app.snapshot().calls[0].actions.length===3,'actions persist with the call');
+}
+console.log('PASS: 54 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

@@ -289,6 +289,7 @@ CREATE INDEX IF NOT EXISTS latency_location ON latency (location, at);
 """
 # Columns added after the first release; an existing database gets them on open (CREATE TABLE IF NOT EXISTS never alters).
 LATENCY_ADDED_COLUMNS = (("handler", "TEXT"), ("operator_ms", "INTEGER"), ("op_tts_ms", "INTEGER"), ("op_stt_ms", "INTEGER"), ("phone_ms", "INTEGER"))
+CALLS_ADDED_COLUMNS = (("actions", "TEXT"),)  # the AI's tool calls and the operator's decisions on them
 _written = {}  # (base, call id) -> fingerprint of the last version written, so unchanged calls are not rewritten every 2 s
 # Per-turn latency samples posted by the browser (POST /api/latency): where the caller's line came from and how long
 # each step took, so sites can be compared from the console (GET /api/latency) or from tools/db_report.py --latency.
@@ -308,10 +309,11 @@ def db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    present = {row[1] for row in conn.execute("PRAGMA table_info(latency)")}
-    for column, kind in LATENCY_ADDED_COLUMNS:
-        if column not in present:
-            conn.execute(f"ALTER TABLE latency ADD COLUMN {column} {kind}")
+    for table, added in (("latency", LATENCY_ADDED_COLUMNS), ("calls", CALLS_ADDED_COLUMNS)):
+        present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, kind in added:
+            if column not in present:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
     return conn
 
 
@@ -369,19 +371,19 @@ def save_state(snapshot):
                 started = c.get("started")
                 conn.execute(
                     "INSERT INTO calls (base, id, vacation_id, n, sample_id, category, place, auto, live_caller, taken_over, started_at, ended, "
-                    "ended_at, end_label, reviewed, reviewed_at, phase, score, summary, facts, signals, guardrail, audit, turns, revision, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ended_at, end_label, reviewed, reviewed_at, phase, score, summary, facts, signals, guardrail, audit, turns, revision, updated_at, actions) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(base, id) DO UPDATE SET vacation_id = excluded.vacation_id, category = excluded.category, place = excluded.place, "
                     "taken_over = excluded.taken_over, ended = excluded.ended, ended_at = excluded.ended_at, end_label = excluded.end_label, "
                     "reviewed = excluded.reviewed, reviewed_at = excluded.reviewed_at, phase = excluded.phase, score = excluded.score, "
                     "summary = excluded.summary, facts = excluded.facts, signals = excluded.signals, guardrail = excluded.guardrail, "
-                    "audit = excluded.audit, turns = excluded.turns, revision = excluded.revision, updated_at = excluded.updated_at",
+                    "audit = excluded.audit, turns = excluded.turns, revision = excluded.revision, updated_at = excluded.updated_at, actions = excluded.actions",
                     (base, c["id"], c.get("sessionId"), c.get("n"), c.get("sampleId"), sc.get("cat"), sc.get("place"), int(bool(c.get("auto"))),
                      int(bool(c.get("liveCaller"))), int(bool(c.get("takenOver"))), started / 1000 if isinstance(started, (int, float)) else None,
                      int(bool(c.get("ended"))), _epoch(base, c.get("endedAt")), c.get("endLabel"), int(bool(c.get("reviewed"))),
                      _epoch(base, c.get("reviewedAt")), c.get("phase"), c.get("score"), c.get("summary"), _json(c.get("facts")),
                      _json((c.get("lastAnalysis") or {}).get("signals") if isinstance(c.get("lastAnalysis"), dict) else None),
-                     _json(c.get("guardrail")), _json(c.get("audit")), len(turns), c.get("revision"), now))
+                     _json(c.get("guardrail")), _json(c.get("audit")), len(turns), c.get("revision"), now, _json(c.get("actions"))))
                 conn.execute("DELETE FROM turns WHERE base = ? AND call_id = ? AND idx >= ?", (base, c["id"], len(turns)))
                 conn.executemany(
                     "INSERT INTO turns (base, call_id, idx, who, text, ts, source, said) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
@@ -575,7 +577,13 @@ Réponds uniquement en JSON avec cette structure exacte :
  "facts":[{"field":"Incident|Lieu|Personnes|Rappel|Danger", "quote":"extrait EXACT des propos de l'appelant"}],
  "signals":["extrait EXACT justifiant une revue humaine prioritaire, sans diagnostic"],
  "question":"location|state|danger|people|incident|access|callback|safety|clarify|handoff",
- "reply":"ta prochaine réplique naturelle au téléphone, 1 à 3 phrases courtes"}
+ "reply":"ta prochaine réplique naturelle au téléphone, 1 à 3 phrases courtes",
+ "tools":[{"tool":"lookup_address|dispatch_ambulance|dispatch_fire|dispatch_police","args":{"address":"citation exacte"},"reason":"motif court"}]}
+Outils : propose lookup_address dès qu'une adresse est prononcée (args.address = la
+citation exacte), dispatch_ambulance pour une personne blessée, inconsciente ou qui
+respire mal, dispatch_fire pour feu, fumée, gaz, explosion, inondation ou personne
+coincée, dispatch_police pour violence, menace, arme ou accident de la route. Ce sont
+des propositions soumises à l'opérateur : ne les annonce jamais à l'appelant.
 Maximum 6 faits et 3 signaux. Aucun signal signifie information insuffisante,
 jamais absence de danger. Signale une absence de respiration, une personne bloquée,
 une menace ou une incertitude explicite par une citation, pas par un score.
@@ -960,6 +968,97 @@ def caller_quote(quote, sources):
     return None
 
 
+# --- Tool calls: what the AI proposes to do about the call, listed for the operator in the copilot. The address lookup
+# is a real read-only tool (the French national address base, ORANGE_GEOCODER_URL; ORANGE_GEOCODER=0 turns it into a
+# no-op). The dispatch tools are proposals only: the operator validates them and the console records a simulated
+# decision — nothing is ever transmitted to emergency services, and the spoken reply never claims otherwise.
+TOOLS = {
+    "lookup_address": {"label": "Rechercher l'adresse", "kind": "lookup", "service": "Base Adresse Nationale"},
+    "dispatch_ambulance": {"label": "Déclencher le SAMU · ambulance", "kind": "dispatch", "service": "SAMU"},
+    "dispatch_fire": {"label": "Déclencher les pompiers", "kind": "dispatch", "service": "Pompiers"},
+    "dispatch_police": {"label": "Déclencher la police", "kind": "dispatch", "service": "Police"},
+}
+TOOL_RULES = {  # the caller's words that make a dispatch proposal obvious, whatever the model says
+    "dispatch_ambulance": r"bless|saign|\bsang\b|inconscien|ne respire|respire (?:pas|plus|mal|difficilement)|malaise|chute|tomb|douleur|brûl|étouffe|convuls|évanoui|ne répond (?:pas|plus)|ne bouge (?:pas|plus)|écras|noy|intoxi|\bsouffle\b",
+    "dispatch_fire": r"\b(feu|flammes?|fumée|incendie|gaz|explosion|inondation|effondr\w*|coincée?|bloquée?)\b",
+    "dispatch_police": r"\b(arme|couteau|pistolet|fusil|menace|menaçant|violen\w*|agress\w*|frappe|frappé|cambriol\w*|voleur|bagarre|accident de la route|percut\w*|voitures?|scooter|camion|délit de fuite)\b",
+}
+GEOCODER_URL = os.environ.get("ORANGE_GEOCODER_URL", "https://api-adresse.data.gouv.fr/search/")
+GEOCODER_ENABLED = os.environ.get("ORANGE_GEOCODER", "1") not in ("0", "false", "no")
+
+
+def propose_tools(messages, facts, raw_tools):
+    """Tool calls for this turn: the rules on the caller's words, then the model's valid proposals; one per tool."""
+    sources = [m["text"] for m in messages if m["role"] == "caller"]
+    callers = " ".join(sources)
+    proposals, seen = [], set()
+
+    def add(tool, args, reason):
+        if tool in TOOLS and tool not in seen:
+            seen.add(tool)
+            proposals.append({"tool": tool, "label": TOOLS[tool]["label"], "kind": TOOLS[tool]["kind"], "args": args, "reason": reason[:160]})
+    place = next((f["v"] for f in facts if f.get("k") == "Lieu"), None)
+    if place:
+        add("lookup_address", {"address": place}, "adresse prononcée par l'appelant")
+    for tool, pattern in TOOL_RULES.items():
+        hit = re.search(pattern, callers, re.I)
+        if hit:
+            add(tool, {}, "« " + callers[max(0, hit.start() - 30):hit.end() + 30].strip() + " »")
+    for item in raw_tools if isinstance(raw_tools, list) else []:
+        if not isinstance(item, dict) or item.get("tool") not in TOOLS:
+            continue
+        args = item.get("args") if isinstance(item.get("args"), dict) else {}
+        if item["tool"] == "lookup_address":
+            quote = caller_quote(args.get("address"), sources) if isinstance(args.get("address"), str) else None
+            if not quote:
+                continue  # an address the caller did not say is not looked up
+            args = {"address": quote}
+        else:
+            args = {}
+        add(item["tool"], args, str(item.get("reason") or "proposé par le modèle")[:160])
+    return proposals
+
+
+def lookup_address(address):
+    """The national address base's best match, or a note; the geocoder can be switched off (then nothing leaves)."""
+    if not GEOCODER_ENABLED:
+        return {"result": None, "note": "géocodage désactivé", "simulated": True}
+    from urllib.parse import quote as urlquote
+    data, _ = request_model(GEOCODER_URL + "?q=" + urlquote(address[:200]) + "&limit=1", None, {"Accept": "application/json"}, timeout=6)
+    features = json.loads(data).get("features") or []
+    if not features:
+        return {"result": None, "note": "aucune correspondance dans la base adresse"}
+    props, geometry = features[0].get("properties") or {}, features[0].get("geometry") or {}
+    coords = geometry.get("coordinates") or [None, None]
+    return {"result": {"label": props.get("label"), "postcode": props.get("postcode"), "city": props.get("city"), "score": props.get("score"),
+                       "lon": coords[0], "lat": coords[1], "source": TOOLS["lookup_address"]["service"]}}
+
+
+def run_tool(payload):
+    """POST /api/tool: the lookup runs; a dispatch needs the operator's approval and is recorded as a simulation."""
+    tool = payload.get("tool")
+    if tool not in TOOLS:
+        raise ValueError("unknown tool")
+    call = payload.get("call")
+    if call is not None and not (isinstance(call, str) and CALL_ID.match(call)):
+        raise ValueError("invalid call id")
+    start = time.monotonic()
+    if tool == "lookup_address":
+        address = (payload.get("args") or {}).get("address") if isinstance(payload.get("args"), dict) else None
+        if not isinstance(address, str) or not 3 <= len(address.strip()) <= 200:
+            raise ValueError("address required")
+        try:
+            outcome = lookup_address(address.strip())
+            status = "done"
+        except Exception as exc:  # the lookup is best effort; the console shows the failure, the call goes on
+            outcome, status = {"result": None, "error": type(exc).__name__}, "error"
+    else:
+        if payload.get("approve") is not True:
+            raise ValueError("operator validation required for a dispatch tool")
+        outcome, status = {"result": {"service": TOOLS[tool]["service"], "note": "Décision enregistrée · simulation, aucune transmission aux secours"}, "simulated": True}, "done"
+    return {"tool": tool, "label": TOOLS[tool]["label"], "kind": TOOLS[tool]["kind"], "status": status, "ms": round((time.monotonic() - start) * 1000), **outcome}
+
+
 def validate_analysis(raw, messages):
     if not isinstance(raw, dict) or not isinstance(raw.get("summary"), str) or not raw["summary"].strip():
         raise ValueError("invalid model summary")
@@ -1052,6 +1151,7 @@ def analyze(payload):
     if verdicts and f5_config()["scan_response"]:
         reply, verdict = guard_text(reply, "response")
         verdicts.append(verdict)
+    result["tools"] = propose_tools(messages, result["facts"], raw.get("tools"))
     result.update(reply=reply, reply_source=reply_source, reply_retries=retries)
     result.update(ms=round((time.monotonic() - start) * 1000), usage=meta["usage"],
                   guardrail=f5_report(verdicts) if verdicts else meta["guardrail"])
@@ -1295,6 +1395,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def tool_route(self):
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
+            self.reply(403, {"error": "cross-origin requests are disabled"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 10_000 or self.headers.get("Transfer-Encoding"):
+                self.reply(413 if length > 10_000 else 400, {"error": "invalid request size"})
+                return
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("JSON object required")
+            self.reply(200, run_tool(payload))
+        except (ValueError, TypeError) as exc:
+            self.reply(400, {"error": str(exc)[:240]})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def session_route(self, path):
         origin = self.headers.get("Origin")
         if origin and urlsplit(origin).netloc != self.headers.get("Host"):
@@ -1333,6 +1452,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/line" or path.startswith("/api/line/"):
             self.line_post_route(path)
+            return
+        if path == "/api/tool":
+            self.tool_route()
             return
         if path not in ROUTE_GATES:
             self.reply(404, {"error": "not found; no dispatch API is implemented"})

@@ -789,6 +789,53 @@ class GatewayTests(unittest.TestCase):
                 status, body = self.request("/appel")
                 self.assertEqual(status, 200); self.assertIn("Maintenir pour parler".encode(), body)
 
+    def test_tool_calls_are_proposed_and_run(self):
+        # Rules on the caller's words propose the obvious tools; the model may add valid ones; invented addresses are dropped.
+        messages = [{"role": "caller", "text": "Il y a le feu au huit cours Gambetta à Lyon, mon voisin est blessé et ne respire plus."},
+                    {"role": "assistant", "text": "Où êtes-vous ?"}, {"role": "caller", "text": "Il a un couteau."}]
+        facts = [{"k": "Lieu", "v": "huit cours Gambetta à Lyon", "source": "caller_quote"}]
+        tools = server.propose_tools(messages, facts, [{"tool": "dispatch_police", "reason": "arme"}, {"tool": "lookup_address", "args": {"address": "1 rue inventée"}}, {"tool": "nuke"}])
+        self.assertEqual([t["tool"] for t in tools], ["lookup_address", "dispatch_ambulance", "dispatch_fire", "dispatch_police"])
+        self.assertEqual(tools[0]["args"], {"address": "huit cours Gambetta à Lyon"}); self.assertEqual(tools[0]["kind"], "lookup"); self.assertEqual(tools[1]["kind"], "dispatch")
+        self.assertEqual(server.propose_tools([{"role": "caller", "text": "Bonjour, je voudrais un renseignement."}], [], None), [])
+        # analyze() returns them with the reply.
+        analysis = {"summary": "Feu et blessé.", "facts": [{"field": "Lieu", "quote": "huit cours Gambetta à Lyon"}], "signals": ["ne respire plus"], "question": "handoff",
+                    "reply": "Restez à distance du feu. Y a-t-il d'autres personnes ?", "tools": [{"tool": "dispatch_police", "reason": "arme"}]}
+        with patch.object(server, "request_model", return_value=ExtractionTests.completion(analysis)):
+            result = server.analyze({"messages": messages})
+        self.assertEqual([t["tool"] for t in result["tools"]], ["lookup_address", "dispatch_ambulance", "dispatch_fire", "dispatch_police"])
+        # The lookup runs through the gateway (geocoder mocked); a dispatch needs the operator's approval and is a simulation.
+        geocoded = json.dumps({"features": [{"properties": {"label": "8 Cours Gambetta 69007 Lyon", "postcode": "69007", "city": "Lyon", "score": 0.93}, "geometry": {"coordinates": [4.84, 45.75]}}]}).encode()
+        with patch.object(server, "request_model", return_value=(geocoded, {})) as request:
+            status, body = self.request("/api/tool", {"call": "TEST-1", "tool": "lookup_address", "args": {"address": "huit cours Gambetta à Lyon"}})
+        self.assertEqual(status, 200, body); data = json.loads(body)
+        self.assertEqual((data["status"], data["result"]["label"], data["result"]["city"], data["result"]["lat"]), ("done", "8 Cours Gambetta 69007 Lyon", "Lyon", 45.75))
+        self.assertTrue(request.call_args.args[0].startswith(server.GEOCODER_URL)); self.assertIn("Gambetta", request.call_args.args[0])
+        with patch.object(server, "request_model", return_value=(b'{"features": []}', {})):
+            self.assertIn("aucune correspondance", json.loads(self.request("/api/tool", {"tool": "lookup_address", "args": {"address": "nulle part"}})[1])["note"])
+        with patch.object(server, "request_model", side_effect=OSError("offline")):
+            self.assertEqual(json.loads(self.request("/api/tool", {"tool": "lookup_address", "args": {"address": "huit cours Gambetta"}})[1])["status"], "error")
+        with patch.object(server, "GEOCODER_ENABLED", False), patch.object(server, "request_model", side_effect=AssertionError("must not be called")):
+            data = json.loads(self.request("/api/tool", {"tool": "lookup_address", "args": {"address": "huit cours Gambetta"}})[1])
+            self.assertEqual((data["status"], data["simulated"], data["note"]), ("done", True, "géocodage désactivé"))
+        self.assertEqual(self.request("/api/tool", {"tool": "dispatch_ambulance"})[0], 400, "a dispatch without the operator's approval")
+        status, body = self.request("/api/tool", {"call": "TEST-1", "tool": "dispatch_ambulance", "approve": True})
+        data = json.loads(body)
+        self.assertEqual((status, data["status"], data["simulated"], data["result"]["service"]), (200, "done", True, "SAMU")); self.assertIn("simulation", data["result"]["note"])
+        self.assertEqual(self.request("/api/tool", {"tool": "nuke", "approve": True})[0], 400)
+        self.assertEqual(self.request("/api/tool", {"tool": "lookup_address", "args": {"address": "x"}})[0], 400)
+        self.assertEqual(self.request("/api/tool", {"tool": "lookup_address", "args": {"address": "huit cours Gambetta"}}, {"Origin": "https://attacker.example"})[0], 403)
+
+    def test_actions_are_stored_with_the_call(self):
+        import sqlite3, tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"), patch.dict(server._written, clear=True):
+            snap = {"owner": "tab-a", "startedAt": 1_700_000_000_000, "session": {"id": 1, "status": "running"},
+                    "calls": [{"id": "TEST-1", "n": 1, "sc": {"cat": "Feu"}, "started": 1_700_000_005_000, "tr": [],
+                               "actions": [{"id": "A1", "tool": "dispatch_fire", "status": "done", "by": "opérateur"}]}]}
+            self.assertEqual(self.request("/api/session", snap)[0], 200)
+            with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:
+                self.assertEqual(json.loads(conn.execute("SELECT actions FROM calls WHERE id = 'TEST-1'").fetchone()[0])[0]["tool"], "dispatch_fire")
+
     def test_original_html_is_served(self):
         if not server.STATIC_FILE.exists():
             self.skipTest("build the frontend first: make build")
