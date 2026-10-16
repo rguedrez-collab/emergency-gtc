@@ -28,7 +28,7 @@ COPY --chown=orange:orange tools/db_report.py ./tools/
 COPY --chown=orange:orange frontend/src/line.html ./frontend/src/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
 RUN chmod 755 backend/entrypoint.sh
-USER orange
+USER 10001  # numeric, so runAsNonRoot can be verified by the orchestrator
 # Inside the container the gateway must listen on all interfaces; publish or proxy it as you see fit.
 # Model endpoints default to localhost: with network_mode: host they are the host's services, otherwise set
 # ORANGE_GEMMA_URL / ORANGE_STT_URL / ORANGE_TTS_URL (and ORANGE_LLM_URL for a guardrail proxy), or GCORE_BASE_URL /
@@ -45,7 +45,7 @@ RUN useradd --create-home --uid 10001 orange && chown -R orange:orange /app
 COPY --chown=orange:orange caller/__init__.py caller/simulation.py caller/service.py caller/entrypoint.sh ./caller/
 COPY --chown=orange:orange backend/gcore_bridge.py ./backend/
 RUN chmod 755 caller/entrypoint.sh
-USER orange
+USER 10001  # numeric, so runAsNonRoot can be verified by the orchestrator
 # One service per site. Set CALLER_LOCATION (the name the console shows), CALLER_TOKEN (shared with the gateway's
 # ORANGE_CALLER_TOKEN) and the site's model endpoints CALLER_LLM_URL / CALLER_TTS_URL — or GCORE_BASE_URL /
 # GCORE_LLM_BASE_URL / GCORE_TTS_BASE_URL for Dynamo frontends (the bridge then starts); CALLER_FAKE=1 needs no models.
@@ -63,7 +63,7 @@ COPY --chown=orange:orange tests/e2e/verify_local.py ./tests/e2e/
 COPY --chown=orange:orange tools/preview_local.py tools/db_report.py ./tools/
 COPY --chown=orange:orange frontend/src/logic.js frontend/src/line.html ./frontend/src/
 COPY --from=ui --chown=orange:orange /build/frontend/dist ./frontend/dist
-USER orange
+USER 10001  # numeric, so runAsNonRoot can be verified by the orchestrator
 ENV ORANGE_STATE_DIR=/app/state
 EXPOSE 8093
 # The Basic-auth password is generated on first start into the state volume:

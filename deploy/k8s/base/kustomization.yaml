@@ -15,5 +15,6 @@ resources:
   - console.yaml
   - caller-sites.yaml
   - route.yaml
-commonLabels:
-  app.kubernetes.io/part-of: orange-urgences
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: orange-urgences
