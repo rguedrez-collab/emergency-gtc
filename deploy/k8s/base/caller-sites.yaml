@@ -1,0 +1,147 @@
+# Two caller sites: the simulated caller (LLM line + TTS voice) next to each site's Dynamo frontends.
+# Duplicate the pair for another site and add it to ORANGE_CALLERS on the console.
+apiVersion: v1
+kind: Service
+metadata:
+  name: urgences-caller-paris
+spec:
+  selector:
+    app: urgences-caller
+    site: paris
+  ports:
+    - name: http
+      port: 8094
+      targetPort: 8094
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: urgences-caller-paris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: urgences-caller
+      site: paris
+  template:
+    metadata:
+      labels:
+        app: urgences-caller
+        site: paris
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: caller
+          image: REGISTRY/emergency-gtc-caller:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8094
+              name: http
+          env:
+            - name: CALLER_LOCATION
+              value: paris
+            - name: CALLER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: urgences-secrets
+                  key: caller-token
+            - name: GCORE_LLM_BASE_URL
+              value: http://llm-frontend-paris:8000
+            - name: GCORE_TTS_BASE_URL
+              value: http://tts-frontend-paris:8000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8094
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8094
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: urgences-caller-aubervilliers
+spec:
+  selector:
+    app: urgences-caller
+    site: aubervilliers
+  ports:
+    - name: http
+      port: 8094
+      targetPort: 8094
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: urgences-caller-aubervilliers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: urgences-caller
+      site: aubervilliers
+  template:
+    metadata:
+      labels:
+        app: urgences-caller
+        site: aubervilliers
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: caller
+          image: REGISTRY/emergency-gtc-caller:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8094
+              name: http
+          env:
+            - name: CALLER_LOCATION
+              value: aubervilliers
+            - name: CALLER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: urgences-secrets
+                  key: caller-token
+            - name: GCORE_LLM_BASE_URL
+              value: http://llm-frontend-aubervilliers:8000
+            - name: GCORE_TTS_BASE_URL
+              value: http://tts-frontend-aubervilliers:8000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8094
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8094
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]

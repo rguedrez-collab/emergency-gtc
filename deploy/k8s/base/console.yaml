@@ -1,0 +1,107 @@
+# The console: gateway + Dynamo bridge in one pod, the SQLite database on a persistent volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: urgences-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: urgences-console
+spec:
+  selector:
+    app: urgences-console
+  ports:
+    - name: http
+      port: 8092
+      targetPort: 8092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: urgences-console
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # one writer on the RWO volume
+  selector:
+    matchLabels:
+      app: urgences-console
+  template:
+    metadata:
+      labels:
+        app: urgences-console
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: gateway
+          image: REGISTRY/emergency-gtc-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8092
+              name: http
+          env:
+            - name: ORANGE_BIND
+              value: "0.0.0.0"
+            - name: ORANGE_STATE_DIR
+              value: /app/state
+            - name: ORANGE_PASSWORD_FILE
+              value: /run/secrets/urgences/access-password
+            # Dynamo frontends of the console's own site (the bridge translates STT/TTS); set in the overlay.
+            - name: GCORE_LLM_BASE_URL
+              value: http://llm-frontend:8000
+            - name: GCORE_ASR_BASE_URL
+              value: http://asr-frontend:8000
+            - name: GCORE_TTS_BASE_URL
+              value: http://tts-frontend:8000
+            - name: GCORE_ASR_LANGUAGE
+              value: fr-FR
+            # Caller sites (caller/service.py behind the Services of caller-sites.yaml) and their shared token.
+            - name: ORANGE_CALLERS
+              value: paris=http://urgences-caller-paris:8094,aubervilliers=http://urgences-caller-aubervilliers:8094
+            - name: ORANGE_CALLER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: urgences-secrets
+                  key: caller-token
+          volumeMounts:
+            - name: state
+              mountPath: /app/state
+            - name: secrets
+              mountPath: /run/secrets/urgences
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8092
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8092
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: urgences-state
+        - name: secrets
+          secret:
+            secretName: urgences-secrets

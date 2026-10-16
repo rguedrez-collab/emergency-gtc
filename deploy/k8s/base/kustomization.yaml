@@ -1,0 +1,19 @@
+# Kubernetes deployment of the console and two caller sites against NVIDIA Dynamo frontends (the Gcore inference
+# stack), exposed through an Envoy Gateway (Gateway API HTTPRoute).
+#
+# This base is generic: images, namespace, hostnames and the model endpoints are placeholders. Write an overlay for a
+# cluster (kept out of this repository, it names hosts) that sets:
+#   - namespace, images (the gateway and caller images pushed to a registry the cluster can pull from),
+#   - the HTTPRoute hostnames and parent Gateway,
+#   - GCORE_*_BASE_URL on the console and on each caller site (the Dynamo frontends of that site),
+#   - the Secret `urgences-secrets` with `access-password` (Basic-auth password of user demo) and `caller-token`
+#     (the bearer token the caller sites expect), created out of band, never committed.
+# See deploy/k8s/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - console.yaml
+  - caller-sites.yaml
+  - route.yaml
+commonLabels:
+  app.kubernetes.io/part-of: orange-urgences

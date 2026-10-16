@@ -135,6 +135,17 @@ dialogue quality can only be judged with the real models. The fake caller sites 
 (`lyon +40 ms`, `montreal +150 ms`); their silent WAV carries its text in a private RIFF chunk (`simulation.fake_wav`
 / `text_in_wav`) so the fake STT reads it back.
 
+## Kubernetes
+
+- `deploy/k8s/base` (kustomize): console Deployment (gateway + `backend/gcore_bridge.py` via `backend/entrypoint.sh`),
+  PVC for `/app/state`, two caller-site Deployments (`caller/entrypoint.sh` starts the same bridge), Services, one
+  HTTPRoute with 180 s timeouts. Both images answer `GET /healthz` without auth for the probes.
+- The bridge translates for NVIDIA Dynamo OpenAI frontends: `/stt/transcribe` → `/v1/realtime` WebSocket (24 kHz
+  PCM16, explicit commits, `GCORE_ASR_LANGUAGE`), `/tts/v1/audio/speech` → Magpie voices (`GCORE_TTS_VOICES`, raw PCM
+  wrapped in WAV, no tempo), chat completions passed through; one origin per model (`GCORE_*_BASE_URL`) or one for all
+  (`GCORE_BASE_URL`). ffmpeg is in the gateway image for browser/phone recordings.
+- The cluster overlay (namespace, registry, hostnames, frontend Services) is private; it names hosts.
+
 ## Open items
 
 - Deploy this build to the demonstration host and run the real-model scripts there (kept with the deployment).

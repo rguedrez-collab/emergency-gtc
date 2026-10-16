@@ -1047,9 +1047,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
+        path = urlsplit(self.path).path
+        if path == "/healthz":  # liveness/readiness for orchestrators: no auth, no model probe, nothing about the data
+            self.reply(200, {"ok": True})
+            return
         if not self.authorized():
             return
-        path = urlsplit(self.path).path
         if path in ("/", "/urgence.html", "/index.html"):
             self.reply(200, STATIC_FILE.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/health":

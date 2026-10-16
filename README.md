@@ -222,6 +222,15 @@ operator's turns through the F5 tee proxy. Every variable from the Configuration
 Leave `ORANGE_CALLERS` out for a single-site deployment. Expose a caller site only over a private network or VPN, or
 behind TLS, and always with a token.
 
+## Kubernetes (Envoy Gateway, NVIDIA Dynamo frontends)
+
+`deploy/k8s/base` deploys the console (gateway + bridge, SQLite on a persistent volume), two caller sites and an
+HTTPRoute; a cluster-specific overlay sets namespace, images, hostnames and the Dynamo frontends of each site. The
+bridge (`backend/gcore_bridge.py`, started by the images' entrypoints when `GCORE_BASE_URL` or `GCORE_LLM_BASE_URL` /
+`GCORE_ASR_BASE_URL` / `GCORE_TTS_BASE_URL` is set) maps the gateway's STT route to the frontends' realtime WebSocket
+ASR, the Voxtral-style speech request to the Magpie TTS (preset voices → `GCORE_TTS_VOICES`) and passes chat
+completions through; model names and labels then default to the Gcore stack's. See `deploy/k8s/README.md`.
+
 ## Storage
 
 The gateway keeps everything in a SQLite database, `state/orange.db` (`ORANGE_DB_PATH`; in Docker the

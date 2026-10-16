@@ -201,6 +201,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
+        if urlsplit(self.path).path == "/healthz":  # orchestrator probe: no token, no model probe
+            self.reply(200, {"ok": True})
+            return
         if not self.authorized():
             return
         if urlsplit(self.path).path in ("/", "/health"):
