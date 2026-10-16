@@ -49,6 +49,22 @@ class MappingTests(unittest.TestCase):
                          "preset -> Magpie voice, bare code -> locale, no speed or response_format")
         self.assertEqual((sent["status"], sent["content_type"]), (200, "audio/wav")); self.assertTrue(sent["body"].startswith(b"RIFF"))
 
+    def test_a_rendering_cut_short_is_tried_once_more(self):
+        text = "Allô ? Oui, bonjour, euh, il faut venir vite. Ma mère est tombée dans la salle de bain et ne peut pas se relever."
+        short, full = b"\0\0" * int(2.6 * bridge.TTS_RATE), b"\0\0" * int(7.4 * bridge.TTS_RATE)
+        self.assertTrue(bridge.too_short(short, text)); self.assertFalse(bridge.too_short(full, text))
+        self.assertFalse(bridge.too_short(b"\0\0" * int(0.4 * bridge.TTS_RATE), "Allô ?"), "short lines vary too much to judge")
+        calls = []
+
+        def fake_upstream(path, payload=None, timeout=120, kind="LLM"):
+            calls.append((path, payload["voice"])); return (short if len(calls) == 1 else full), "audio/pcm"
+        with patch.object(bridge, "upstream", fake_upstream):
+            handler = bridge.Handler.__new__(bridge.Handler); out = {}
+            handler.reply = lambda status, body, ctype="application/json": out.update(status=status, body=body, ctype=ctype)
+            handler.speech({"input": text, "voice": "fr_female_fearful", "language": "fr"})
+        self.assertEqual([c[0] for c in calls], ["/v1/audio/speech", "/v1/audio/speech"]); self.assertEqual(calls[0][1], "Magpie-Multilingual.EN-US.Aria.Fearful")
+        self.assertEqual((out["status"], out["ctype"], len(out["body"]) - 44), (200, "audio/wav", len(full)), "the longer rendering is kept")
+
     def test_each_model_has_its_own_origin(self):
         self.assertEqual(bridge.BASES, {"LLM": "http://llm.invalid:8000", "ASR": "http://asr.invalid:8000", "TTS": "http://tts.invalid:8000"})
         self.assertEqual(bridge.realtime_url(), "ws://asr.invalid:8000/v1/realtime?model=nemotron-asr-streaming")

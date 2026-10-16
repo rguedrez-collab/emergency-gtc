@@ -369,6 +369,14 @@ def ordinal_words(n, feminine=False):
     return base + "ième"
 
 
+SPEECH_CHARS_PER_SECOND = 16  # French read aloud: a line shorter than 65 % of this estimate was cut short
+
+
+def too_short(pcm, text):
+    """A rendering that stopped early: less than 65 % of the expected duration for a line of at least 40 characters."""
+    return len(text) >= 40 and len(pcm) / (TTS_RATE * 2) < 0.65 * len(text) / SPEECH_CHARS_PER_SECOND
+
+
 def normalize_fr(text):
     """Text as a French voice should read it: plain characters, numbers in words, abbreviations expanded, final punctuation."""
     for char, plain in TYPOGRAPHY.items():
@@ -467,7 +475,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         request = {"input": normalize_fr(payload["input"]) if TTS_NORMALIZE else payload["input"], "model": payload.get("model"),
                    "voice": TTS_VOICES.get(payload.get("voice"), payload.get("voice")),
                    "language": LANGUAGES.get(payload.get("language"), payload.get("language"))}
-        pcm, _ = upstream("/v1/audio/speech", {k: v for k, v in request.items() if v}, kind="TTS")
+        body = {k: v for k, v in request.items() if v}
+        pcm, _ = upstream("/v1/audio/speech", body, kind="TTS")
+        if too_short(pcm, request["input"]):
+            # Magpie occasionally stops early on a long line (a few percent of the emotional variants' renderings): one more
+            # try, and the longer rendering is kept.
+            again, _ = upstream("/v1/audio/speech", body, kind="TTS")
+            pcm = max(pcm, again, key=len)
         self.reply(200, wav_header(len(pcm), TTS_RATE) + pcm, "audio/wav")
 
 

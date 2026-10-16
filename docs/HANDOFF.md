@@ -145,7 +145,8 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   French-native emotions (Sad, Angry, Calm…); the female variants are Magpie's multilingual speakers (Aria, Sofia, Isabela,
   Mia), intelligible in French (0 % WER on our lines). « Réglages → Voix appelants : émotions / neutres » switches them
   off (`emotion:false` in `/api/tts` and `/api/caller`); the operator's voice stays neutral. The speech tool log shows the
-  variant actually spoken (`X-Voice-Preset`).
+  variant actually spoken (`X-Voice-Preset`). Magpie occasionally stops early on a long line (a few percent of renderings):
+  the bridge's `too_short` check tries once more and keeps the longer rendering.
 - Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
   `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
   off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration
