@@ -141,7 +141,7 @@ class ExtractionTests(unittest.TestCase):
                     {"role": "assistant", "text": "Quel est l'état de la personne blessée ? Respire-t-elle ?"}, {"role": "caller", "text": "Elle ne respire pas et euh, y a beaucoup de soins."}]
         state = server.intake_state(messages)
         self.assertEqual((state["known"], state["critical"]), (["location", "incident", "state", "access"], True))
-        self.assertEqual(state["asked"], ["location", "incident", "state", "access"])
+        self.assertEqual(state["asked"], ["location", "incident", "state", "access", "landmark"])
         self.assertEqual((state["missing"], state["next"]), (["age", "history", "name"], "handoff"), "no danger, people or callback question; the person just stopped breathing: no administrative question this turn")
         self.assertEqual(server.intake_state(messages[:2])["next"], "location")
         early = server.intake_state(messages[:4])  # « une situation critique » says nothing about what happened (asked once already, it comes back after
@@ -149,7 +149,7 @@ class ExtractionTests(unittest.TestCase):
         # An item asked twice without an answer is dropped: the call moves on instead of nagging. A road accident makes
         # the danger and the number-of-people questions relevant.
         crash = [{"role": "caller", "text": "Un accident de voiture au carrefour de la rue Nationale à Lyon, le conducteur est blessé."}]
-        self.assertEqual((server.intake_state(crash)["missing"], server.intake_state(crash)["next"]), (["state", "danger", "people", "access", "age", "history", "name"], "state"))
+        self.assertEqual((server.intake_state(crash)["missing"], server.intake_state(crash)["next"]), (["state", "danger", "people", "landmark", "age", "history", "name"], "state"))  # a crossroads: a landmark, no floor
         nagging = crash + [{"role": "assistant", "text": "Il y a un danger autour de vous, de la circulation ?"}, {"role": "caller", "text": "Je ne sais pas."},
                            {"role": "assistant", "text": "Y a-t-il du feu ou de la fumée ?"}, {"role": "caller", "text": "Je ne sais pas, venez."}]
         self.assertNotEqual(server.intake_state(nagging)["next"], "danger")
@@ -203,6 +203,14 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(server.intake_state(unknown)["next"], "location_again")
         self.assertEqual(server.intake_state(unknown[:1])["next"], "location")
         self.assertIn(server.QUESTIONS["location_again"], server.QUESTIONS.values())
+        # Spelled-out house numbers become digits for the address base; the caller's words stay as they were said.
+        self.assertEqual(server.split_city("15 rue du Moulin à Lille"), ("15 rue du Moulin", "Lille")); self.assertEqual(server.split_city("12 rue des Lilas, Paris"), ("12 rue des Lilas", "Paris"))
+        self.assertEqual(server.split_city("12 rue des Lilas"), ("12 rue des Lilas", None)); self.assertTrue(server._same_place("Paris", "Paris 19e Arrondissement") and server._same_place("Lyon", "Lyon"))
+        self.assertFalse(server._same_place("Lille", "Marquette-lez-Lille"))
+        for said, query in (("Quinze rue du Moulin à Lille", "15 rue du Moulin à Lille"), ("vingt-quatre rue des Écoles", "24 rue des Écoles"), ("douze bis rue des Lilas", "12 bis rue des Lilas"),
+                            ("trente et un boulevard Voltaire", "31 boulevard Voltaire"), ("quatre-vingt-douze avenue du Parc", "92 avenue du Parc"), ("cent deux rue Basse", "102 rue Basse"),
+                            ("soixante-dix-huit quai de Seine", "78 quai de Seine"), ("rue des Lilas", "rue des Lilas"), ("8 cours Gambetta à Lyon", "8 cours Gambetta à Lyon"), ("un repère : la mairie", "un repère : la mairie")):
+            self.assertEqual(server.digits_from_words(said), query, said)
         # A street address keeps its city after the comma, but not the rest of the sentence.
         self.assertEqual(server.ADDRESS.search("Oui, c'est Douze rue des Lilas, Paris, près du portail gris.").group(0), "Douze rue des Lilas, Paris")
         self.assertEqual(server.ADDRESS.search("au 12 rue des Lilas, près du portail gris").group(0), "12 rue des Lilas")
@@ -251,6 +259,11 @@ class ExtractionTests(unittest.TestCase):
                  {"role": "assistant", "text": "Il y a un danger autour de vous, de la circulation ?"}, {"role": "caller", "text": "Non, rien de ça."}]
         self.assertIn("danger", server.intake_state(crash)["known"])
         self.assertEqual(server.intake_state(fall + [{"role": "assistant", "text": "Restez près d'elle."}, {"role": "caller", "text": "Je reste près d'elle, vous êtes en route ?"}])["missing"], ["access", "age", "history", "name"])
+        # Outdoors there is no floor or door code to ask for: a landmark is asked instead.
+        canal = [{"role": "caller", "text": "Une personne est tombée dans le canal devant moi, quinze rue du Moulin à Lille."}]
+        self.assertEqual(server.intake_state(canal)["missing"], ["state", "danger", "landmark", "age", "history", "name"])
+        self.assertEqual(server.intake_state(canal + [{"role": "assistant", "text": "Vous voyez un repère à côté ?"}, {"role": "caller", "text": "Oui, le pont, juste en face de la pharmacie."}])["missing"],
+                         ["state", "danger", "age", "history", "name"])
         # Age, health history and the caller's name are answered in the caller's words; « open the door » is never suggested next to smoke.
         told_all = fall + [{"role": "assistant", "text": "Quel âge a la personne ?"}, {"role": "caller", "text": "Elle a la soixantaine, elle est diabétique, et moi c'est Camille."}]
         self.assertEqual(server.intake_state(told_all)["missing"], ["access"])

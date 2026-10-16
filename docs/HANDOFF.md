@@ -117,7 +117,8 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   people only for collective events, never the callback number; a short « non » settles the question just asked;
   the address question is never dropped (`location`, then `location_again`) and a reply that paraphrases it away
   is replaced; « je ne sais pas si elle respire » brings the two observation steps (`breathing`, `response_check`).
-  After the essentials come what the crew asks (`age`, `history` when a victim is described, then the caller's `name`);
+  Outdoors (`OUTDOOR_CUES` on the first line, its street address set aside) a `landmark` is asked instead of the
+  floor or door code (`access`). After the essentials come what the crew asks (`age`, `history` when a victim is described, then the caller's `name`);
   a short answer settles the question just asked (never the address); when the person has just stopped breathing
   (`STRONG`) no administrative question is asked that turn. `recueil.phase` turns to `accompagnement` once the
   essentials are known or a dispatch is validated, and the fallbacks add `guide` and `prepare` (not next to smoke).
@@ -189,3 +190,7 @@ dialogue quality can only be judged with the real models. The fake caller sites 
 - F5 AI Guardrails: real tenant credentials, the tenant region, a joint test; confirm non-cleared outcome strings.
 - Decide the « À traiter » policy (every call vs signal-only) with the product owner.
 - The mockup's redistribution status before publishing `frontend/dist/` or `frontend/mockup/` anywhere.
+
+- Address lookup (`lookup_address`): spelled-out house numbers become digits (`digits_from_words`), the city named after
+  « à » or a comma is located first (`type=municipality`) and the street is searched near it, then inside it
+  (`citycode`); a match in another commune is reported as « aucune correspondance … pour <ville> ».

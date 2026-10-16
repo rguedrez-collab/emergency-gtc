@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hmac
 import http.server
 import json
+import unicodedata
 import sqlite3
 from contextlib import closing
 import os
@@ -694,7 +695,7 @@ def same_line(a, b):
 
 # --- The operator's intake checklist, kept by the gateway so a small model is told what to ask next instead of
 # being trusted to remember. Caller words cover an item; AI questions mark it as asked; critical signals reorder.
-INTAKE_ITEMS = ("location", "incident", "state", "danger", "people", "access", "age", "history", "name", "callback")
+INTAKE_ITEMS = ("location", "incident", "state", "danger", "people", "access", "landmark", "age", "history", "name", "callback")
 INTAKE_RULES = {
     "incident": r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûl\w*|noy\w*|coinc\w*|"
                 r"bloqu\w*|accouch\w*|intox\w*|évanou\w*|perdu connaissance|agress\w*|frapp\w*|menac\w*|arme|couteau|vol\w*|cambriol\w*|feu|flamme|fumée|incendie|explos\w*|gaz|"
@@ -704,6 +705,7 @@ INTAKE_RULES = {
     "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
     "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",
     "access": r"\b(étage|porte|code|digicode|interphone|entrée|escalier|ascenseur|bâtiment|batiment|appartement|appart|hall|parking|accès)\b",
+    "landmark": r"repère|pharmacie|boulangerie|tabac|école|mairie|station|\bpont\b|église|gare|feu rouge|rond-point|arrêt de bus|(?:en face|à côté|près) (?:de la|du|d'un|d'une|des) \w+",
     "age": r"\b\d{1,3} ans\b|\bâgée?\b|\b(?:vingtaine|trentaine|quarantaine|cinquantaine|soixantaine|septantaine|nonantaine)\b|quatre-vingts? ans|\bbébé\b|\bnourrisson\b|quelques mois",
     "history": r"antécéden\w*|diabét\w*|cardiaque|du cœur|le cœur|tension|traitement|médicament\w*|asthm\w*|épilep\w*|allergi\w*|insuffisan\w*|cancer|pacemaker|dialys\w*|"
                r"aucun problème|en bonne santé|pas de problème de santé|pas de maladie|connais pas (?:ses|cette personne|cet homme|cette femme)",
@@ -719,6 +721,7 @@ ASKED_RULES = {
     "danger": r"danger|feu|fumée|gaz|menace|circulation|dans l'eau",
     "people": r"combien|quelqu'un d'autre|seule?\b|personnes (?:sont|concernées)",
     "access": r"étage|porte|entrée|accès|accède|code|interphone|guider",
+    "landmark": r"repère|commerce|à côté de quoi|arrêt|en face de quoi",
     "age": r"quel âge|\bâge\b",
     "history": r"problèmes? de santé|antécédent|traitement|médicament|maladie|santé connu",
     "name": r"vous appeler|votre prénom|votre nom|comment vous appelez|appeler comment",
@@ -733,6 +736,9 @@ DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|brûl\w*|gaz|explos\w*|électr
 VICTIM_CUES = re.compile(r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûlée?s?|noy\w*|évanou\w*|"
                          r"perdu connaissance|agress\w*|frappée?s?|accident|percut\w*|renvers\w*|heurt\w*|électrocut\w*|intox\w*|overdose|allerg\w*|piq\w*|mord\w*|coincée?|victimes?|"
                          r"(?:me |nous |lui )?(?:répond|réagit) (?:pas|plus))\b", re.I)
+# Outdoors (a canal, a road, a park…) there is no floor or door code to ask for; a landmark helps the crew instead.
+OUTDOOR_CUES = re.compile(r"\b(canal|rivière|fleuve|lac|étang|plage|mer|parc|jardin|forêt|champ|autoroute|carrefour|rond-point|trottoir|chaussée|pont|gare|arrêt de bus|"
+                          r"dans la rue|en pleine rue|sur la route|sur la voie|chantier|stade|terrain|cimetière|marché|piscine|bassin)\b", re.I)
 NEGATIVE = re.compile(r"^\s*(?:non|nan|rien|aucune?|pas de|y a pas|il n'y a pas|je (?:ne )?sais pas|je (?:ne )?connais pas|aucune idée|personne)\b", re.I)
 PLEA = re.compile(r"dépêchez|\bvite\b|aidez|s'il vous pla[iî]t|secours|venez", re.I)  # a plea is not an answer
 SETTLED_BY_ANSWER = ("state", "danger", "people", "access", "age", "history", "name")  # a short answer closes these; never the address
@@ -770,7 +776,9 @@ def intake_state(messages):
     critical = bool(CRITICAL.search(callers))
     # Only what this call makes relevant is asked: a person's state when someone is hurt or down, the dangers when the
     # incident suggests one, the number of people for a collective event; the callback number is the line's own.
-    relevant = ["location", "incident", "access", "name"]
+    # The first line describes the incident; its street address is set aside first (« avenue du Parc » is not a park).
+    outdoors = bool(caller_lines) and bool(OUTDOOR_CUES.search(ADDRESS.sub(" ", caller_lines[0])))
+    relevant = ["location", "incident", "name"] + (["landmark"] if outdoors else ["access"])
     relevant += ["state", "age", "history"] if VICTIM_CUES.search(callers) else []  # what the crew will ask first
     relevant += ["danger"] if DANGER_CUES.search(callers) else []
     relevant += ["people"] if GROUP_CUES.search(callers) else []
@@ -794,7 +802,7 @@ def intake_state(messages):
         next_item = "location" if not times_asked["location"] else "location_again"
     # The last line makes the situation critical (or says the person stopped breathing): acknowledge before anything else.
     escalated = bool(CRITICAL.search(last_caller)) and (not CRITICAL.search(" ".join(caller_lines[:-1])) or bool(STRONG.search(last_caller)))
-    essentials = [k for k in missing if k in ("location", "incident", "state", "danger", "people", "access")]
+    essentials = [k for k in missing if k in ("location", "incident", "state", "danger", "people", "access", "landmark")]
     return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": next_item, "escalated": escalated,
             "hazard": bool(DANGER_CUES.search(callers)), "essentials_missing": essentials}
 
@@ -1163,17 +1171,75 @@ def propose_tools(messages, facts, raw_tools):
     return proposals
 
 
+NUMBER_WORDS = {"zéro": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11,
+                "douze": 12, "treize": 13, "quatorze": 14, "quinze": 15, "seize": 16, "vingt": 20, "vingts": 20, "trente": 30, "quarante": 40, "cinquante": 50,
+                "soixante": 60, "septante": 70, "huitante": 80, "octante": 80, "nonante": 90, "cent": 100, "cents": 100, "mille": 1000}
+STREET_WORD = r"(?:bis|ter|rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b"
+LEADING_NUMBER = re.compile(r"^\s*((?:(?:" + "|".join(NUMBER_WORDS) + r")(?:[ -]|-et-| et )?)+)\s*(?=" + STREET_WORD + ")", re.I)
+
+
+def digits_from_words(address):
+    """« Quinze rue du Moulin » → « 15 rue du Moulin »: the transcript spells house numbers out, the address base wants digits."""
+    hit = LEADING_NUMBER.match(address)
+    if not hit:
+        return address
+    total = current = 0
+    for token in re.split(r"[ -]+|\bet\b", hit.group(1).lower().replace("quatre-vingt", "huitante").replace("huitantes", "huitante")):
+        if not token:
+            continue
+        value = NUMBER_WORDS.get(token)
+        if value is None:
+            return address
+        if value >= 100:
+            current = (current or 1) * value
+            if value == 1000:
+                total, current = total + current, 0
+        else:
+            current += value
+    return f"{total + current} " + address[hit.end():].lstrip()
+
+
+def split_city(address):
+    """« 15 rue du Moulin à Lille » / « 12 rue des Lilas, Paris » → (street, city); without a named city → (address, None)."""
+    hit = re.match(r"^(.*?\S)(?:\s+à\s+|,\s*)([A-ZÀ-Ý][\wÀ-ÿ'’ -]{1,40}?)\s*$", address.strip())
+    return (hit.group(1), hit.group(2).strip()) if hit else (address.strip(), None)
+
+
+def _same_place(a, b):
+    """The same commune, accents and punctuation aside; « Paris 19e Arrondissement » is Paris, « Marquette-lez-Lille » is not Lille."""
+    fold = lambda s: "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower()) if c.isalnum())
+    fa, fb = fold(a), fold(b)
+    return bool(fa) and bool(fb) and (fa == fb or (fb.startswith(fa) and fb[len(fa):][:1].isdigit()))
+
+
+def geocode(query, **params):
+    from urllib.parse import urlencode
+    data, _ = request_model(GEOCODER_URL + "?" + urlencode({"q": query[:200], "limit": 1, **params}), None, {"Accept": "application/json"}, timeout=6)
+    return json.loads(data).get("features") or []
+
+
 def lookup_address(address):
-    """The national address base's best match, or a note; the geocoder can be switched off (then nothing leaves)."""
+    """The national address base's best match for the street in the city the caller named (the municipality is located first,
+    the street is searched near it and kept only if it is in that city), or a note; the geocoder can be switched off."""
     if not GEOCODER_ENABLED:
         return {"result": None, "note": "géocodage désactivé", "simulated": True}
-    from urllib.parse import quote as urlquote
-    data, _ = request_model(GEOCODER_URL + "?q=" + urlquote(address[:200]) + "&limit=1", None, {"Accept": "application/json"}, timeout=6)
-    features = json.loads(data).get("features") or []
-    if not features:
-        return {"result": None, "note": "aucune correspondance dans la base adresse"}
-    props, geometry = features[0].get("properties") or {}, features[0].get("geometry") or {}
-    coords = geometry.get("coordinates") or [None, None]
+    street, city = split_city(digits_from_words(address[:200]))
+    near, town = {}, {}
+    if city:
+        towns = geocode(city, type="municipality")
+        town = (towns[0].get("properties") or {}) if towns else {}
+        coords = (towns[0].get("geometry") or {}).get("coordinates") if towns else None
+        if coords and len(coords) == 2:
+            near = {"lon": coords[0], "lat": coords[1]}
+    features = geocode(street, **near)
+    props = (features[0].get("properties") or {}) if features else {}
+    if city and town.get("citycode") and not _same_place(city, props.get("city")):
+        # The nearest match sits in a neighbouring commune: search inside the named one (its INSEE code) before giving up.
+        features = geocode(street, citycode=town["citycode"])
+        props = (features[0].get("properties") or {}) if features else {}
+    if not features or (city and not _same_place(city, props.get("city"))):
+        return {"result": None, "note": "aucune correspondance dans la base adresse" + (f" pour {city}" if city else "")}
+    coords = (features[0].get("geometry") or {}).get("coordinates") or [None, None]
     return {"result": {"label": props.get("label"), "postcode": props.get("postcode"), "city": props.get("city"), "score": props.get("score"),
                        "lon": coords[0], "lat": coords[1], "source": TOOLS["lookup_address"]["service"]}}
 
