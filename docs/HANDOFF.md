@@ -130,6 +130,12 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   once per call, vouvoiement, no medical gesture of its own), `repeats` + a nudged resample, `drop_repeated_sentences`,
   `trim_tics`; openings, landmarks, accesses, the person's `age`/`health` and a `person` fact with the pronoun vary per
   sample (`frontend/src/samples.mjs`), so the caller can answer the crew's questions truthfully.
+- Rewrite requests (`retry_prompt`) keep the shape of a normal request: the refused line and the instruction travel
+  inside the JSON user message (`reprise`), because a guardrail that scans the last user message reads a bare
+  instruction appended after the model's turn as a prompt injection and blocks it. A truncated rewrite leaves the
+  checklist's line in place; a second guard block stays an explicit failure.
+- Kubernetes: the console's state volume is mounted root-owned; the pod `fsGroup` (10001) in `deploy/k8s/base/console.yaml`
+  is what lets the gateway create its SQLite database there.
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the
   LLM path; block = HTTP 200 + substituted sentence + `X-Tee-Prompt-Action: blocked`). A block holds the call
   for a human; nothing is closed automatically.
