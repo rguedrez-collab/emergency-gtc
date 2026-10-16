@@ -53,8 +53,15 @@ LLM_MODEL = os.environ.get("GCORE_LLM_MODEL") or os.environ.get("ORANGE_LLM_MODE
 ASR_MODEL = os.environ.get("GCORE_ASR_MODEL", "nemotron-asr-streaming")
 ASR_LANGUAGE = os.environ.get("GCORE_ASR_LANGUAGE", "fr-FR")  # empty: the router's default (en-US worker)
 TTS_RATE = int(os.environ.get("GCORE_TTS_RATE", "24000"))   # the Dynamo TTS worker's --sample-rate-hz
-TTS_VOICES = dict(item.split("=", 1) for item in os.environ.get(
-    "GCORE_TTS_VOICES", "fr_female=Magpie-Multilingual.FR-FR.Louise,fr_male=Magpie-Multilingual.FR-FR.Pascal").split(",") if "=" in item)
+# Preset -> Magpie voice. The emotional presets (caller/simulation.py) use Pascal's French variants and, for the female
+# voice, Magpie's multilingual speakers (every Magpie voice speaks French). GCORE_TTS_VOICES overrides any of them.
+DEFAULT_TTS_VOICES = ("fr_female=Magpie-Multilingual.FR-FR.Louise,fr_male=Magpie-Multilingual.FR-FR.Pascal,"
+                      "fr_female_fearful=Magpie-Multilingual.EN-US.Aria.Fearful,fr_female_pressed=Magpie-Multilingual.ES-US.Isabela.Fearful,"
+                      "fr_female_worried=Magpie-Multilingual.ES-US.Sofia.Fearful,fr_female_calm=Magpie-Multilingual.EN-US.Mia.Calm,"
+                      "fr_male_fearful=Magpie-Multilingual.EN-US.Leo.Fearful,fr_male_pressed=Magpie-Multilingual.FR-FR.Pascal.Angry,"
+                      "fr_male_worried=Magpie-Multilingual.FR-FR.Pascal.Sad,fr_male_calm=Magpie-Multilingual.FR-FR.Pascal.Calm")
+TTS_VOICES = dict(item.split("=", 1) for item in DEFAULT_TTS_VOICES.split(",") if "=" in item)
+TTS_VOICES.update(item.split("=", 1) for item in os.environ.get("GCORE_TTS_VOICES", "").split(",") if "=" in item)
 LANGUAGES = {"fr": "fr-FR", "en": "en-US"}  # the TTS worker wants a locale, the gateway sends a bare code
 ASR_RATE = 24000                             # the realtime adapter accepts 24 kHz PCM16 only
 ASR_PAD_MS = tuple(int(x) for x in (os.environ.get("GCORE_ASR_PAD_MS", "300,700").split(",") + ["0"])[:2])

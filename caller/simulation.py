@@ -62,8 +62,20 @@ STYLE_NOTES = {
     "rushed": "Tu es essoufflé et paniqué : phrases coupées, parfois un mot répété, peu d'interjections.",
     "restrained": "Tu parles à voix basse, de peur d'être entendu : phrases très courtes, hésitantes, retenues.",
 }
-# Speech tempo per delivery profile: the only emotion control the speech service really has.
+# Speech tempo per delivery profile (services that honour it).
 VOICE_SPEEDS = {"neutral": 1.0, "concerned": 1.04, "urgent": 1.10, "rushed": 1.16, "restrained": 0.96}
+# Emotional voices per base voice and delivery profile: presets the speech bridge maps to Magpie's emotional variants
+# (Pascal is the only French-native voice with emotions; the female ones are Magpie's multilingual speakers, which speak
+# French — checked intelligible, 0 % word error on our lines). Unknown profile or emotion off: the base voice.
+EMOTIONAL_VOICES = {
+    "fr_female": {"rushed": "fr_female_fearful", "urgent": "fr_female_pressed", "concerned": "fr_female_worried", "restrained": "fr_female_calm"},
+    "fr_male": {"rushed": "fr_male_fearful", "urgent": "fr_male_pressed", "concerned": "fr_male_worried", "restrained": "fr_male_calm"},
+}
+
+
+def voice_for(voice, style, emotion=True):
+    """The preset to speak with: the emotional variant of the base voice for this delivery profile, when wanted and known."""
+    return EMOTIONAL_VOICES.get(voice, {}).get(style, voice) if emotion else voice
 DEFAULT_VOICES = ("fr_female", "fr_male")
 FACT_FIELDS = {"incident", "address", "name", "landmark", "access", "elapsed", "otherPeople", "age", "health", "person"}
 ROLES = ("caller", "operator", "assistant")
@@ -184,7 +196,7 @@ def validate_turn(payload, voices=DEFAULT_VOICES):
     voice = payload.get("voice", voices[0])
     if voice not in voices:
         raise ValueError("unsupported voice")
-    return {"facts": facts, "style": style, "messages": messages, "voice": voice}
+    return {"facts": facts, "style": style, "messages": messages, "voice": voice, "emotion": payload.get("emotion", True) is not False}
 
 
 def build_prompt(facts, style, messages):
@@ -247,9 +259,9 @@ def generate(prompt, complete, retry_on=(SimulationError,), messages=None):
     return trim_tics(text, previous), retries
 
 
-def speech_request(text, voice, style, model):
-    """The speech request for a caller line: preset voice, tempo from the delivery profile, WAV out."""
-    return {"input": text, "model": model, "response_format": "wav", "language": "fr", "voice": voice, "speed": VOICE_SPEEDS[style]}
+def speech_request(text, voice, style, model, emotion=True):
+    """The speech request for a caller line: the (emotional) preset voice, tempo from the delivery profile, WAV out."""
+    return {"input": text, "model": model, "response_format": "wav", "language": "fr", "voice": voice_for(voice, style, emotion), "speed": VOICE_SPEEDS[style]}
 
 
 # --- Fake audio for model-less runs (service CALLER_FAKE=1, preview, tests): silence of a plausible length that

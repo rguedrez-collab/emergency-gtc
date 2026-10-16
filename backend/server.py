@@ -588,9 +588,10 @@ def speech_options(payload):
     pace = "posé" if caller else payload.get("pace", "posé")
     if voice not in VOICES or style not in VOICE_SPEEDS or pace not in PACES:
         raise ValueError("unsupported voice, delivery profile or pace")
-    # Voxtral ignores free-form emotion instructions. These controls are real:
-    # preset voice + vLLM-Omni's non-streaming audio tempo adjustment.
-    return {"voice":voice, "speed":VOICE_SPEEDS[style] if caller else PACES[pace]}, style
+    # The caller's delivery profile picks an emotional variant of the preset voice (Magpie); the operator keeps the neutral
+    # voice. The tempo is honoured by services that support it.
+    spoken = simulation.voice_for(voice, style, payload.get("emotion", True) is not False) if caller else voice
+    return {"voice": spoken, "speed": VOICE_SPEEDS[style] if caller else PACES[pace]}, style
 SYSTEM = """Tu es le copilote de DEMONSTRATION Orange pour un opérateur humain.
 Tu extrais les propos d'un appel de TEST. Tu ne décides ni d'une gravité médicale,
 ni d'un traitement, ni d'un envoi de secours. Les seules actions externes sont celles

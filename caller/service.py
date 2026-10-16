@@ -85,8 +85,8 @@ def complete(prompt, temperature, cfg):
     return simulation.completion_json(body)
 
 
-def speak(text, voice, style, cfg):
-    data, _ = request(cfg["tts_url"] + "/v1/audio/speech", simulation.speech_request(text, voice, style, cfg["tts_model"]), timeout=cfg["timeout"])
+def speak(text, voice, style, cfg, emotion=True):
+    data, _ = request(cfg["tts_url"] + "/v1/audio/speech", simulation.speech_request(text, voice, style, cfg["tts_model"], emotion), timeout=cfg["timeout"])
     if not data.startswith(b"RIFF"):
         raise RuntimeError("invalid speech response")
     return data
@@ -130,7 +130,7 @@ def turn(payload, cfg):
     completer = (lambda p, t: fake_complete(p, t, cfg)) if cfg["fake"] else (lambda p, t: complete(p, t, cfg))
     text, retries = simulation.generate(prompt, completer, messages=data["messages"])
     llm_done = time.monotonic()
-    audio = fake_speak(text, data["voice"], data["style"], cfg) if cfg["fake"] else speak(text, data["voice"], data["style"], cfg)
+    audio = fake_speak(text, data["voice"], data["style"], cfg) if cfg["fake"] else speak(text, data["voice"], data["style"], cfg, data.get("emotion", True))
     end = time.monotonic()
     return {"text": text, "audio": base64.b64encode(audio).decode("ascii"), "location": cfg["location"],
             "model": "fake" if cfg["fake"] else cfg["llm_model"], "tts_model": "fake" if cfg["fake"] else cfg["tts_model"],

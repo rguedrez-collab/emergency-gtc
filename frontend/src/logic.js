@@ -51,7 +51,7 @@ const fakePhone = seed => {
 };
 
 class Component extends DCLogic {
-  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
+  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
     callers:[], latency:null, sitePolicy:'auto', analytics:false};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
@@ -361,7 +361,7 @@ class Component extends DCLogic {
   }
   // The AI speaks with the selected preset; the human operator takes the other one so the two voices differ.
   voiceOptions(c,speaker) {
-    if(speaker==='caller')return {voice:c.voice,style:c.voiceStyle};
+    if(speaker==='caller')return {voice:c.voice,style:c.voiceStyle,emotion:this.state.emotions!==false};
     const other=this.state.aiVoice==='fr_female'?'fr_male':'fr_female';
     return speaker==='assistant'?{voice:this.state.aiVoice,pace:this.state.aiPace}:{voice:other};
   }
@@ -370,7 +370,8 @@ class Component extends DCLogic {
     const t=this.tool(c,this.labels().tts+' TTS',speaker==='caller'?`${c.voice} · ${c.voiceStyle}`:`${opts.voice} · ${speaker==='assistant'?this.state.aiPace:'opérateur'}`);
     try{
       const r=await this.api(c,'/api/tts',{text,speaker,...opts});const blob=await r.blob();
-      this.done(t,blob.size+' octets · '+r.headers.get('X-TTS-MS')+' ms');
+      const preset=r.headers.get('X-Voice-Preset');  // the emotional variant actually spoken, when it differs from the base voice
+      this.done(t,blob.size+' octets · '+r.headers.get('X-TTS-MS')+' ms'+(preset&&preset!==opts.voice?' · '+preset:''));
       c.lastTts={ms:Number(r.headers.get('X-TTS-MS'))||t.ms,speaker};return blob;
     }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}throw e;}
   }
@@ -515,7 +516,7 @@ class Component extends DCLogic {
     const site=c.location||'local';const t=this.tool(c,'Appelant · '+this.siteName(site),args),t0=performance.now();
     let d;
     try{
-      const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,voice:c.voice,messages,location:site,call:c.id,turn:c.ti});
+      const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,voice:c.voice,emotion:this.state.emotions!==false,messages,location:site,call:c.id,turn:c.ti});
       d=await r.json();
     }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}throw e;}
     const used=d.location||'local',tm=d.timings||{};
@@ -924,6 +925,7 @@ class Component extends DCLogic {
       this.sitePolicyButton(),
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
+      this.button('Voix appelants : '+(this.state.emotions!==false?'émotions':'neutres'),()=>this.setState({emotions:this.state.emotions===false}),false,'orange-emotions','Variantes émotionnelles de la voix selon le profil de l’appel (peur, inquiétude, calme) ou voix neutres.'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
       this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),
       typeof location!=='undefined'?h('span',{key:'line',className:'oc-muted',title:'Une personne peut appeler cette console depuis son téléphone : ouvrez cette adresse sur le mobile (identifiants de la console), puis « Appeler ».'},'Appel réel : '+location.origin+'/appel'):null,

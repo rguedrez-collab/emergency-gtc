@@ -19,7 +19,9 @@ class ExtractionTests(unittest.TestCase):
 
     def test_delivery_profiles_preserve_calm_operator(self):
         voice, style = server.speech_options({"speaker":"caller","voice":"fr_male","style":"rushed"})
-        self.assertEqual(voice, {"voice":"fr_male","speed":1.16})
+        self.assertEqual(voice, {"voice":"fr_male_fearful","speed":1.16}, "a rushed caller speaks with the fearful variant of the preset")
+        self.assertEqual(server.speech_options({"speaker":"caller","voice":"fr_male","style":"rushed","emotion":False})[0]["voice"], "fr_male", "neutral voices on request")
+        self.assertEqual(server.speech_options({"speaker":"assistant","voice":"fr_female","pace":"vif"})[0]["voice"], "fr_female", "the operator keeps the neutral voice")
         voice, style = server.speech_options({"speaker":"operator","style":"rushed"})
         self.assertEqual(voice["speed"],1.0)
         self.assertEqual(style,"neutral")

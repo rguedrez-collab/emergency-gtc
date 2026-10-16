@@ -47,7 +47,8 @@ class TurnTests(unittest.TestCase):
         self.assertEqual((llm[1]["model"], llm[1]["messages"][0]["content"], llm[1]["response_format"]), ("org/site-llm", simulation.CALLER_SYSTEM, {"type": "json_object"}))
         self.assertIn(simulation.STYLE_NOTES["rushed"], llm[1]["messages"][1]["content"])
         self.assertEqual(tts[0], "http://tts.invalid/v1/audio/speech")
-        self.assertEqual(tts[1], {"input": result["text"], "model": "org/site-tts", "response_format": "wav", "language": "fr", "voice": "fr_male", "speed": 1.16})
+        self.assertEqual(tts[1], {"input": result["text"], "model": "org/site-tts", "response_format": "wav", "language": "fr", "voice": "fr_male_fearful", "speed": 1.16},
+                         "a rushed male caller speaks with the fearful variant")
 
     def test_unusable_lines_are_resampled_once_then_refused(self):
         answers = [completion({"utterance": "(tousse) Il y a de la fumée !"}), completion({"utterance": "Il y a de la fumée partout, vite !"}), (b"RIFF....", {})]
@@ -102,6 +103,13 @@ class TurnTests(unittest.TestCase):
         same = {"utterance": "Oui, c'est bien là. La fumée sort de l'appartement du dessus et personne ne répond."}
         text, retries = simulation.generate(simulation.build_prompt({"incident": "Fumée"}, "concerned", said), lambda p, t: same, messages=said)
         self.assertEqual((text, retries), ("Oui, c'est bien là.", 1))
+
+    def test_emotional_voices_follow_the_delivery_profile(self):
+        self.assertEqual(simulation.voice_for("fr_female", "rushed"), "fr_female_fearful"); self.assertEqual(simulation.voice_for("fr_male", "concerned"), "fr_male_worried")
+        self.assertEqual(simulation.voice_for("fr_female", "neutral"), "fr_female", "no variant for a neutral delivery")
+        self.assertEqual(simulation.voice_for("fr_female", "rushed", emotion=False), "fr_female", "the console can ask for neutral voices")
+        self.assertEqual(simulation.speech_request("Allô ?", "fr_male", "restrained", "m", emotion=False)["voice"], "fr_male")
+        self.assertEqual(simulation.validate_turn({**PAYLOAD, "emotion": False})["emotion"], False); self.assertEqual(simulation.validate_turn(PAYLOAD)["emotion"], True)
 
     def test_age_and_health_are_caller_facts(self):
         facts = {"incident": "Ma mère est tombée", "age": "la soixantaine", "health": "diabétique, sous insuline", "person": "ma mère (elle)"}

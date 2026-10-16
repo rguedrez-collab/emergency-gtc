@@ -515,7 +515,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.guardrail={configured:true,name:'F5 AI Guardrails',mode:'proxy · enforce'};assert.ok(texts(app.controls()).join('').includes('Garde-fou · F5 AI Guardrails'));
   app.state.guardrail=null;assert.ok(!JSON.stringify(app.controls()).includes('oc-services'));
   app.state.settings=true;bar=app.controls();const settings=ids(bar.children[1]);
-  for(const id of ['orange-theme','orange-ai-voice','orange-ai-pace','orange-tones','orange-export','orange-user-call','orange-tools'])assert.ok(settings.includes(id),id);
+  for(const id of ['orange-theme','orange-ai-voice','orange-ai-pace','orange-emotions','orange-tones','orange-export','orange-user-call','orange-tools'])assert.ok(settings.includes(id),id);
+  // Emotional caller voices are on by default and travel with every speech and caller request; the setting switches them off.
+  {const app2=make(),call={voice:'fr_female',voiceStyle:'rushed'};assert.equal(JSON.stringify(app2.voiceOptions(call,'caller')),JSON.stringify({voice:'fr_female',style:'rushed',emotion:true}));
+   app2.state.emotions=false;assert.equal(app2.voiceOptions(call,'caller').emotion,false);assert.ok(!('emotion' in app2.voiceOptions(call,'assistant')),'the operator voice has no emotion flag');}
   assert.equal(app.state.style,'sober','the sober (light, flat) look is the default without an OS preference');
   // The theme button names the current look and cycles clair → sombre → verre liquide.
   assert.ok(texts(bar).join(' ').includes('Thème : clair'));app.state.style='dark';assert.ok(texts(app.controls()).join(' ').includes('Thème : sombre'));
@@ -774,4 +777,4 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-console.log('PASS: 57 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+console.log('PASS: 58 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

@@ -137,6 +137,15 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   checklist's line in place; a second guard block stays an explicit failure.
 - Kubernetes: the console's state volume is mounted root-owned; the pod `fsGroup` (10001) in `deploy/k8s/base/console.yaml`
   is what lets the gateway create its SQLite database there.
+- Voices: the deployed Magpie Multilingual NIM exposes 478 voices in 9 languages (its native API at the worker pod's
+  port 9000, `GET /v1/audio/list_voices`; through the Dynamo frontend only `voice` and `language` are honoured — no
+  `speed`, SSML pauses/rate ignored, pitch rejected, zero-shot cloning needs the separate Magpie Zeroshot NIM). The caller's
+  delivery profile picks an emotional variant (`simulation.EMOTIONAL_VOICES` → presets such as `fr_male_fearful`;
+  `backend/gcore_bridge.py` `DEFAULT_TTS_VOICES` maps them to Magpie names, `GCORE_TTS_VOICES` overrides). Pascal has
+  French-native emotions (Sad, Angry, Calm…); the female variants are Magpie's multilingual speakers (Aria, Sofia, Isabela,
+  Mia), intelligible in French (0 % WER on our lines). « Réglages → Voix appelants : émotions / neutres » switches them
+  off (`emotion:false` in `/api/tts` and `/api/caller`); the operator's voice stays neutral. The speech tool log shows the
+  variant actually spoken (`X-Voice-Preset`).
 - Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
   `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
   off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration
