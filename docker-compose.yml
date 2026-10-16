@@ -1,5 +1,6 @@
-# docker compose up -d gateway            -> gateway on 127.0.0.1:8092 (host network: the model services are the host's)
-# docker compose --profile preview up -d   -> UI preview with fake models on :8093
+# docker compose up -d gateway                 -> gateway on 127.0.0.1:8092 (host network: the model services are the host's)
+# docker compose --profile caller up -d caller -> a caller site on :8094 (run this one at each remote site, next to its models)
+# docker compose --profile preview up -d       -> UI preview with fake models and two fake caller sites on :8093
 # Before building: copy the UI mockup to frontend/mockup/urgence.html and write the Basic-auth password to .access-password.
 services:
   gateway:
@@ -13,13 +14,38 @@ services:
       # ORANGE_LLM_MODEL: google/gemma-4-26b-a4b-it
       # ORANGE_TTS_MODEL: mistralai/Voxtral-4B-TTS-2603
       # ORANGE_STT_MODELS: nemotron,parakeet
+      # Remote caller sites (name=url, comma-separated) and the bearer token they expect; without them the gateway's
+      # built-in caller (its own LLM + /api/tts) plays every caller.
+      # ORANGE_CALLERS: paris=http://10.0.0.5:8094,montreal=https://caller-yul.example
+      # ORANGE_CALLER_TOKEN: the-shared-token
     env_file:
       - path: backend/.env     # optional guardrail settings (see backend/env.example)
         required: false
     volumes:
-      - ./state:/app/state   # SQLite database (vacation, calls, transcripts)
+      - ./state:/app/state   # SQLite database (vacation, calls, transcripts, latency samples)
     secrets:
       - access-password
+    restart: unless-stopped
+
+  caller:
+    profiles: [caller]
+    build:
+      context: .
+      target: caller
+    network_mode: host       # the site's LLM and TTS are on this host's loopback; the gateway reaches :8094 over your network/VPN
+    environment:
+      CALLER_LOCATION: paris   # the name the console shows for this site
+      CALLER_BIND: 0.0.0.0
+      CALLER_PORT: 8094
+      # CALLER_TOKEN: the-shared-token     (same value as the gateway's ORANGE_CALLER_TOKEN)
+      # CALLER_LLM_URL: http://127.0.0.1:8000/v1/chat/completions
+      # CALLER_LLM_MODEL: google/gemma-4-26b-a4b-it
+      # CALLER_TTS_URL: http://127.0.0.1:8011
+      # CALLER_TTS_MODEL: mistralai/Voxtral-4B-TTS-2603
+      # CALLER_FAKE: "1"                   (no models: scripted lines, silent audio; topology demos)
+    env_file:
+      - path: caller/.env      # optional (see caller/env.example)
+        required: false
     restart: unless-stopped
 
   preview:

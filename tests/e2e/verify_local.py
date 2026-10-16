@@ -12,25 +12,24 @@ import argparse
 import base64
 import os
 import hashlib
-import io
 import json
 from pathlib import Path
 import re
 import socketserver
 import statistics
-import struct
 import sys
 import threading
 import time
 from unittest.mock import patch
-import wave
 
 HERE = Path(__file__).resolve().parent          # tests/e2e
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "backend"))
+sys.path.insert(0, str(REPO))
 import tempfile  # noqa: E402
 os.environ.setdefault("ORANGE_STATE_DIR", tempfile.mkdtemp(prefix="orange-state-"))  # the saved vacation stays out of the repo
 import server  # noqa: E402
+from caller import service as caller_service, simulation  # noqa: E402
 
 AI_CALLS = int(re.search(r"AI_CALLS = (\d+)", (REPO / "frontend" / "src" / "logic.js").read_text()).group(1))
 CHROMIUM = os.environ.get("ORANGE_CHROMIUM")  # optional: a specific Chromium build; otherwise Playwright's own
@@ -99,6 +98,7 @@ TIMING_JS = """(() => {
 })();"""
 
 spoken, counters, lock = {}, {"wav": 0, "analyze": 0, "caller": 0, "rewrite": 0, "blocked": 0}, threading.Lock()
+SITE_URLS = []  # fake caller sites started by start_fake_sites(): the gateway's requests to them really go on the wire
 GUARDED = "--guarded" in sys.argv or "--oob" in sys.argv or "--realproxy" in sys.argv
 OOB = "--oob" in sys.argv
 REALPROXY = "--realproxy" in sys.argv
@@ -125,21 +125,38 @@ def completion(content):
 
 
 def wav_for(text):
+    # Silence of a plausible length carrying its text in a private RIFF chunk (the fake STT reads it back), as the
+    # fake caller sites do; the hash map stays for clips that lost the chunk.
     with lock:
         counters["wav"] += 1
-        uid = counters["wav"]
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as out:
-        out.setnchannels(1); out.setsampwidth(2); out.setframerate(24000)
-        # A unique inaudible prefix keeps equal-length clips distinguishable for the fake STT.
-        out.writeframes(struct.pack("<I", uid) * 4 + b"\0\0" * int(24000 * max(1.2, len(text) / CHARS_PER_SECOND)))
-    data = buffer.getvalue()
+    data = simulation.fake_wav(text)
     with lock:
         spoken[hashlib.sha256(data).hexdigest()] = text
     return data
 
 
+def start_fake_sites(spec="lyon:40,montreal:150", token="local-site-token"):
+    """Fake caller sites in this process, one thread each ("name:extra_ms,..."): the real caller service code in fake
+    mode, with an extra delay per turn standing in for distance. Configures the gateway (ORANGE_CALLERS, token)."""
+    servers, entries = [], []
+    for item in spec.split(","):
+        name, _, extra = item.strip().partition(":")
+        if not name:
+            continue
+        cfg = caller_service.settings({"CALLER_LOCATION": name, "CALLER_FAKE": "1", "CALLER_TOKEN": token, "CALLER_FAKE_DELAY_MS": extra or "0",
+                                       "CALLER_FAKE_LLM_MS": str(int(DELAY_S["caller"] * 1000)), "CALLER_FAKE_TTS_MS": str(int(DELAY_S["tts"] * 1000))})
+        httpd = caller_service.make_server(cfg, bind="127.0.0.1", port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{httpd.server_address[1]}"
+        SITE_URLS.append(url); entries.append(f"{name}={url}"); servers.append(httpd)
+    os.environ["ORANGE_CALLERS"] = ",".join(entries)
+    os.environ["ORANGE_CALLER_TOKEN"] = token
+    return servers
+
+
 def fake_request_model(url, payload=None, headers=None, timeout=120):
+    if any(url.startswith(site) for site in SITE_URLS):  # a caller site: real HTTP to the fake service
+        return REAL_URLOPEN(url, payload, headers, timeout)
     if REALPROXY and url.startswith(os.environ.get("ORANGE_LLM_URL", "")[: -len("/v1/chat/completions")]):
         return REAL_URLOPEN(url, payload, headers, timeout)
     if url.endswith(("/v1/health/ready", "/v1/models")):
@@ -164,7 +181,7 @@ def fake_request_model(url, payload=None, headers=None, timeout=120):
         return b"ok", {}
     if url.endswith("/transcribe"):
         time.sleep(DELAY_S["stt"])
-        return json.dumps({"text": spoken.get(hashlib.sha256(payload).hexdigest(), ""), "ms": 300}).encode(), {}
+        return json.dumps({"text": simulation.text_in_wav(payload) or spoken.get(hashlib.sha256(payload).hexdigest(), ""), "ms": 300}).encode(), {}
     if url.endswith("/v1/audio/speech"):
         time.sleep(DELAY_S["tts"])
         return wav_for(payload["input"]), {}
@@ -325,7 +342,7 @@ def soak(page, seconds, receipt, errors):
     assert session["launched"] > AI_CALLS, "no arrivals after the first calls finished"
     assert not s["audio_on_overview"], "audio played without a selected call"
     assert not s["error_lines"] and not stalled and not errors, s
-    assert s["end_labels"] == ["Échantillon terminé · à revoir"], s["end_labels"]
+    assert s["end_labels"] == ["Appel terminé · à revoir"], s["end_labels"]
     assert all(12 <= n <= 24 for n in s["caller_turns_of_finished_calls"]), s
     receipt["status"] = "PASS"
 
@@ -375,6 +392,8 @@ def main():
     parser.add_argument("--oob", action="store_true", help="fake F5 Scans API called by the gateway: verdicts both ways, one injection blocked")
     parser.add_argument("--realproxy", action="store_true", help="Laurent's real tee proxy code (mock scanner, enforce) in front of a fake upstream")
     parser.add_argument("--transitions", type=int, default=5)
+    parser.add_argument("--sites", default="lyon:40,montreal:150", help="fake caller sites name:extra_ms,... (the guardrail modes keep the built-in caller)")
+    parser.add_argument("--no-sites", action="store_true", help="built-in caller only")
     parser.add_argument("--out", type=Path, default=HERE / "receipts" / "local-verification.json")
     args = parser.parse_args()
     httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), server.Handler)
@@ -383,8 +402,11 @@ def main():
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     proxy_proc = start_real_proxy() if REALPROXY else None
+    # The guardrail scenarios script specific caller lines (injections) in the in-process fake: no remote sites there.
+    sites = start_fake_sites(args.sites) if not (GUARDED or args.no_sites) else []
     receipt = {"mode": "local fake models; scheduling and audio hand-off only", "root": str(args.root),
-               "fake_delays_s": DELAY_S, "synthetic_speech_chars_per_second": CHARS_PER_SECOND, "checks": {}}
+               "fake_delays_s": DELAY_S, "synthetic_speech_chars_per_second": CHARS_PER_SECOND, "checks": {},
+               "caller_sites": [s.cfg["location"] + " (+" + str(s.cfg["fake_delay_ms"]) + " ms)" for s in sites] or ["built-in caller"]}
     with patch.object(server, "request_model", fake_request_model), patch.object(server, "STATIC_FILE", args.root.resolve() / "urgence.html"), \
             sync_playwright() as p:
         browser = p.chromium.launch(**({"executable_path": CHROMIUM} if CHROMIUM else {}), headless=True, args=["--no-sandbox"])
@@ -545,6 +567,25 @@ def main():
         restored = set(page.evaluate("[...document.querySelectorAll('[data-call]')].map(e=>e.dataset.call)"))
         assert ids <= restored, (ids, restored)
         receipt["checks"]["reload_restores_vacation"] = "PASS"
+
+        # 11. Caller sites: the fake sites produced the callers' lines (audio included) and every turn was timed per site.
+        if sites:
+            report = json.loads(REAL_URLOPEN(base + "/api/latency", headers={"Authorization": httpd.expected_auth}, timeout=5)[0])
+            stats = {s["name"]: s for s in report["sites"]}
+            names = [s.cfg["location"] for s in sites]
+            used = {c["location"] for c in data["calls"] if c.get("callerFacts")}
+            assert used <= set(names) and len(used) == len(names), (used, names)
+            for name in names:
+                assert stats[name]["n"] >= 1 and stats[name]["caller_ms"]["median"] > 0 and stats[name]["fallbacks"] == 0, stats[name]
+            assert report["console"]["analyze_ms"]["n"] >= 1 and report["console"]["stt_ms"]["median"] > 0, report["console"]
+            samples = [row for c in data["calls"] for row in c.get("latency", [])]
+            assert samples and all(row["location"] in names for row in samples if not row.get("scripted")), samples[:3]
+            assert any(row.get("network_ms") is not None for row in samples), "remote turns carry the network share"
+            health = json.loads(REAL_URLOPEN(base + "/api/health", headers={"Authorization": httpd.expected_auth}, timeout=5)[0])
+            assert [c["name"] for c in health["callers"]] == names and all(c["ready"] and c["rtt_ms"] is not None for c in health["callers"]), health["callers"]
+            receipt["checks"]["caller_sites_measured"] = "PASS"
+            receipt["caller_latency"] = {name: {"turns": stats[name]["n"], "caller_ms_median": stats[name]["caller_ms"]["median"],
+                                                "network_ms_median": (stats[name]["network_ms"] or {}).get("median")} for name in names}
 
         receipt["guard_rewrites_served"] = counters["rewrite"]
         assert counters["rewrite"] >= 1, "blocked reply path not exercised"

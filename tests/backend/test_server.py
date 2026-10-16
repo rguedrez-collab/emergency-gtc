@@ -418,6 +418,116 @@ class OutOfBandGuardrailTests(unittest.TestCase):
         self.assertEqual(data["services"]["guardrail"], {"ready": True}); self.assertEqual(data["guardrail"]["mode"], "enforce · hors bande")
 
 
+class CallerSiteTests(unittest.TestCase):
+    """The simulated caller as a remote service (ORANGE_CALLERS): forwarding, round-trip measurement, validation of the
+    site's answer, fallback to the built-in caller, health probes."""
+    payload = {"facts": {"incident": "Fumée dans l'escalier", "address": "huit cours Gambetta à Lyon"}, "style": "rushed", "voice": "fr_male",
+               "messages": ExtractionTests.messages + [{"role": "assistant", "text": "Où êtes-vous ?"}], "location": "lyon", "call": "TEST-3", "turn": 2}
+    env = {"ORANGE_CALLERS": "lyon=http://caller-lyon.invalid:8094/, montreal = https://caller-yul.invalid", "ORANGE_CALLER_TOKEN": "site-token"}
+    wav = base64.b64encode(b"RIFF" + b"\0" * 60).decode()
+
+    def setUp(self):
+        server.caller_failures.clear()
+
+    def site_answer(self, text="Oui, c'est au huit cours Gambetta, vite !", audio=None, timings=None):
+        return json.dumps({"text": text, "audio": self.wav if audio is None else audio, "location": "Lyon · Part-Dieu", "model": "org/site-llm",
+                           "timings": {"llm_ms": 400, "tts_ms": 150, "total_ms": 550} if timings is None else timings}).encode(), {}
+
+    def test_sites_are_parsed_from_the_environment(self):
+        with patch.dict("os.environ", {"ORANGE_CALLERS": " lyon=http://caller-lyon.invalid:8094/ ,montreal = https://caller-yul.invalid, bad, =http://x, local=http://y, nourl=ftp://z"}):
+            self.assertEqual(server.caller_sites(), [{"name": "lyon", "url": "http://caller-lyon.invalid:8094"}, {"name": "montreal", "url": "https://caller-yul.invalid"}])
+            self.assertIsNone(server.caller_site("bad")); self.assertIsNone(server.caller_site(None)); self.assertEqual(server.caller_site("lyon")["name"], "lyon")
+        with patch.dict("os.environ", {"ORANGE_CALLERS": ""}):
+            self.assertEqual(server.caller_sites(), [])
+
+    def test_remote_turn_is_forwarded_with_the_token_and_measured(self):
+        with patch.dict("os.environ", self.env), patch.object(server, "request_model", return_value=self.site_answer()) as request:
+            free = server.GATES["gemma"].free
+            result = server.caller_route(self.payload)
+            self.assertEqual(server.GATES["gemma"].free, free, "a remote site uses its own models, not a Gemma slot")
+        url, sent, headers = request.call_args.args[:3]
+        self.assertEqual(url, "http://caller-lyon.invalid:8094/turn")
+        self.assertEqual((sent["facts"], sent["style"], sent["voice"], len(sent["messages"])), (self.payload["facts"], "rushed", "fr_male", 2))
+        self.assertNotIn("location", sent); self.assertNotIn("turn", sent)
+        self.assertEqual((headers["Authorization"], headers["X-Call-Id"], headers["X-Correlation-Id"]), ("Bearer site-token", "TEST-3", "TEST-3-t2"))
+        self.assertEqual((result["location"], result["site_label"], result["source"], result["model"]), ("lyon", "Lyon · Part-Dieu", "remote_caller", "org/site-llm"))
+        self.assertEqual(result["text"], "Oui, c'est au huit cours Gambetta, vite !"); self.assertEqual(result["audio"], self.wav)
+        self.assertEqual((result["timings"]["llm_ms"], result["timings"]["tts_ms"], result["timings"]["service_ms"]), (400, 150, 550))
+        self.assertGreaterEqual(result["timings"]["network_ms"], 0); self.assertGreaterEqual(result["ms"], 0); self.assertNotIn("fallback", result)
+
+    def test_remote_failure_falls_back_to_the_built_in_caller_then_pauses_the_site(self):
+        def fake(url, payload=None, headers=None, timeout=120):
+            if url.endswith("/turn"):
+                raise OSError("unreachable")
+            return ExtractionTests.completion({"utterance": "Vite, il y a de la fumée partout !"})
+        with patch.dict("os.environ", self.env), patch.object(server, "request_model", side_effect=fake) as request:
+            result = server.caller_route(self.payload)
+            self.assertEqual((result["location"], result["fallback"], result["fallback_reason"], result["requested_location"]), ("local", True, "OSError", "lyon"))
+            self.assertEqual((result["text"], result["source"], result["timings"]["llm_ms"]), ("Vite, il y a de la fumée partout !", "generated_caller", result["ms"]))
+            self.assertNotIn("audio", result, "the built-in caller answers with text; the browser asks /api/tts")
+            self.assertEqual(request.call_args.args[0], server.GEMMA_DIRECT)
+            # The failed site is left alone for a while: the next turn goes local at once, without trying it.
+            request.reset_mock()
+            result = server.caller_route(self.payload)
+            self.assertEqual(result["fallback_reason"], "site_paused"); self.assertFalse(any(c.args[0].endswith("/turn") for c in request.call_args_list))
+            server.caller_failures["lyon"] -= server.CALLER_RETRY_S + 1
+            server.caller_route(self.payload)
+            self.assertTrue(any(c.args[0].endswith("/turn") for c in request.call_args_list), "retried once the pause is over")
+        with patch.dict("os.environ", {**self.env, "ORANGE_CALLER_FALLBACK": "0"}), patch.object(server, "request_model", side_effect=fake):
+            server.caller_failures.clear()
+            with self.assertRaises(server.ModelOutputError) as caught:
+                server.caller_route(self.payload)
+            self.assertIn("lyon", str(caught.exception)); self.assertNotIn("invalid", str(caught.exception), "the site's address stays out of messages")
+
+    def test_unknown_or_local_location_uses_the_built_in_caller(self):
+        with patch.dict("os.environ", self.env), patch.object(server, "request_model", return_value=ExtractionTests.completion({"utterance": "Oui, vite !"})) as request:
+            self.assertEqual(server.caller_route({**self.payload, "location": "local"})["location"], "local")
+            result = server.caller_route({**self.payload, "location": "nowhere"})
+            self.assertEqual((result["location"], result["fallback"], result["fallback_reason"]), ("local", True, "unknown_site"))
+            self.assertTrue(all(c.args[0] == server.GEMMA_DIRECT for c in request.call_args_list))
+        with patch.dict("os.environ", {"ORANGE_CALLERS": ""}), patch.object(server, "request_model", return_value=ExtractionTests.completion({"utterance": "Oui, vite !"})):
+            result = server.caller_route({k: v for k, v in self.payload.items() if k != "location"})
+            self.assertEqual(result["location"], "local"); self.assertNotIn("fallback", result)
+
+    def test_the_sites_answer_is_still_model_output(self):
+        cases = {"stage direction": self.site_answer(text="(tousse) Il y a de la fumée !"), "no audio": self.site_answer(audio=""),
+                 "not a wav": self.site_answer(audio=base64.b64encode(b"<html>").decode()), "bad base64": self.site_answer(audio="%%%"),
+                 "demo word": self.site_answer(text="Dans cette simulation il y a de la fumée.")}
+        for name, answer in cases.items():
+            server.caller_failures.clear()
+            def fake(url, payload=None, headers=None, timeout=120, answer=answer):
+                return answer if url.endswith("/turn") else ExtractionTests.completion({"utterance": "Vite, il y a de la fumée !"})
+            with patch.dict("os.environ", self.env), patch.object(server, "request_model", side_effect=fake):
+                result = server.caller_route(self.payload)
+            self.assertEqual((result["location"], result["fallback"], result["fallback_reason"]), ("local", True, "ModelOutputError"), name)
+        # Missing timings are tolerated: the round trip is still measured, the network share is simply unknown.
+        server.caller_failures.clear()  # the last bad answer paused the site
+        with patch.dict("os.environ", self.env), patch.object(server, "request_model", return_value=self.site_answer(timings={})):
+            result = server.caller_route(self.payload)
+        self.assertEqual(result["location"], "lyon"); self.assertIsNone(result["timings"]["network_ms"]); self.assertIsNone(result["timings"]["llm_ms"])
+        with self.assertRaises(ValueError):
+            server.caller_route({**self.payload, "voice": "en_male"})
+
+    def test_health_probes_every_site_with_its_round_trip(self):
+        def fake(url, payload=None, headers=None, timeout=120):
+            if url == "http://caller-lyon.invalid:8094/health":
+                self.assertEqual(headers["Authorization"], "Bearer site-token")
+                return json.dumps({"ready": True, "location": "Lyon · Part-Dieu", "models": {"llm": "org/site-llm", "tts": "org/site-tts"}}).encode(), {}
+            if url == "https://caller-yul.invalid/health":
+                raise OSError("down")
+            return b'{"loaded":["nemotron","parakeet"]}', {}
+        with patch.dict("os.environ", self.env), patch.object(server, "request_model", side_effect=fake):
+            data = server.health()
+        lyon, montreal = data["callers"]
+        self.assertEqual((lyon["name"], lyon["ready"], lyon["label"], lyon["models"]["llm"], lyon["paused"]), ("lyon", True, "Lyon · Part-Dieu", "org/site-llm", False))
+        self.assertIsInstance(lyon["rtt_ms"], int); self.assertGreaterEqual(lyon["rtt_ms"], 0)
+        self.assertEqual((montreal["ready"], montreal["rtt_ms"], montreal["error"]), (False, None, "OSError"))
+        self.assertFalse(data["services"]["callers"]["ready"]); self.assertTrue(data["ready"], "a site down is not a console outage"); self.assertTrue(data["caller_fallback"])
+        with patch.dict("os.environ", {"ORANGE_CALLERS": ""}), patch.object(server, "request_model", return_value=(b'{"loaded":["nemotron","parakeet"]}', {})):
+            data = server.health()
+        self.assertEqual(data["callers"], []); self.assertNotIn("callers", data["services"])
+
+
 class GatewayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -512,6 +622,54 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(self.request("/api/session")[0], 404)
             with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:  # history survives a reset of the poste
                 self.assertEqual(conn.execute("SELECT count(*) FROM calls").fetchone()[0], 2)
+
+    def test_latency_samples_are_stored_and_aggregated_per_site(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"), \
+                patch.dict("os.environ", {"ORANGE_CALLERS": "lyon=http://caller-lyon.invalid:8094,montreal=http://caller-yul.invalid:8094"}):
+            empty = json.loads(self.request("/api/latency")[1])
+            self.assertEqual(([s["name"] for s in empty["sites"]], empty["samples"], empty["sites"][0]["n"], empty["sites"][0]["caller_ms"]), (["lyon", "montreal"], 0, 0, None))
+            samples = [{"call": "TEST-1", "turn": 1, "base": 1_700_000_000_000, "location": "lyon", "requested": "lyon", "caller_ms": 1200, "network_ms": 80, "llm_ms": 900, "tts_ms": 200, "stt_ms": 300, "analyze_ms": 1600, "reply_tts_ms": 700},
+                       {"call": "TEST-1", "turn": 2, "location": "lyon", "requested": "lyon", "caller_ms": 1000, "network_ms": 60, "llm_ms": 800, "tts_ms": 150, "stt_ms": 280, "analyze_ms": 1500},
+                       {"call": "TEST-2", "turn": 1, "location": "local", "requested": "montreal", "fallback": True, "caller_ms": 1700, "llm_ms": 900, "tts_ms": 750, "stt_ms": 310, "analyze_ms": 1650},
+                       {"call": "TEST-2", "turn": 2, "location": "montreal", "requested": "montreal", "stt_ms": 300, "analyze_ms": 1580, "scripted": True}]
+            for sample in samples:
+                status, body = self.request("/api/latency", sample)
+                self.assertEqual(status, 200, body); self.assertTrue(json.loads(body)["saved"])
+            for bad in ({"location": "../x", "caller_ms": 10}, {"location": "lyon"}, {"location": "lyon", "caller_ms": "fast"}, {"location": "lyon", "call": "bad id", "caller_ms": 10}, []):
+                self.assertEqual(self.request("/api/latency", bad)[0], 400, bad)
+            self.assertEqual(self.request("/api/latency", samples[0], auth=False)[0], 401)
+            self.assertEqual(self.request("/api/latency", samples[0], {"Origin": "https://attacker.example"})[0], 403)
+            status, body = self.request("/api/latency")
+            report = json.loads(body)
+            self.assertEqual(status, 200); self.assertEqual(report["samples"], 4)
+            sites = {s["name"]: s for s in report["sites"]}
+            self.assertEqual(sorted(sites), ["local", "lyon", "montreal"])
+            self.assertEqual((sites["lyon"]["n"], sites["lyon"]["caller_ms"]["median"], sites["lyon"]["caller_ms"]["p95"], sites["lyon"]["network_ms"]["median"], sites["lyon"]["fallbacks"]), (2, 1100, 1200, 70, 0))
+            self.assertEqual((sites["montreal"]["n"], sites["montreal"]["caller_ms"], sites["montreal"]["fallbacks"], sites["montreal"]["configured"]), (0, None, 1, True))
+            self.assertEqual((sites["local"]["n"], sites["local"]["caller_ms"]["median"], sites["local"]["configured"]), (1, 1700, True))
+            self.assertEqual((report["console"]["analyze_ms"]["n"], report["console"]["stt_ms"]["median"]), (4, 300))
+            self.assertEqual((report["recent"][0]["call_id"], report["recent"][0]["location"], len(report["recent"])), ("TEST-2", "montreal", 4))
+            import sqlite3
+            with sqlite3.connect(server.Path(tmp) / "orange.db") as conn:
+                self.assertEqual(conn.execute("SELECT location, requested, fallback, caller_ms, base FROM latency WHERE call_id = 'TEST-2' AND turn = 1").fetchone(), ("local", "montreal", 1, 1700, None))
+                self.assertEqual(conn.execute("SELECT base FROM latency WHERE turn = 1 AND call_id = 'TEST-1'").fetchone()[0], 1_700_000_000_000)
+
+    def test_api_caller_skips_the_gemma_gate_for_a_remote_site(self):
+        gate = server.GATES["gemma"]
+        self.assertTrue(gate.acquire(True, 0)); self.assertTrue(gate.acquire(True, 0))
+        payload = {**CallerSiteTests.payload, "location": "lyon"}
+        try:
+            with patch.object(server, "GATE_WAIT_S", 0.2), patch.dict("os.environ", CallerSiteTests.env), patch.dict(server.caller_failures, clear=True):
+                answer = CallerSiteTests().site_answer()
+                with patch.object(server, "request_model", return_value=answer):
+                    status, body = self.request("/api/caller", payload)
+                self.assertEqual(status, 200, body); data = json.loads(body)
+                self.assertEqual((data["location"], data["audio"]), ("lyon", CallerSiteTests.wav))
+                # The built-in caller waits for a Gemma slot like any other model route.
+                self.assertEqual(self.request("/api/caller", {**payload, "location": "local"})[0], 429)
+        finally:
+            gate.release(); gate.release()
 
     def test_original_html_is_served(self):
         if not server.STATIC_FILE.exists():

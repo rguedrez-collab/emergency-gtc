@@ -169,6 +169,14 @@ nve-button{--text-transform:none;}
 .oc-event-signal .oc-eventtext{color:var(--text-color-feedback-warning);} .oc-event-takeover .oc-eventtext{color:#FF7900;}
 .oc-event-end .oc-eventtext,.oc-event-closed .oc-eventtext{color:var(--text-color-secondary);}
 .oc-boardhint{margin-top:auto;font-size:12px;}
+/* Caller sites: where the simulated caller's voice comes from (call header chip) and the per-site latency rows on the board */
+.oc-site{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-color-secondary);white-space:nowrap;}
+.oc-site::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-green-500);flex:none;}
+.oc-site-warn{color:#FF7900;} .oc-site-warn::before{background:#FF7900;}
+.oc-sites{display:flex;flex-direction:column;gap:4px;}
+.oc-siterow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.5fr) auto;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border-color-base);font-size:13px;}
+.oc-siterow .oc-svc{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.oc-siterow .oc-mono{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* Life where something happens: voice bars for the call being heard, a warm flash on arrival, turns fading in */
 .oc-voice{display:inline-flex;align-items:flex-end;gap:2px;height:10px;margin-right:2px;flex:none;}
 .oc-voice i{display:block;width:2px;height:100%;background:currentColor;border-radius:1px;transform-origin:bottom;animation:voice .9s ease-in-out infinite;}
@@ -232,7 +240,8 @@ html.sober .oc-turn-ai .oc-bubble{background:#f1f8ea;border-color:#cfe3bd;}
 html.sober .oc-turn-op .oc-bubble{background:#fff4e8;border-color:#ffd2a8;}
 html.sober .oc-turn-ai .oc-who,html.sober .oc-turn-ai .oc-cursor,html.sober .oc-status{color:#2f7a12;}
 html.sober .oc-player{border-top:1px solid #d9dde3;}
-html.sober .oc-tile{background:#fff;border-color:#e3e6ea;} html.sober .oc-event{border-bottom-color:#eef0f3;} html.sober .oc-arrivalbar{background:#e6e9ee;}
+html.sober .oc-tile{background:#fff;border-color:#e3e6ea;} html.sober .oc-event,html.sober .oc-siterow{border-bottom-color:#eef0f3;} html.sober .oc-arrivalbar{background:#e6e9ee;}
+html.sober .oc-site-warn{color:#8a4b00;}
 html.sober .oc-emptybox,html.sober .oc-entrycard{border-color:#d9dde3;}
 html.sober .oc-more,html.sober .oc-cardtoggle{color:#5c6670;} html.sober .oc-more:hover,html.sober .oc-cardtoggle:hover{color:#111;}
 html.sober nve-button{--background:#fff;--border:1px solid #111;--color:#111;}

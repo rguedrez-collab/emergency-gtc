@@ -10,7 +10,9 @@ class Logic {
 }
 const context={DCLogic:Logic,React:{createRef:()=>({current:null}),createElement:(type,props,...children)=>({type,props:props||{},children})},
   window:{confirm:()=>true,alert:()=>{}},setTimeout,clearTimeout,setInterval,clearInterval,
-  Date,performance,AbortController,URL:{createObjectURL:()=>'blob:test',revokeObjectURL:()=>{}},console};
+  Date,performance,AbortController,URL:{createObjectURL:()=>'blob:test',revokeObjectURL:()=>{}},console,
+  // Remote caller audio arrives as base64 WAV: the browser decodes it into a Blob.
+  atob:s=>Buffer.from(s,'base64').toString('binary'),Blob:class{constructor(parts,opts){this.parts=parts;this.type=opts?.type;this.size=parts.reduce((n,p)=>n+(p.byteLength??p.length??0),0);}}};
 // The controller under test is logic.js with the scenarios injected, exactly as prepare_ui.mjs embeds it.
 const controller=fs.readFileSync(new URL('../../frontend/src/logic.js',import.meta.url),'utf8').replace('// SCENARIOS is injected',()=>'const SCENARIOS = '+JSON.stringify(samples)+';\n// SCENARIOS is injected')  // same splice as prepare_ui.mjs; function form so `$` in the data is never special;
 vm.runInNewContext(controller+'\nglobalThis.TestComponent=Component;globalThis.SAMPLES=SCENARIOS;globalThis.AI_CALLS=AI_CALLS;',context);
@@ -519,4 +521,97 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const groups=bar.children[0].children.map(g=>g.props.className);assert.deepEqual(groups,['oc-bargroup','oc-bargroup oc-barstatus']);
   assert.ok(ids(bar.children[0].children[1]).includes('orange-settings')&&!ids(bar.children[0].children[1]).includes('orange-session-progress'),'status group: settings, not the counter');
 }
-console.log('PASS: 45 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board and existing session/audio regressions');
+// Caller sites: new scenario calls spread over the ready sites in turn, a pinned site or the gateway's built-in caller.
+{
+  const app=make();app.state.session={status:'paused',id:1,launched:0,total:100,finished:0,failed:0};
+  assert.equal(app.createCall(true,{index:0,auto:true,background:true}).location,'local','no site configured: the built-in caller');
+  assert.equal(app.sitePolicyButton(),null,'no site: no setting to show');
+  app.state.callers=[{name:'paris',ready:true,rtt_ms:12},{name:'montreal',ready:true,rtt_ms:95},{name:'tokyo',ready:false,rtt_ms:null}];
+  const picked=[1,2,3,4].map(i=>app.createCall(true,{index:i,auto:true,background:true}).location);
+  assert.deepEqual([...new Set(picked)].sort(),['montreal','paris'],'ready sites in turn, the down site skipped: '+picked);
+  assert.equal(picked[0]!==picked[1],true);
+  app.state.sitePolicy='montreal';assert.equal(app.pickLocation(),'montreal');
+  app.state.sitePolicy='local';assert.equal(app.pickLocation(),'local');
+  app.state.sitePolicy='gone';assert.equal(app.pickLocation(),'local','a pinned site that disappeared falls back to the built-in caller');
+  app.state.sitePolicy='auto';assert.equal(app.createCall(false).location,'local','manual tests have no simulated caller');
+  app.state.settings=true;const bar=app.controls();const settings=JSON.stringify(bar.children[1]);
+  assert.ok(settings.includes('"id":"orange-site"')&&texts(bar).join(' ').includes('Site appelant : alternance'),'the site policy sits under Réglages');
+  app.state.sitePolicy='montreal';assert.ok(texts(app.controls()).join(' ').includes('Site appelant : montreal'));
+  app.state.sitePolicy='local';assert.ok(texts(app.controls()).join(' ').includes('Site appelant : passerelle'));
+  app.state.services={stt:{ready:true},gemma:{ready:true},voxtral:{ready:true},callers:{ready:false}};app.state.health='Modèles connectés · STT / Gemma 4 / Voxtral';
+  assert.ok(JSON.stringify(app.servicesChip()).includes('Sites appelants'),'a site down shows in the services chip');
+  app.state.services.callers.ready=true;assert.ok(!JSON.stringify(app.servicesChip()).includes('Sites appelants'),'all sites up: nothing to show');
+}
+// A remote site answers with the line and its audio: no /api/tts for the caller, the turn is timed and the sample posted.
+{
+  const app=make();app.state.session={status:'paused',id:1,launched:1,total:100,finished:0,failed:0};
+  app.state.callers=[{name:'lyon',ready:true,rtt_ms:20}];
+  const c=app.createCall(true,{index:0,auto:true,background:true});assert.equal(c.location,'lyon');app.open(c.id);
+  const wav=Buffer.from('RIFF....WAVEfmt ').toString('base64'),sent=[],posted=[];let ttsCalls=0;
+  app.api=async(call,path,payload)=>{sent.push({path,payload});
+    if(path==='/api/caller')return {json:async()=>({text:'Oui, au douze rue des Lilas.',audio:wav,ms:640,location:'lyon',model:'org/site-llm',timings:{llm_ms:450,tts_ms:140,service_ms:590,network_ms:50}})};
+    return {json:async()=>({...result,reply:'Où êtes-vous ?',ms:12})};};
+  app.tts=async(call,text,speaker)=>{ttsCalls++;call.lastTts={ms:33,speaker};return {text};};
+  app.transcribe=async(call,blob)=>{call.lastStt={ms:21};return blob.text||'Oui, au douze rue des Lilas.';};app.play=async()=>{};
+  context.fetch=async(url,opts)=>{posted.push({url,body:JSON.parse(opts.body)});return {ok:true,status:200,json:async()=>({})};};context.AbortSignal={timeout:()=>undefined};
+  await app.nextScenario(c);                       // scripted opening line: spoken through /api/tts, timed but no site measurement
+  assert.equal(ttsCalls,2,'scripted caller line + audible AI reply');
+  const first=c.latency[0];assert.equal((first.scripted&&first.caller_ms==null&&first.location==='lyon'&&first.stt_ms===21&&first.analyze_ms>=0&&first.reply_tts_ms===33),true,JSON.stringify(first));
+  assert.ok(c.prefetch,'the next line is prepared while the AI speaks');await c.prefetch.promise;
+  await app.nextScenario(c);
+  const call=sent.filter(s=>s.path==='/api/caller').at(-1).payload;
+  assert.equal(call.location,'lyon');assert.equal(call.voice,c.voice);assert.equal(call.style,c.voiceStyle);assert.equal(call.call,c.id);assert.ok(Array.isArray(call.messages));
+  assert.equal(ttsCalls,3,'the remote line came with its audio: only the AI reply was synthesized');
+  const sample=c.latency.at(-1);
+  assert.equal(sample.location,'lyon');assert.equal(sample.requested,'lyon');assert.equal(sample.fallback,false);
+  assert.equal(sample.llm_ms,450);assert.equal(sample.tts_ms,140);assert.equal(sample.network_ms,50);assert.ok(sample.caller_ms>=0);assert.equal(sample.stt_ms,21);
+  assert.equal(c.lastCaller.location,'lyon');assert.equal(c.lastCaller.model,'org/site-llm');
+  assert.equal(c.tr.filter(t=>t.who==='Appelant')[1].said,'Oui, au douze rue des Lilas.');
+  assert.ok(c.tools.some(t=>t.name==='Appelant · lyon'&&t.result.startsWith('640 ms')),c.tools.map(t=>t.name+':'+t.result).join(' | '));
+  assert.ok(posted.every(p=>p.url==='/api/latency'));assert.equal(posted.length,c.latency.length);
+  assert.equal(posted.at(-1).body.call,c.id);assert.equal(posted.at(-1).body.base,app.started);assert.equal(posted.at(-1).body.turn,c.ti);
+  // The copilot: one folded line, the breakdown behind Détails; the call header names the site and the last round trip.
+  app.waveMode={amp:0,color:'#3a3a3a'};let shown=texts(app.copilot(app.consoleModel())).join(' ');
+  assert.ok(shown.includes('Latence · dernier tour')&&/Appelant \d+ ms · STT 21 ms · Analyse \d+ ms · Voix IA 33 ms/.test(shown),shown);
+  assert.ok(!shown.includes('modèle 450 ms'),'breakdown folded');
+  app.state.more={latency:true};shown=texts(app.copilot(app.consoleModel())).join(' ');
+  assert.ok(shown.includes('modèle 450 ms · voix 140 ms · réseau 50 ms')&&shown.includes('Médianes')&&shown.includes('2 tours'),shown);
+  const head=texts(app.callPane(app.consoleModel())).join(' ');assert.match(head,/lyon · \d+ ms/);
+  // The export carries the per-turn samples and the site list.
+  let exported=null;context.URL.createObjectURL=b=>{exported=JSON.parse(b.parts[0]);return 'blob:test';};
+  context.document={createElement:()=>({click(){}})};app.download();
+  assert.deepEqual(exported.caller_sites,['lyon']);assert.equal(exported.calls[0].latency.length,2);assert.equal(exported.calls[0].location,'lyon');assert.ok(!('lastTts' in exported.calls[0]));
+  delete context.document;context.URL.createObjectURL=()=>'blob:test';delete context.fetch;delete context.AbortSignal;
+}
+// Fallback: the gateway answers from its built-in caller when the site fails; the console says so and /api/tts speaks the line.
+{
+  const app=make();app.state.session={status:'paused',id:1,launched:1,total:100,finished:0,failed:0};
+  app.state.callers=[{name:'lyon',ready:true}];const c=app.createCall(true,{index:0,auto:true,background:true});app.open(c.id);c.ti=1;
+  app.append(c,'Appelant','Allô, il y a de la fumée','scenario_audio_stt');app.append(c,'Agent IA','Où êtes-vous ?','contextual_gemma');
+  let tts=0;app.api=async(call,path)=>path==='/api/caller'?{json:async()=>({text:'Au douze rue des Lilas.',ms:900,location:'local',fallback:true,fallback_reason:'OSError',requested_location:'lyon',timings:{llm_ms:900}})}:{json:async()=>result};
+  app.tts=async(call,text,speaker)=>{tts++;call.lastTts={ms:700,speaker};return {text};};app.transcribe=async(call,blob)=>blob.text;app.play=async()=>{};
+  await app.nextScenario(c);
+  const sample=c.latency.at(-1);assert.equal(sample.location,'local');assert.equal(sample.requested,'lyon');assert.equal(sample.fallback,true);assert.equal(sample.tts_ms,700);assert.equal(sample.llm_ms,900);
+  assert.ok(tts>=1,'the text-only answer is spoken through /api/tts');
+  assert.ok(c.tools.find(t=>t.name==='Appelant · lyon').result.includes('repli sur la passerelle'));
+  app.waveMode={amp:0,color:'#3a3a3a'};const head=JSON.stringify(app.callPane(app.consoleModel()));
+  assert.ok(head.includes('oc-site-warn')&&head.includes('passerelle · '),head.slice(0,300));
+  app.state.more={latency:true};assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('repli (site demandé : lyon)'));
+}
+// The situation board lists the caller sites: readiness and round trip from health, caller latency per site from the gateway's log.
+{
+  const app=make();app.state.session={status:'running',id:1,launched:2,total:100,finished:0,failed:0};
+  app.state.callers=[{name:'paris',ready:true,rtt_ms:14,label:'Paris · Saint-Denis'},{name:'montreal',ready:false,rtt_ms:null}];
+  app.state.latency={samples:7,sites:[{name:'paris',n:5,fallbacks:0,caller_ms:{n:5,median:1180,p95:1600,max:1700}},{name:'montreal',n:0,fallbacks:2,caller_ms:null},{name:'local',n:2,fallbacks:0,caller_ms:{n:2,median:1900,p95:2100,max:2100}}],
+    console:{stt_ms:{n:7,median:300,p95:330},analyze_ms:{n:7,median:1600,p95:1800},reply_tts_ms:null}};
+  const shown=texts(app.callPane(app.consoleModel())).join(' ').replace(/ /g,' ');  // durations use a narrow no-break space as thousands separator
+  for(const expected of ['Sites appelants · latence','paris · Paris · Saint-Denis','aller-retour 14 ms','appelant 1 180 ms · p95 1 600 ms','5 tours','montreal','injoignable','aucune mesure','0 tours · 2 replis','passerelle','sur place','appelant 1 900 ms','Console (médianes) : Transcription 300 ms · Analyse 1 600 ms'])
+    assert.ok(shown.includes(expected),'board: '+expected+' in '+shown);
+  app.state.callers=[];app.state.latency=null;assert.ok(!texts(app.callPane(app.consoleModel())).join(' ').includes('Sites appelants'),'nothing configured, nothing measured: no block');
+  app.state.latency={samples:1,sites:[{name:'local',n:1,fallbacks:0,caller_ms:{n:1,median:1500,p95:1500,max:1500}}],console:{}};
+  assert.ok(texts(app.callPane(app.consoleModel())).join(' ').includes('passerelle'),'the built-in caller is measured too');
+  // Restored calls from an older snapshot get an empty latency log instead of crashing the copilot.
+  const c=app.createCall(true,{index:0,auto:true,background:true});delete c.latency;app.state.view='call';app.state.selId=c.id;app.waveMode={amp:0,color:'#3a3a3a'};
+  assert.ok(texts(app.copilot(app.consoleModel())).join(' ').includes('Aucune mesure pour l’instant.'));
+}
+console.log('PASS: 49 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');

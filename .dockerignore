@@ -9,7 +9,9 @@ node_modules
 __pycache__
 *.pyc
 .env
+**/.env
 backend/.env
+caller/.env
 tee-proxy.env
 backend/guardrails/tee-proxy.env
 .access-password

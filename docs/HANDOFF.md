@@ -13,15 +13,24 @@ them. Nothing is real: no telephony, no dispatch, no transmission to emergency s
 ## Architecture in one screen
 
 ```
-browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (backend/server.py, stdlib http.server)
+browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (backend/server.py, stdlib http.server) — fixed
   scheduler: 100 calls, 6 handled by the AI at once, 1 arrival / 6 s   Basic auth · per-service gates (2 slots each)
-  audio hand-off: only the selected call is audible                   POST /api/caller   simulated caller line (LLM)
-  console: list · call pane · copilot · situation board               POST /api/analyze  extraction + spoken reply (LLM)
-  case lifecycle, persistence (snapshot every 2 s)                     POST /api/transcribe (STT) · POST /api/tts (TTS)
-  themes: sobre (light) · sombre · verre liquide                       GET/POST /api/session  saved vacation (one owner)
+  audio hand-off: only the selected call is audible                   POST /api/caller   caller line: forwarded to the call's site,
+  console: list · call pane · copilot · situation board                                  or the built-in caller (own LLM, text only)
+  case lifecycle, persistence (snapshot every 2 s)                     POST /api/analyze  extraction + spoken reply (LLM)
+  themes: sobre (light) · sombre · verre liquide                       POST /api/transcribe (STT) · POST /api/tts (TTS)
+  caller site per call (round robin / pinned), per-turn latency        GET/POST /api/session  saved vacation (one owner)
+  samples posted after each turn                                       GET/POST /api/latency  per-site aggregates / one sample
                                                                        optional F5 AI Guardrails (Scans API or tee proxy)
+caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER_* env; bearer token)
+  GET /health · POST /turn {facts, style, messages, voice} -> {text, audio (base64 WAV), timings{llm_ms, tts_ms, total_ms}, location}
 ```
 
+- `caller/simulation.py` holds the simulated caller's prompt, delivery profiles and validation; both the service and
+  the gateway's built-in caller import it, so the two callers cannot drift apart. The gateway re-validates a site's
+  answer (line + WAV) as model output, measures the round trip (`network_ms` = round trip − the site's `total_ms`),
+  bypasses a failed site for 30 s (`caller_failures`) and announces fallbacks (`fallback`, `fallback_reason`,
+  `requested_location`) so the console and the latency log show them. Remote turns take no Gemma gate slot.
 - `frontend/build.mjs` embeds `src/logic.js` (with `src/samples.mjs` spliced in) and the `.oc-*` CSS into the mockup's
   template; every patch asserts it applied. The mockup is an external asset (`frontend/mockup/urgence.html` or `ORANGE_MOCKUP`).
 - `frontend/src/logic.js` is a `DCLogic` component rendered by the mockup's engine; `renderVals()` feeds `liveControls`,
@@ -37,15 +46,26 @@ browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (ba
 
 - Element ids: `#orange-start-session`, `#orange-pause-session`, `#orange-stop-session`, `#orange-session-progress`,
   `#orange-settings`, `#orange-tools`, `#orange-new`, `#orange-scenario`, `#orange-stt`, `#orange-export`,
-  `#orange-user-call`, `#orange-theme`, `#orange-close`, `#orange-retry`, `#orange-next`, `#orange-decision`,
-  `#orange-close-case`, `#orange-more-*`, `#orange-audio-player` (always in the DOM, hidden on the overview,
-  `data-speaker`/`data-playing`/`data-call`), `#orange-player-toggle`, `#orange-player-seek`, `#orange-speaker-label`.
+  `#orange-user-call`, `#orange-theme`, `#orange-site` (only with caller sites), `#orange-close`, `#orange-retry`,
+  `#orange-next`, `#orange-decision`, `#orange-close-case`, `#orange-more-*` (incl. `latency`), `#orange-audio-player`
+  (always in the DOM, hidden on the overview, `data-speaker`/`data-playing`/`data-call`), `#orange-player-toggle`,
+  `#orange-player-seek`, `#orange-speaker-label`.
 - Text formats: the counter reads exactly `n/100 arrivés · n terminés · n échecs · en cours|en pause|arrêtée`;
   end labels keep the suffix `· à revoir`; the guardrail summary says `Dernier verdict : …`; the overview keeps
-  the words `Sélectionnez un appel`.
+  the words `Sélectionnez un appel`; the copilot's latency block is titled `Latence · dernier tour`, the board's
+  `Sites appelants · latence`; durations are formatted by `fmtMs` with a narrow no-break space (U+202F) as thousands
+  separator; the built-in caller is named `passerelle` on screen and `local` in payloads and the database.
+- Tool log names: `Appelant · <site>` for a caller line (result `<ms> ms`, `· repli sur la passerelle` on fallback),
+  `<LLM label>` for analysis, `<TTS label> TTS`, `STT`.
 - List DOM: alert items are `.oc-card[data-call]` (with `.oc-cardtoggle`, `.oc-title`), AI/ended items are
   `.oc-row[data-call]`; the harness helpers `orangeCards()/orangeRows()/orangeOpenFirst()` live in `tests/e2e/verify_local.py`.
-- Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`.
+- Export JSON: `calls[]` carry `tr`, `facts`, `gaps`, `audit`, `reviewRequired` (always true), `reviewed`, `location`,
+  `lastCaller`, `latency[]` (per-turn samples, at most 60 per call); the root carries `caller_sites` and the gateway's
+  `latency` aggregates.
+- Latency sample (browser → `POST /api/latency`, table `latency`): `location` (site that answered, or `local`),
+  `requested`, `fallback`, `caller_ms`, `network_ms`, `llm_ms`, `tts_ms`, `stt_ms`, `analyze_ms`, `reply_tts_ms`, plus
+  `call`, `turn`, `base` (the vacation's time base, joins `calls(base, id)`). The scripted opening line carries no
+  caller timing (`scripted: true`, ignored by the per-site statistics).
 
 ## Behaviour worth knowing before changing anything
 
@@ -66,21 +86,33 @@ browser (frontend/dist/urgence.html = mockup shell + src/logic.js)   gateway (ba
 - Guardrails: option A (gateway calls the Scans API before and after the model), option B (tee proxy on the
   LLM path; block = HTTP 200 + substituted sentence + `X-Tee-Prompt-Action: blocked`). A block holds the call
   for a human; nothing is closed automatically.
+- Caller sites: `pickLocation()` assigns a site to each new scenario call (ready sites in turn, or the pinned
+  `sitePolicy`, or `local`); `callerLine()` posts `/api/caller` with `location`, `voice`, `call`, `turn` and uses the
+  returned audio when there is one (no `/api/tts` for that line); `recordLatency()` posts one sample per turn at the end
+  of `analyzeCall()`. The gateway's health lists `callers[]` (`ready`, `rtt_ms`, `label`, `paused`) and
+  `services.callers.ready`; a site down only adds a warning dot (« Sites appelants ») because the built-in caller
+  takes over. The guardrail e2e modes keep the built-in caller (their fake scripts specific injection lines).
 
 ## How to verify
 
 ```bash
-make test                                      # 45 controller checks (vm, stubbed React/Audio) + 50 backend tests
+make test                                      # 49 controller checks (vm, stubbed React/Audio) + 59 backend + 9 caller-service tests
 make build MOCKUP=/path/to/urgence.html        # frontend/dist/urgence.html (one backend test skips until it exists)
-make e2e                                       # 12 headless checks with fake models (needs Playwright + Chromium)
-python3 tests/e2e/verify_local.py --guarded | --oob | --realproxy | --soak 300
+make e2e                                       # 13 headless checks with fake models and two fake caller sites (needs Playwright + Chromium)
+python3 tests/e2e/verify_local.py --guarded | --oob | --realproxy | --soak 300 | --no-sites
 ```
 The fake models (`tests/e2e/verify_local.py`) follow an intake protocol so the preview reads like a real call, but
-dialogue quality can only be judged with the real models.
+dialogue quality can only be judged with the real models. The fake caller sites (`start_fake_sites`, also used by
+`tools/preview_local.py`) run the real `caller/service.py` code in `CALLER_FAKE` mode with an extra delay per site
+(`lyon +40 ms`, `montreal +150 ms`); their silent WAV carries its text in a private RIFF chunk (`simulation.fake_wav`
+/ `text_in_wav`) so the fake STT reads it back.
 
 ## Open items
 
 - Deploy this build to the demonstration host and run the real-model scripts there (kept with the deployment).
+- Caller sites with real models: run `caller/service.py` (or the `caller` image) at a second location with its own
+  LLM + TTS, set `ORANGE_CALLERS` / `ORANGE_CALLER_TOKEN` on the gateway, and compare `GET /api/latency` across
+  sites; the fake sites only prove the plumbing and the measurement path.
 - F5 AI Guardrails: real tenant credentials, the tenant region, a joint test; confirm non-cleared outcome strings.
 - Decide the « À traiter » policy (every call vs signal-only) with the product owner.
 - The mockup's redistribution status before publishing `frontend/dist/` or `frontend/mockup/` anywhere.

@@ -16,6 +16,9 @@ const AI_CALLS = 6, ARRIVAL_MS = 6000, MANUAL_CALLS = 4;
 const FACT_ORDER = ['Incident','Lieu','Personnes','Rappel','Danger'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const h = (...args) => React.createElement(...args);
+// A caller site answers with its audio inside the JSON (base64 WAV); durations are shown with a thin thousands separator.
+const wavBlob = b64 => { const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Blob([bytes], {type:'audio/wav'}); };
+const fmtMs = v => v == null || !Number.isFinite(v) ? '—' : String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u202f') + ' ms';
 // Quotes were verified against caller turns; a later analysis omitting a field must not erase it.
 const mergeFacts = (old, next) => { const fields = new Set(next.map(f => f.k));
   return [...next, ...old.filter(f => !fields.has(f.k))].sort((a, b) => FACT_ORDER.indexOf(a.k) - FACT_ORDER.indexOf(b.k)).slice(0, 8); };
@@ -29,7 +32,8 @@ const initialStyle = () => {
 const footnoteText=L=>'Signal IA ≠ gravité clinique. Éléments déclarés vérifiés par correspondance textuelle ; interprétation et synthèse à valider par l’opérateur. Aucun diagnostic ni consigne médicale. STT : '+L.sttLabel+' · Analyse : '+L.llm+' · Voix : '+L.tts+'.';
 
 class Component extends DCLogic {
-  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0}};
+  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
+    callers:[], latency:null, sitePolicy:'auto'};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
   componentDidMount() {
@@ -39,8 +43,8 @@ class Component extends DCLogic {
       this.setState({shift:Date.now()-this.started});
       this.pumpSession();
     }, 250);
-    this.refreshHealth();
-    this.healthTick = setInterval(() => this.refreshHealth(), 30000);
+    this.refreshHealth(); this.refreshLatency();
+    this.healthTick = setInterval(() => {this.refreshHealth(); this.refreshLatency();}, 30000);
     // The gateway keeps the vacation: restore it, then save every 2 s while something exists.
     this.restoring = true;
     this.restore().finally(() => {this.restoring = false;});
@@ -119,9 +123,32 @@ class Component extends DCLogic {
     try {const r=await fetch('/api/health',{signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Connexion refusée');
       const h=await r.json();const g=h.guardrail||{};const guard=g.configured?(h.services?.guardrail?.ready===false?' · garde-fou injoignable':' · garde-fou '+(g.name||'')+' actif'+(g.mode?' ('+g.mode+')':'')):'';
       const m=h.models||{},stt=Array.isArray(m.stt)&&m.stt.length?m.stt:['nemotron','parakeet'];
-      if(!this.disposed)this.setState({guardrail:g,services:h.services||{},models:m,stt:stt.includes(this.state.stt)?this.state.stt:stt[0],
+      if(!this.disposed)this.setState({guardrail:g,services:h.services||{},models:m,stt:stt.includes(this.state.stt)?this.state.stt:stt[0],callers:Array.isArray(h.callers)?h.callers:[],
         health:(h.ready?'Modèles connectés · STT / '+(m.llm_label||'Gemma 4')+' / '+(m.tts_label||'Voxtral'):'Modèle indisponible')+guard});
     } catch(e) {if(!this.disposed)this.setState({services:{stt:{ready:false},gemma:{ready:false},voxtral:{ready:false}},health:'Connexion indisponible'});}
+  }
+  // Per-site latency aggregates kept by the gateway (median, p95 of the caller round trip; the console's own steps).
+  async refreshLatency() {
+    try {const r=await fetch('/api/latency',{signal:AbortSignal.timeout(10000)});if(!r.ok)return;const d=await r.json();
+      this.latencyRefreshedAt=Date.now();if(!this.disposed&&d&&Array.isArray(d.sites))this.setState({latency:d});
+    } catch(e) {}
+  }
+  // Which caller site produces the next scenario call's voice: the ready sites in turn (default), a pinned site, or the
+  // gateway's built-in caller ('local'). Without configured sites every call is local.
+  pickLocation() {
+    const sites=this.state.callers||[];if(!sites.length)return 'local';
+    const policy=this.state.sitePolicy||'auto';
+    if(policy==='local')return 'local';
+    if(policy!=='auto')return sites.some(s=>s.name===policy)?policy:'local';
+    const pool=sites.filter(s=>s.ready!==false);if(!pool.length)return 'local';
+    this.siteTurn=(this.siteTurn||0)+1;return pool[this.siteTurn%pool.length].name;
+  }
+  siteName(name) {return !name||name==='local'?'passerelle':name;}
+  sitePolicyButton() {
+    const sites=this.state.callers||[];if(!sites.length)return null;
+    const order=['auto',...sites.map(s=>s.name),'local'],cur=order.includes(this.state.sitePolicy)?this.state.sitePolicy:'auto';
+    return this.button('Site appelant : '+(cur==='auto'?'alternance':this.siteName(cur)),()=>this.setState({sitePolicy:order[(order.indexOf(cur)+1)%order.length]}),false,'orange-site',
+      'Site qui produit la voix de l’appelant pour les nouveaux appels : alternance entre les sites, un site précis, ou l’appelant intégré de la passerelle');
   }
   // Model names come from the gateway's health payload (environment-configured); the defaults are the demo's set-up.
   labels() {
@@ -140,6 +167,8 @@ class Component extends DCLogic {
     const dots=states.every(x=>x===true)?[dot('all','Services',true,'STT, analyse et voix opérationnels'+(g.configured?'':' · Garde-fou IA non configuré'))]
       :core.map(([key,label,title],i)=>dot(key,label,states[i],title));
     if(g.configured)dots.push(dot('guard','Garde-fou · '+(g.name||'IA'),svc?.guardrail?.ready??true,`${g.name||'Garde-fou IA'} actif${g.mode?' · '+g.mode:''}`));
+    // Caller sites are not a console outage (the built-in caller takes over), so they only appear when one is down.
+    if(svc?.callers?.ready===false)dots.push(dot('sites','Sites appelants',false,'Un site appelant est injoignable · appelant intégré de la passerelle en repli'));
     return h('span',{key:'services',className:'oc-chip oc-services',role:'status',title:this.state.health},...dots);
   }
   touch() {if(!this.disposed)this.forceUpdate();}
@@ -203,6 +232,8 @@ class Component extends DCLogic {
     if(c.liveCaller)c.sc.cat='Votre appel simulé';
     c.voice=sc.voice||'fr_female';c.voiceStyle=sc.voiceStyle||'urgent';c.targetDurationMs=sc.durationMs||150000;
     c.callerFacts=sc.facts||null;
+    // The site whose service plays this caller (voice included), and the per-turn latency log of the call.
+    c.location=scenario?this.pickLocation():'local';c.latency=[];c.lastCaller=null;
     // Two voice presets only: a small per-sample pitch/tempo offset keeps callers from sounding identical.
     c.voiceRate=scenario&&sc.id?0.96+((sc.family*7+sc.id.charCodeAt(sc.id.length-1))%9)/100:1;
     if(!options.background){this.cancelRecording();this.stopAudio();this.unlockAudio();}
@@ -294,14 +325,15 @@ class Component extends DCLogic {
     const t=this.tool(c,this.labels().tts+' TTS',speaker==='caller'?`${c.voice} · ${c.voiceStyle}`:`${opts.voice} · ${speaker==='assistant'?this.state.aiPace:'opérateur'}`);
     try{
       const r=await this.api(c,'/api/tts',{text,speaker,...opts});const blob=await r.blob();
-      this.done(t,blob.size+' octets · '+r.headers.get('X-TTS-MS')+' ms');return blob;
+      this.done(t,blob.size+' octets · '+r.headers.get('X-TTS-MS')+' ms');
+      c.lastTts={ms:Number(r.headers.get('X-TTS-MS'))||t.ms,speaker};return blob;
     }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}throw e;}
   }
   async transcribe(c,blob,filename='test.webm') {
     const stt=this.state.stt;this.setPhase(c,'caller');const t=this.tool(c,'STT',stt);
     const r=await this.api(c,'/api/transcribe',blob,{'Content-Type':'application/octet-stream','X-Model':stt,'X-Filename':filename});
     const data=await r.json();if(!data.text?.trim())throw Error('Aucune parole intelligible. Réessayez.');
-    this.done(t,(data.ms||t.ms||0)+' ms · '+stt);return data.text.trim();
+    this.done(t,(data.ms||t.ms||0)+' ms · '+stt);c.lastStt={ms:t.ms};return data.text.trim();
   }
   unlockAudio() {
     // Prime the shared media element inside a user gesture (Safari), never over live audio.
@@ -411,40 +443,64 @@ class Component extends DCLogic {
   async callerTurn(c) {
     // An unanswered caller line (e.g. after handback) gets the AI reply first.
     if(c.ti>0&&!c.takenOver&&this.dialogue(c).at(-1)?.role==='caller')return this.analyzeCall(c);
-    let text,blob=null;
+    let text,blob=null,sample=null;
     if(c.ti>0&&c.callerFacts){
       const p=c.prefetch,valid=()=>p&&p.rev===c.revision&&p.len===this.dialogue(c).length;c.prefetch=null;
       const ready=valid()?await p.promise:null;if(c.ended)return;
-      if(ready&&valid())({text,blob}=ready);
-      else{
-        this.setPhase(c,'compose');const t=this.tool(c,'Gemma · appelant','réponse contextuelle');
-        const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,messages:this.callerContext(c)});
-        const d=await r.json();if(c.ended)return;text=d.text;this.done(t,d.ms+' ms');
-      }
+      if(ready&&valid())({text,blob,sample}=ready);
+      else{this.setPhase(c,'compose');({text,blob,sample}=await this.callerLine(c,this.callerContext(c),'réponse contextuelle'));if(c.ended)return;}
     } else {const u=c.scenario[Math.min(c.ti,c.scenario.length-1)];text=typeof u==='string'?u:u.text;}
     if(!blob){blob=await this.tts(c,text,'caller');if(c.ended)return;}
+    // The scripted opening line is not a measurement of any site; the rest of the turn is still timed.
+    sample=sample||{location:c.location||'local',requested:c.location||'local',fallback:false,scripted:true};
     // Natural turn-taking: a short beat after the previous speaker, never a long wait.
     const wait=c.lastSpeech?TURN_GAP_MS-(performance.now()-c.lastSpeech.at):0;
     if(wait>0){await sleep(wait);if(c.ended)return;}
     // Current revision: after a takeover the caller still finishes what they were saying.
     const speaking=this.play(c,blob,c.revision,'caller',text);
     const recognized=await this.transcribe(c,blob,'scenario.wav');if(c.ended)return;
+    sample.stt_ms=c.lastStt?.ms??null;
     c.ti++;this.append(c,'Appelant',recognized,'scenario_audio_stt',{said:text});
-    await this.analyzeCall(c,speaking);
+    await this.analyzeCall(c,speaking,sample);
+  }
+  // One line of the simulated caller, timed for the latency log. With caller sites configured (ORANGE_CALLERS) the
+  // service at c.location generates and speaks it, and the audio arrives with the text; the gateway's built-in caller
+  // answers with text only, which /api/tts then speaks here. The gateway says which one actually answered (fallback).
+  async callerLine(c,messages,args) {
+    const site=c.location||'local';const t=this.tool(c,'Appelant · '+this.siteName(site),args),t0=performance.now();
+    let d;
+    try{
+      const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,voice:c.voice,messages,location:site,call:c.id,turn:c.ti});
+      d=await r.json();
+    }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}throw e;}
+    const used=d.location||'local',tm=d.timings||{};
+    this.done(t,d.ms+' ms'+(used!==site?' · '+this.siteName(used):'')+(d.fallback?' · repli sur la passerelle':''));
+    const sample={location:used,requested:site,fallback:!!d.fallback,reason:d.fallback_reason||null,llm_ms:tm.llm_ms??d.ms??null,tts_ms:tm.tts_ms??null,network_ms:tm.network_ms??null};
+    let blob=d.audio?wavBlob(d.audio):null;
+    if(c.ended)return {text:d.text,blob,sample};
+    if(!blob){blob=await this.tts(c,d.text,'caller');sample.tts_ms=c.lastTts?.ms??null;}
+    sample.caller_ms=Math.round(performance.now()-t0);
+    c.lastCaller={...sample,at:Date.now(),model:d.model||null};
+    return {text:d.text,blob,sample};
   }
   // Prepare the simulated caller's next line while the previous speaker is still talking.
   prefetchCaller(c,pending) {
     if(!c.callerFacts||c.ended)return;
     const messages=[...this.callerContext(c),...(pending?[pending]:[])].slice(-16);
     const p={rev:c.revision,len:this.dialogue(c).length+(pending?1:0)};
-    p.promise=(async()=>{
-      const t=this.tool(c,'Gemma · appelant','préparée pendant la lecture');
-      try{
-        const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,messages});const d=await r.json();this.done(t,d.ms+' ms');
-        return {text:d.text,blob:await this.tts(c,d.text,'caller')};
-      }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}return null;}
-    })();
+    p.promise=this.callerLine(c,messages,'préparée pendant la lecture').catch(()=>null);
     c.prefetch=p;
+  }
+  // Per-turn latency: who produced the caller's line (site or built-in caller), how long it took, and the console's own
+  // steps (transcription, analysis, AI voice). Kept on the call (copilot, export) and posted to the gateway, which
+  // aggregates it per site (GET /api/latency, tools/db_report.py --latency).
+  recordLatency(c,sample) {
+    if(!sample)return;
+    const row={call:c.id,turn:c.ti,base:this.started,at:Date.now(),...sample};
+    (c.latency=c.latency||[]).push(row);if(c.latency.length>60)c.latency.shift();
+    if(typeof fetch!=='function')return;
+    fetch('/api/latency',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(row)})
+      .then(()=>{if(!this.disposed&&Date.now()-(this.latencyRefreshedAt||0)>5000)this.refreshLatency();}).catch(()=>{});
   }
   dialogue(c) {return c.tr.filter(t=>['Appelant','Agent IA','Vous'].includes(t.who)).map(t=>({role:t.who==='Appelant'?'caller':t.who==='Vous'?'operator':'assistant',text:t.text}));}
   // The simulated caller remembers what it actually said, not the STT rendering of it.
@@ -458,12 +514,13 @@ class Component extends DCLogic {
     for(let i=all.length-1;i>0&&out.length<59;i--){if((budget-=all[i].text.length)<0)break;out.unshift(all[i]);}
     return [all[0],...out];
   }
-  async analyzeCall(c,beforeSpeech=Promise.resolve()) {
+  async analyzeCall(c,beforeSpeech=Promise.resolve(),sample=null) {
     this.setPhase(c,'think');const t=this.tool(c,this.labels().llm,'extraction + résumé');
     const r=await this.api(c,'/api/analyze',{messages:this.analysisContext(c),call:c.id,turn:c.ti});const d=await r.json();
     if(c.ended)return;
     const verdict=d.guardrail?.configured?' · garde-fou : '+this.guardLabel(d.guardrail):'';
     this.done(t,d.ms+' ms · citations vérifiées · résumé à valider'+verdict);c.lastAnalysis=d;if(d.guardrail?.configured)c.guardrail={...d.guardrail,at:new Date().toISOString()};
+    sample=sample||{location:c.location||'local',requested:c.location||'local',fallback:false};sample.analyze_ms=t.ms;
     c.summary=d.summary;c.facts=mergeFacts(c.facts,d.facts);c.suggestion=d.reply;c.score=d.signals.length?85:40;
     const fresh=d.signals.filter(q=>!c.seenSignals.includes(q));c.seenSignals.push(...fresh);
     c.why=d.signals.length?'Signal à vérifier : « '+(fresh[0]||d.signals[0])+' »':'Évaluation humaine requise ; absence de signal ≠ absence de danger.';
@@ -473,13 +530,14 @@ class Component extends DCLogic {
     const place=c.facts.find(f=>f.k==='Lieu');
     c.sc.place=place?'Déclaré : '+place.v:'Lieu non renseigné';
     c.info.find(f=>f.k==='Adresse').v=place?'Déclarée, non vérifiée : '+place.v:'Non confirmée';
-    if(c.takenOver){this.setPhase(c,'operator');return;}
+    if(c.takenOver){this.recordLatency(c,sample);this.setPhase(c,'operator');return;}
     const rev=c.revision;let voice=null;
     // Nobody hears a call that is not selected, so its reply needs no voice synthesis.
     if(c.id===this.audible()){
-      this.setPhase(c,'tts');voice=await this.tts(c,d.reply);
+      this.setPhase(c,'tts');voice=await this.tts(c,d.reply);sample.reply_tts_ms=c.lastTts?.ms??null;
       if(c.auto&&c.id===this.audible()&&rev===c.revision&&!c.ended&&this.canAdvance(c))this.prefetchCaller(c,{role:'assistant',text:d.reply});
     }
+    this.recordLatency(c,sample);
     await beforeSpeech;
     if(c.ended||c.takenOver||rev!==c.revision)return;
     this.append(c,'Agent IA',d.reply,'contextual_gemma');if(voice)await this.play(c,voice,rev,'assistant',d.reply);
@@ -599,7 +657,8 @@ class Component extends DCLogic {
   toggleAudio() {this.unlockAudio();this.setState({audioOn:true});}
   download() {
     const data={mode:'demonstration',exported_at:new Date().toISOString(),dispatch_connected:false,session:this.state.session,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,...c})=>c)};
+      caller_sites:(this.state.callers||[]).map(s=>s.name),latency:this.state.latency,
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,...c})=>c)};
     const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='orange-vacation-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -613,7 +672,7 @@ class Component extends DCLogic {
   // Serializable state only: no abort controllers, prefetched audio, queued speech or transient busy flags.
   snapshot() {
     return {owner:this.ownerId(),takeover:!!this.takeover,startedAt:this.started,session:this.state.session,seq:this.seq,scIdx:this.scIdx,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,...c})=>c)};
   }
   persist(final=false) {
     if(this.disposed||this.restoring||this.readOnly||this.state.session.status==='idle'&&!this.state.calls.length)return;
@@ -636,7 +695,7 @@ class Component extends DCLogic {
       this.seq=Math.max(this.seq,s.seq||0,...s.calls.map(c=>c.n||0));this.scIdx=Math.max(this.scIdx,s.scIdx||0);
       this.nextArrivalAt=Date.now()+ARRIVAL_MS;
       const now=Date.now();
-      const calls=s.calls.map(c=>{const call={...c,controllers:new Set(),prefetch:null,queued:null,busy:false,t:now-c.started,
+      const calls=s.calls.map(c=>{const call={...c,controllers:new Set(),prefetch:null,queued:null,busy:false,t:now-c.started,latency:c.latency||[],
           phase:c.ended?'ended':['caller','think','tts','compose'].includes(c.phase)?'gap':c.phase};
         call.tools.forEach(t=>{if(t.status==='running'){t.status='cancelled';t.result='interrompu au rechargement';}});
         // A live microphone capture does not survive a reload.
@@ -694,6 +753,7 @@ class Component extends DCLogic {
     const settings=this.state.settings?h('div',{key:'settings',className:'oc-settings'},
       h('span',{key:'l',className:'oc-h'},'Réglages'),
       this.themeButton(),
+      this.sitePolicyButton(),
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
@@ -833,7 +893,7 @@ class Component extends DCLogic {
     const d=this.decorate(c),mode=this.modeFor(c),taken=c.takenOver;
     const header=h('div',{className:'oc-head'},
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
-        h('span',{className:'oc-muted'},c.id+' · '+c.sc.place),h('span',{className:'oc-mono oc-right'},d.dur)),
+        h('span',{className:'oc-muted'},c.id+' · '+c.sc.place),this.siteChip(c),h('span',{className:'oc-mono oc-right'},d.dur)),
       // One line: the mode (with its help) on the left, every call-level action on the right — no separate control band.
       h('div',{className:'oc-mode'+(taken?' taken':'')},
         h('div',{className:'oc-modetext'},h('span',{className:'oc-modetitle'},h('span',{style:{color:mode.color}},mode.title),this.moreButton('mode','Aide')),
@@ -868,6 +928,7 @@ class Component extends DCLogic {
       h('div',{className:'oc-tiles'},tile('live',m.live,m.live>1?'appels en cours':'appel en cours','neutral'),tile('ai',m.ai.length,'pris en charge par l’IA','ai'),
         tile('alerts',alerts,'à traiter','alert'),tile('done',done,'clôturés','neutral')),
       h('div',{className:'oc-arrival'},h('div',{className:'oc-arrivalbar'},h('span',{style:{width:Math.round(frac*100)+'%'}})),h('span',{className:'oc-muted oc-arrivaltext'},m.arrival)),
+      this.sitesBoard(),
       h('div',{className:'oc-feedhead'},'Activité'),
       h('div',{className:'oc-feed'},...this.activityFeed(8).map((e,i)=>h('div',{key:i,className:'oc-event oc-event-'+e.kind},h('span',{className:'oc-mono'},e.at),h('span',{className:'oc-eventtext oc-ellipsis'},e.text)))),
       h('div',{className:'oc-boardhint oc-muted'},'Sélectionnez un appel pour l’écouter · Échap pour revenir ici.')));
@@ -883,6 +944,47 @@ class Component extends DCLogic {
       if(c.reviewed&&c.reviewedAt!=null)events.push({t:c.reviewedAt,kind:'closed',text:`${c.id} · dossier clos`});
     }
     return events.filter(e=>Number.isFinite(e.t)).sort((a,b)=>b.t-a.t).slice(0,n).map(e=>({...e,at:fmt(Math.max(0,e.t))}));
+  }
+  // Caller sites on the board: readiness and round trip from the gateway's health probe, the caller's latency per site
+  // (median, p95 over the recent turns) from the latency log. The built-in caller appears as « passerelle » once measured.
+  sitesBoard() {
+    const sites=this.state.callers||[],lat=this.state.latency,stats=name=>(lat?.sites||[]).find(s=>s.name===name);
+    const names=[...sites.map(s=>s.name),...(lat?.sites||[]).map(s=>s.name).filter(n=>!sites.some(s=>s.name===n))];
+    if(!names.length)return null;
+    const row=name=>{const s=sites.find(x=>x.name===name),st=stats(name),state=s?(s.ready?'ok':'warn'):'off';
+      return h('div',{key:name,className:'oc-siterow'},
+        h('span',{className:'oc-svc oc-svc-'+state,title:s?(s.ready?'Site joignable':'Site injoignable · repli sur la passerelle'):'Appelant intégré de la passerelle'},this.siteName(name)+(s?.label&&s.label!==name?' · '+s.label:'')),
+        h('span',{className:'oc-mono'},s?(s.rtt_ms!=null?'aller-retour '+fmtMs(s.rtt_ms):'injoignable'):'sur place'),
+        h('span',{className:'oc-mono'},st?.caller_ms?'appelant '+fmtMs(st.caller_ms.median)+' · p95 '+fmtMs(st.caller_ms.p95):'aucune mesure'),
+        h('span',{className:'oc-mono oc-right'},(st?.n||0)+(st?.n===1?' tour':' tours')+(st?.fallbacks?' · '+st.fallbacks+' repli'+(st.fallbacks>1?'s':''):'')));};
+    const con=lat?.console,steps=con?[['Transcription',con.stt_ms],['Analyse',con.analyze_ms],['Voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
+    return h('div',{className:'oc-sites'},h('div',{className:'oc-feedhead'},'Sites appelants · latence'),...names.map(row),
+      steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null);
+  }
+  // Where the selected call's caller voice comes from, and the last turn's round trip; shown on scenario calls once a
+  // site is configured or was used.
+  siteChip(c) {
+    const sites=this.state.callers||[],last=c.lastCaller;
+    if(!c.callerFacts||(!sites.length&&(c.location||'local')==='local'&&!last))return null;
+    const used=last?.location||c.location||'local';
+    const title='Site de l’appelant simulé'+(last?` · dernier tour ${fmtMs(last.caller_ms)} (modèle ${fmtMs(last.llm_ms)}, voix ${fmtMs(last.tts_ms)}${last.network_ms!=null?', réseau '+fmtMs(last.network_ms):''})`:'')
+      +(last?.fallback?' · site demandé injoignable, appelant intégré de la passerelle en repli':'');
+    return h('span',{key:'site',className:'oc-site'+(last?.fallback?' oc-site-warn':''),title},this.siteName(used)+(last?' · '+fmtMs(last.caller_ms):''));
+  }
+  // Latency of the last turn in the copilot: one line folded, the breakdown and the call's medians behind Détails.
+  latencyBlock(c) {
+    const rows=c.latency||[],last=rows.at(-1);
+    const line=last?[['Appelant',last.caller_ms],['STT',last.stt_ms],['Analyse',last.analyze_ms],['Voix IA',last.reply_tts_ms]].filter(([,v])=>v!=null).map(([k,v])=>k+' '+fmtMs(v)).join(' · ')||'Mesure en cours.':'Aucune mesure pour l’instant.';
+    const body=[h('span',{key:'line',className:'oc-muted oc-ellipsis'},line)];
+    if(this.more('latency')&&last){
+      const median=k=>{const v=rows.map(r=>r[k]).filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;};
+      const kv=[['Site',this.siteName(last.location)+(last.fallback?' · repli (site demandé : '+this.siteName(last.requested)+')':'')],
+        ['Appelant',fmtMs(last.caller_ms)+(last.llm_ms!=null?' · modèle '+fmtMs(last.llm_ms):'')+(last.tts_ms!=null?' · voix '+fmtMs(last.tts_ms):'')+(last.network_ms!=null?' · réseau '+fmtMs(last.network_ms):'')],
+        ['Transcription',fmtMs(last.stt_ms)],['Analyse',fmtMs(last.analyze_ms)],['Voix IA',fmtMs(last.reply_tts_ms)],
+        ['Médianes',fmtMs(median('caller_ms'))+' appelant · '+fmtMs(median('analyze_ms'))+' analyse · '+rows.length+(rows.length>1?' tours':' tour')]];
+      body.push(h('div',{key:'kv',className:'oc-kv'},...kv.flatMap(([k,v],i)=>[h('span',{key:'k'+i,className:'oc-muted'},k),h('span',{key:'v'+i},v)])));
+    }
+    return h('div',{key:'Latence',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Latence · dernier tour'),this.moreButton('latency')),...body);
   }
   // Three tiny bars for the call whose audio is actually playing: motion only where something is happening.
   voiceMark(c) {
@@ -979,6 +1081,7 @@ class Component extends DCLogic {
         h('span',{className:t.status==='running'?'oc-pulse':'',style:{color:t.status==='error'?OP:t.status==='cancelled'?SEC:BRAND}},({done:'✓',error:'!',cancelled:'×'})[t.status]||'◌'),
         h('span',{className:'oc-mono'},t.name),h('span',{className:'oc-muted oc-ellipsis'},t.args),h('span',{className:'oc-toolres'},t.status==='running'?'en cours…':t.result))))
         :h('span',{className:'oc-muted oc-ellipsis'},tools[0]?tools[0].name+' · '+tools[0].args+' · '+(tools[0].status==='running'?'en cours…':tools[0].result):'Aucun traitement pour l’instant.')),
+      this.latencyBlock(c),
       this.footnote());
   }
   footnote() {
