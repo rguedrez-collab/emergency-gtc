@@ -1023,8 +1023,8 @@ def propose_tools(messages, facts, raw_tools):
         args = item.get("args") if isinstance(item.get("args"), dict) else {}
         if item["tool"] == "lookup_address":
             quote = caller_quote(args.get("address"), sources) if isinstance(args.get("address"), str) else None
-            if not quote:
-                continue  # an address the caller did not say is not looked up
+            if not quote or not ADDRESS.search(quote):
+                continue  # not looked up: an address the caller did not say, or a quote that is no street address
             args = {"address": quote}
         else:
             args = {}

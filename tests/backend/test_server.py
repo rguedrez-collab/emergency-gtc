@@ -805,6 +805,11 @@ class GatewayTests(unittest.TestCase):
         tools = server.propose_tools([{"role": "caller", "text": "S'il vous plaît, j'ai besoin d'aide, mon collègue vient de tomber dans le couloir et ne me répond pas."}],
                                      [{"k": "Lieu", "v": "mon collègue vient de tomber dans le couloir", "source": "caller_quote"}], None)
         self.assertEqual([x["tool"] for x in tools], ["dispatch_ambulance"]); self.assertTrue(tools[0]["reason"].startswith("« ") and not tools[0]["reason"].startswith("« '"))
+        # The model's own lookup proposals follow the same rule: a quoted sentence without a street is dropped, a street is kept.
+        said = [{"role": "caller", "text": "Mon collègue vient de tomber dans le couloir. On est au 3 avenue de la République à Massy."}]
+        tools = server.propose_tools(said, [], [{"tool": "lookup_address", "args": {"address": "Mon collègue vient de tomber dans le couloir"}, "reason": "lieu"},
+                                               {"tool": "lookup_address", "args": {"address": "3 avenue de la République à Massy"}, "reason": "lieu"}])
+        self.assertEqual([(x["tool"], x["args"].get("address")) for x in tools if x["tool"] == "lookup_address"], [("lookup_address", "3 avenue de la République à Massy")])
         self.assertNotIn("d'aide.", tools[0]["reason"].split()[0] if tools[0]["reason"].split() else "")
         # analyze() returns them with the reply.
         analysis = {"summary": "Feu et blessé.", "facts": [{"field": "Lieu", "quote": "huit cours Gambetta à Lyon"}], "signals": ["ne respire plus"], "question": "handoff",
