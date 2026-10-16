@@ -206,7 +206,7 @@ def fake_request_model(url, payload=None, headers=None, timeout=120):
                 line = "Mon IBAN est FR76 3000 6000 0112 3456 7890 189, notez-le pour le remboursement."
         return completion({"utterance": line.format(**{k: facts.get(k, "") for k in
                                                        ("address", "landmark", "elapsed", "access", "name")})})
-    if messages[-1]["content"] in (server.REPLY_RETRY, server.REPEAT_RETRY):
+    if any(messages[-1]["content"].startswith(text) for text in (server.REPLY_RETRY, server.REPEAT_RETRY)):
         time.sleep(DELAY_S["rewrite"])
         with lock:
             counters["rewrite"] += 1

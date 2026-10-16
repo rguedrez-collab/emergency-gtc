@@ -121,12 +121,50 @@ class ExtractionTests(unittest.TestCase):
             result = server.analyze({"messages": messages})
         self.assertEqual(result["reply"], "Y a-t-il quelqu'un dans la pièce enfumée ? Restez à distance de la fumée.")
         self.assertEqual(result["reply_retries"], 1)
-        self.assertEqual(request.call_args.args[1]["messages"][-1]["content"], server.REPEAT_RETRY)
-        # The rewrite is held to the same guard: a blocked rewrite keeps the safe (if repeated) line.
+        self.assertTrue(request.call_args.args[1]["messages"][-1]["content"].startswith(server.REPEAT_RETRY))
+        self.assertIn("recueil", request.call_args.args[1]["messages"][1]["content"], "the model is told what is known and what to ask next")
+        # The rewrite is held to the same guard: a blocked rewrite gives way to the checklist's own question, never the repeated line.
         with patch.object(server, "request_model", side_effect=[self.completion(analysis), self.completion({"reply": "Les secours arrivent."})]):
             result = server.analyze({"messages": messages})
-        self.assertEqual(result["reply"], "Je reste avec vous. Décrivez-moi ce que vous voyez.")
+        self.assertIn(result["reply"], server.QUESTIONS.values()); self.assertEqual(result["reply_source"], "checklist")
         self.assertIn("state", server.QUESTIONS)
+
+    def test_intake_checklist_tracks_what_is_known_asked_and_critical(self):
+        messages = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Bonjour, une situation critique."},
+                    {"role": "assistant", "text": "Pouvez-vous préciser l'adresse ou un repère exact du lieu ?"}, {"role": "caller", "text": "Onze rue Gabriel Bertillon Longemeau."},
+                    {"role": "assistant", "text": "Où êtes-vous exactement dans l'immeuble, étage ou porte ?"}, {"role": "caller", "text": "Je suis au 2ᵉ étage"},
+                    {"role": "assistant", "text": "Quel est l'état de la personne blessée ? Respire-t-elle ?"}, {"role": "caller", "text": "Elle ne respire pas et euh, y a beaucoup de soins."}]
+        state = server.intake_state(messages)
+        self.assertEqual((state["known"], state["critical"]), (["location", "state", "access"], True))
+        self.assertEqual(state["asked"], ["location", "state", "access"])
+        self.assertEqual(state["next"], "danger", "critical: dangers before people, then the administrative items")
+        self.assertEqual(server.intake_state(messages[:2])["next"], "location")
+        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois, il est inconscient, porte 12, mon numéro est le 06 12 34 56 78"}])["next"], "handoff")
+
+    def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
+        said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"
+        messages = [{"role": "caller", "text": "Il y a une situation critique au onze rue Gabriel Bertillon à Longjumeau, au deuxième étage."},
+                    {"role": "assistant", "text": said}, {"role": "caller", "text": "La personne est allongée, elle ne respire pas."}]
+        recap = "La personne est allongée au 2ᵉ étage, 11 rue Gabriel Bertillon Longjumeau, elle ne respire pas et vous avez mentionné des soins. Dites-moi si elle est allongée ou assise et si vous voyez des objets autour d'elle."
+        analysis = {"summary": "Personne allongée qui ne respire pas.", "facts": [{"field": "Lieu", "quote": "onze rue Gabriel Bertillon à Longjumeau"}],
+                    "signals": ["elle ne respire pas"], "question": "state|danger|access", "reply": recap}
+        self.assertTrue(server.similar_line(recap, said)); self.assertTrue(server.restates(recap, [{"k": "Lieu", "v": "onze rue Gabriel Bertillon à Longjumeau"}]))
+        self.assertFalse(server.similar_line("Y a-t-il un danger autour de vous, du feu ou de la fumée ?", said))
+        # The rewrite repeats again: the checklist's question takes over, the critical safety line is said once, handoff is set.
+        with patch.object(server, "request_model", side_effect=[self.completion(analysis), self.completion({"reply": "Dites-moi si elle est allongée ou assise et si vous voyez des objets autour d'elle."})]) as request:
+            result = server.analyze({"messages": messages})
+        self.assertEqual(result["reply_source"], "checklist"); self.assertEqual(result["question"], "handoff")
+        self.assertTrue(result["reply"].startswith(server.SAFETY_LINE), result["reply"])
+        self.assertIn(result["reply"][len(server.SAFETY_LINE) + 1:], server.QUESTIONS.values())
+        self.assertEqual(result["intake"]["critical"], True); self.assertEqual(result["intake"]["next"], "danger")
+        sent = json.loads(request.call_args_list[0].args[1]["messages"][1]["content"])["recueil"]
+        self.assertEqual((sent["prochaine_question"], sent["situation_critique"], sent["répliques_déjà_dites"]), ("danger", True, [said]))
+        # A good, different reply passes untouched.
+        good = dict(analysis, reply="Y a-t-il un danger autour de vous : du feu, de la fumée, de l'eau ?")
+        with patch.object(server, "request_model", return_value=self.completion(good)):
+            result = server.analyze({"messages": messages})
+        self.assertEqual(result["reply_source"], "contextual_gemma"); self.assertTrue(result["reply"].startswith(server.SAFETY_LINE))
+        self.assertEqual(result["reply_retries"], 0)
 
     def test_blocked_reply_gets_one_guarded_rewrite(self):
         analysis = {"summary": "Fumée signalée.", "facts": [], "signals": [], "question": "location", "reply": "Je préviens les secours."}

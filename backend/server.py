@@ -616,6 +616,16 @@ occupe » sont interdits, même au futur. Si l'appelant attend une action extern
 ne prétends pas l'effectuer. Tu peux dire « Je suis là, je vous écoute » et
 reformuler un fait réellement dit. Le résumé reste séparé : ne le récite pas au
 téléphone.
+
+PRIORITÉS : le champ « recueil » du message indique ce qui est déjà connu, ce qui
+manque et la prochaine question à poser : pose cette question-là, en 20 mots au
+plus, ou donne une consigne. Interdit : récapituler la situation, redire l'adresse ou
+un fait déjà donné, dire « vous avez mentionné », reposer une question figurant dans
+« répliques_déjà_dites », poser deux questions. Si « situation_critique » est vrai
+(personne qui ne respire pas, inconsciente, qui saigne beaucoup, feu) : question =
+handoff, une consigne de sécurité simple (rester près de la personne, téléphone en
+haut-parleur, ne pas la déplacer, faire ouvrir l'entrée) et au plus une question
+d'observation.
 """
 # The simulated caller's character prompt (CALLER_SYSTEM) is caller/simulation.py's, shared with the caller service.
 REPLY_RETRY = """La réplique proposée a été bloquée par le filtre de sécurité : elle affirmait
@@ -623,16 +633,101 @@ une action externe (transmission, contact, transfert, envoi, arrivée ou prise e
 charge par des secours ou un opérateur), un geste médical, ou citait une
 démonstration. Propose une autre réplique orale naturelle, 1 à 2 phrases courtes,
 sans aucune de ces affirmations. Réponds uniquement en JSON {"reply":"..."}."""
-REPEAT_RETRY = """Tu viens de dire exactement la même chose à l'appelant. Propose une réplique différente qui
-fait avancer l'appel : reformule ce que tu as compris, pose la question manquante la plus
-prioritaire (lieu, état des personnes, danger, accès, rappel) ou donne une consigne de
-sécurité générale non médicale. 1 à 2 phrases courtes, sans affirmer d'action externe.
+REPEAT_RETRY = """Ta réplique répète (ou presque) ce que tu as déjà dit, récapitule la situation ou redit l'adresse.
+Propose une réplique différente qui fait avancer l'appel : pose la prochaine question manquante
+indiquée, ou donne une consigne de sécurité générale non médicale. Une phrase, 20 mots au plus,
+sans récapitulatif, sans redire l'adresse, sans affirmer d'action externe.
 Réponds uniquement en JSON {"reply":"..."}."""
 
 
 def same_line(a, b):
     norm = lambda s: re.sub(r"[^a-zà-ÿ0-9]+", " ", (s or "").lower()).strip()
     return norm(a) == norm(b)
+
+
+# --- The operator's intake checklist, kept by the gateway so a small model is told what to ask next instead of
+# being trusted to remember. Caller words cover an item; AI questions mark it as asked; critical signals reorder.
+INTAKE_ITEMS = ("location", "state", "danger", "people", "access", "callback")
+INTAKE_RULES = {
+    "location": r"\b(rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square|résidence|lieu-dit|autoroute|nationale|gare|station|métro|arrêt de)\b|\b\d{5}\b",
+    "state": r"\b(respire|respirer|respiration|souffle|conscien\w*|inconscien\w*|évanoui\w*|réagit|répond (?:pas|plus)|bouge|pouls|réveille)\b",
+    "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
+    "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",
+    "access": r"\b(étage|porte|code|digicode|interphone|entrée|escalier|ascenseur|bâtiment|batiment|appartement|appart|hall|parking|accès)\b",
+    "callback": r"\b(numéro|rappel\w*|téléphone|portable)\b|\b0[1-9](?:[ .]?\d\d){4}\b",
+}
+ASKED_RULES = {
+    "location": r"adresse|où (?:êtes|vous trouvez|est|se trouve|cela se passe)|repère|quelle ville|le lieu",
+    "state": r"conscien|respire|réagit|état de|saigne|bouge|réveille",
+    "danger": r"danger|feu|fumée|gaz|menace|circulation|dans l'eau",
+    "people": r"combien|quelqu'un d'autre|seule?\b|personnes (?:sont|concernées)",
+    "access": r"étage|porte|entrée|accès|accède|code|interphone|guider",
+    "callback": r"numéro|rappeler|rappel",
+}
+CRITICAL = re.compile(r"ne respire (?:pas|plus)|plus de respiration|respire (?:pas|plus)|inconscien|ne réagit (?:pas|plus)|ne répond (?:pas|plus)|"
+                      r"beaucoup de sang|saigne (?:beaucoup|énormément|abondamment)|se vide de son sang|ne se réveille pas|arrêt cardiaque|s'étouffe|étouffe|"
+                      r"coincée?|bloquée? (?:sous|dans)|en feu|les flammes|fumée partout", re.I)
+ECHO = re.compile(r"vous avez (?:mentionné|dit|indiqué|parlé|évoqué)|vous m'avez dit|comme vous l'avez dit|vous venez de (?:dire|me dire)", re.I)
+SAFETY_HINT = re.compile(r"haut-parleur|ne la déplacez|ne le déplacez|restez (?:près|à côté|auprès)|faites ouvrir|ouvrir l'entrée|ouvrir la porte", re.I)
+SAFETY_LINE = "Restez près de la personne, mettez le téléphone en haut-parleur et ne la déplacez pas."
+STOP_WORDS = {"le", "la", "les", "de", "des", "du", "un", "une", "et", "ou", "à", "au", "aux", "en", "que", "qui", "ne", "pas", "est", "vous", "je", "me", "moi",
+              "il", "elle", "se", "sa", "son", "ses", "ce", "cette", "dans", "sur", "pour", "par", "avec", "si", "y", "a", "dites", "pouvez", "peux", "suis", "là",
+              "nous", "on", "votre", "vos", "mon", "ma", "mes", "plus", "très", "tout", "bien", "merci", "oui", "non", "euh"}
+
+
+def intake_state(messages):
+    callers = " ".join(m["text"] for m in messages if m["role"] == "caller")
+    assistants = [m["text"] for m in messages if m["role"] == "assistant"]
+    known = [k for k in INTAKE_ITEMS if re.search(INTAKE_RULES[k], callers, re.I)]
+    asked = [k for k in INTAKE_ITEMS if any(re.search(ASKED_RULES[k], a, re.I) for a in assistants)]
+    critical = bool(CRITICAL.search(callers))
+    missing = [k for k in INTAKE_ITEMS if k not in known]
+    # The person's state and the dangers come before the administrative items in a critical situation; a question the
+    # caller did not answer comes back after the others, never twice in a row.
+    urgent = (lambda items: [k for k in items if k in ("state", "danger")] + [k for k in items if k not in ("state", "danger")]) if critical else (lambda items: items)
+    order = urgent([k for k in missing if k not in asked]) + urgent([k for k in missing if k in asked])
+    return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": order[0] if order else "handoff"}
+
+
+def _content_words(text):
+    return [w for w in re.sub(r"[^a-zà-ÿ0-9' ]+", " ", (text or "").lower()).split() if w not in STOP_WORDS and len(w) > 2]
+
+
+def similar_line(a, b):
+    """The same line, or nearly: most content words shared, or five content words in the same order."""
+    wa, wb = _content_words(a), _content_words(b)
+    if same_line(a, b):
+        return True
+    if not wa or not wb:
+        return False
+    jaccard = len(set(wa) & set(wb)) / len(set(wa) | set(wb))
+    grams = lambda w: {tuple(w[i:i + 5]) for i in range(len(w) - 4)}
+    return jaccard >= 0.6 or bool(grams(wa) & grams(wb))
+
+
+def restates(reply, facts):
+    """The reply reads the caller's address (or another long fact) back: three consecutive words of it."""
+    words = _content_words(reply)
+    grams = {tuple(words[i:i + 3]) for i in range(len(words) - 2)}
+    for fact in facts:
+        fw = _content_words(fact.get("v", ""))
+        if len(fw) >= 3 and any(tuple(fw[i:i + 3]) in grams for i in range(len(fw) - 2)):
+            return True
+    return False
+
+
+def stalled(reply, previous, facts):
+    return any(similar_line(reply, p) for p in previous) or restates(reply, facts) or bool(ECHO.search(reply))
+
+
+def fallback_reply(state, previous):
+    """The checklist's own question when the model keeps repeating itself: the next missing item, never a line already said."""
+    order = [state["next"]] + [k for k in INTAKE_ITEMS if k not in state["known"]] + ["observation", "changes", "handoff"]
+    for key in order:
+        text = QUESTIONS.get(key)
+        if text and not any(similar_line(text, p) for p in previous):
+            return text
+    return QUESTIONS["handoff"]
 
 
 SERVICES = r"(?:secours|ambulance|pompiers|police|policiers|gendarm\w*|samu|smur|renforts|une équipe)"
@@ -902,13 +997,23 @@ def analyze(payload):
         verdicts.append(verdict)
         if text != latest["text"]:  # the model sees the redacted words; the transcript keeps the caller's own
             messages = [dict(m, text=text) if m is latest else m for m in messages]
+    state = intake_state(messages)
+    previous = [m["text"] for m in messages if m["role"] == "assistant"][-6:]  # what the AI said recently: not to be said again
+    recueil = {"connu": state["known"], "manquant": state["missing"], "prochaine_question": state["next"], "situation_critique": state["critical"],
+               "répliques_déjà_dites": previous}
     prompt = [{"role": "system", "content": SYSTEM},
-              {"role": "user", "content": json.dumps({"test_dialogue": messages}, ensure_ascii=False)}]
-    raw, meta = chat_json(prompt, 0.1, 1200, headers=correlation_headers(payload))
+              {"role": "user", "content": json.dumps({"test_dialogue": messages, "recueil": recueil}, ensure_ascii=False)}]
+    raw, meta = chat_json(prompt, 0.2, 1200, headers=correlation_headers(payload))
     try:
         result = validate_analysis(raw, messages)
     except ValueError as exc:
         raise ModelOutputError("Analyse du modèle invalide : revue humaine requise.") from exc
+    # The checklist decides the question when the model's key is not one of ours, or when the situation is critical.
+    if state["critical"]:
+        result["question"] = "handoff"
+    elif raw.get("question") not in QUESTIONS and result["question"] != "location":
+        result["question"] = state["next"]
+    result["intake"] = {k: state[k] for k in ("known", "missing", "next", "critical")}
     retries = 0
     try:
         reply = spoken_reply(raw.get("reply"))
@@ -924,22 +1029,29 @@ def analyze(payload):
             reply = spoken_reply(rewrite.get("reply"))
         except ValueError as exc:
             raise ModelOutputError("Réponse IA bloquée par le filtre de sécurité : revue humaine requise.") from exc
-    # A line the operator already said verbatim is a stalled dialogue, not a reply: one rewrite under the same guard.
-    previous = [m["text"] for m in messages if m["role"] == "assistant"][-3:]
-    if any(same_line(reply, p) for p in previous):
+    # A reply that repeats (or nearly) what the AI already said, reads the address back or echoes the caller is a stalled
+    # dialogue, not a reply: one rewrite under the same guard, then the checklist's own question.
+    reply_source = "contextual_gemma"
+    if stalled(reply, previous, result["facts"]):
         retries += 1
         rewrite, _ = chat_json(prompt + [{"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)},
-                                         {"role": "user", "content": REPEAT_RETRY}], 0.7, 200, headers=correlation_headers(payload))
+                                         {"role": "user", "content": REPEAT_RETRY + "\nRépliques déjà dites : " + json.dumps(previous, ensure_ascii=False)
+                                          + f"\nProchaine question à poser : {state['next']}."}], 0.7, 200, headers=correlation_headers(payload))
         try:
             candidate = spoken_reply(rewrite.get("reply"))
-            if not any(same_line(candidate, p) for p in previous):
-                reply = candidate
         except ValueError:
-            pass  # keep the repeated but safe line rather than fail the turn
+            candidate = None
+        if candidate and not stalled(candidate, previous, result["facts"]):
+            reply = candidate
+        else:
+            reply, reply_source = fallback_reply(state, previous), "checklist"
+    # Critical situation: the safety instruction is said once, before anything else.
+    if state["critical"] and not SAFETY_HINT.search(reply) and not any(SAFETY_HINT.search(p) for p in previous):
+        reply = SAFETY_LINE + " " + reply
     if verdicts and f5_config()["scan_response"]:
         reply, verdict = guard_text(reply, "response")
         verdicts.append(verdict)
-    result.update(reply=reply, reply_source="contextual_gemma", reply_retries=retries)
+    result.update(reply=reply, reply_source=reply_source, reply_retries=retries)
     result.update(ms=round((time.monotonic() - start) * 1000), usage=meta["usage"],
                   guardrail=f5_report(verdicts) if verdicts else meta["guardrail"])
     return result
