@@ -189,10 +189,13 @@ class Component extends DCLogic {
     const states=core.map(([key])=>ready(key));
     const dots=states.some(x=>x===false)?core.map(([key,label,title],i)=>dot(key,label,states[i],title)):[];
     // The guardrail chip is a toggle: the configuration stays, the AI's turns bypass the proxy while it is off.
-    if(g.configured){const on=g.enabled!==false,state=on?(svc?.guardrail?.ready??true):undefined;
-      dots.push(h('button',{key:'guard',type:'button',id:'orange-guardrail-toggle',className:'oc-svc oc-svc-toggle oc-svc-'+(state===false?'warn':state?'ok':'off'),'aria-pressed':on?'true':'false',
+    if(g.configured){const on=g.enabled!==false,down=on&&svc?.guardrail?.ready===false;
+      dots.push(h('button',{key:'guard',type:'button',id:'orange-guardrail-toggle',role:'switch','aria-checked':on?'true':'false',className:'oc-switch'+(on?' oc-switch-on':'')+(down?' oc-switch-warn':''),
         title:on?`${g.name||'Garde-fou IA'} actif${g.mode?' · '+g.mode:''} · cliquer pour désactiver`:`${g.name||'Garde-fou IA'} désactivé · l’analyse va directement au modèle · cliquer pour réactiver`,
-        onClick:()=>this.toggleGuardrail()},'Garde-fou · '+(g.name||'IA')+(on?'':' · désactivé')));}
+        onClick:()=>this.toggleGuardrail()},
+        h('span',{key:'track',className:'oc-switch-track'},h('span',{className:'oc-switch-knob'})),
+        h('span',{key:'label',className:'oc-switch-label'},'Garde-fou · '+(g.name||'IA')),
+        h('span',{key:'state',className:'oc-switch-state'},on?(down?'injoignable':'activé'):'désactivé')));}
     // Caller sites are not a console outage (the built-in caller takes over), so they only appear when one is down.
     if(svc?.callers?.ready===false)dots.push(dot('sites','Sites appelants',false,'Un site appelant est injoignable · appelant intégré de la passerelle en repli'));
     return dots.length?h('span',{key:'services',className:'oc-chip oc-services',role:'status',title:this.state.health},...dots):null;

@@ -421,7 +421,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.refreshHealth();assert.match(app.state.health,/garde-fou F5 AI Guardrails actif \(enforce · hors bande\)/);
   // Model names follow the gateway's configuration: labels, health text, STT choice, footnote.
   assert.equal(app.labels().llm,'Llama 3');assert.equal(app.state.stt,'whisper');assert.match(app.state.health,/STT \/ Llama 3 \/ Kokoro/);
-  assert.deepEqual(texts(app.servicesChip()),['Garde-fou · F5 AI Guardrails'],'only the guardrail dot while no service is down');
+  assert.deepEqual(texts(app.servicesChip()),['Garde-fou · F5 AI Guardrails','activé'],'only the guardrail dot while no service is down');
   app.state.services={...app.state.services,gemma:{ready:false}};assert.ok(JSON.stringify(app.servicesChip()).includes('Analyse et dialogue · Llama 3'),'service dots name the configured model');
   app.state.services={};app.state.more={note:true};assert.ok(texts(app.footnote()).join('').includes('STT : Whisper · Analyse : Llama 3 · Voix : Kokoro'));
   app.state.models=null;app.state.stt='nemotron';app.state.more={};delete context.fetch;
@@ -736,7 +736,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.refreshHealth();
   let chip=texts(app.servicesChip()).join(' ');assert.ok(chip.includes('Garde-fou · F5 AI Guardrails')&&!chip.includes('désactivé'),chip);
   await app.toggleGuardrail();assert.deepEqual(posted,{enabled:false});assert.equal(app.state.guardrail.enabled,false);
-  chip=texts(app.servicesChip()).join(' ');assert.ok(chip.includes('Garde-fou · F5 AI Guardrails · désactivé'),chip);
+  chip=texts(app.servicesChip()).join(' ');assert.ok(chip.includes('Garde-fou · F5 AI Guardrails')&&chip.includes('désactivé'),chip);
   assert.ok(texts(app.guardBlock(null)).join(' ').includes('Désactivé par l’opérateur'),'the copilot says so too');
   await app.toggleGuardrail();assert.deepEqual(posted,{enabled:true});assert.equal(app.state.guardrail.enabled,true);
   await app.refreshHealth();assert.ok(!app.state.health.includes('désactivé'));
