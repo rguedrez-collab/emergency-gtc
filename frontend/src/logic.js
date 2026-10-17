@@ -27,6 +27,15 @@ const initialStyle = () => {
   try { const saved = localStorage.getItem('orange-style'); if (['sober', 'dark', 'glass'].includes(saved)) return saved; } catch (e) {}
   try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'sober'; } catch (e) { return 'sober'; }
 };
+// The console's layout: « focus » (default) shows one call full screen under a queue strip; « columns » is the three-column
+// console (list, call, copilot). ?layout=columns or the Réglages toggle; the choice is remembered in this browser.
+const initialLayout = () => {
+  try { const q = new URLSearchParams(location.search).get('layout'); if (q === 'columns' || q === 'focus') return q; } catch (e) {}
+  try { const saved = localStorage.getItem('orange-layout'); if (saved === 'columns' || saved === 'focus') return saved; } catch (e) {}
+  return 'focus';
+};
+// The three services an operator can dispatch (same tool ids and labels as the gateway's catalogue).
+const DISPATCH_TOOLS = [['dispatch_ambulance', 'SAMU', 'Déclencher le SAMU · ambulance'], ['dispatch_fire', 'Pompiers', 'Déclencher les pompiers'], ['dispatch_police', 'Police', 'Déclencher la police']];
 // SCENARIOS is injected from samples.mjs: 100 synthetic caller-only test calls.
 // Model names in the footnote follow the gateway's configuration (see labels()).
 const footnoteText=L=>'Signal IA ≠ gravité clinique. Éléments déclarés vérifiés par correspondance textuelle ; interprétation et synthèse à valider par l’opérateur. Aucun diagnostic ni consigne médicale. STT : '+L.sttLabel+' · Analyse : '+L.llm+' · Voix : '+L.tts+'.';
@@ -51,7 +60,7 @@ const fakePhone = seed => {
 };
 
 class Component extends DCLogic {
-  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
+  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, layout:initialLayout(), more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
     callers:[], latency:null, sitePolicy:'auto', analytics:false};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
@@ -931,6 +940,7 @@ class Component extends DCLogic {
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
       this.button('Voix appelants : '+(this.state.emotions!==false?'émotions':'neutres'),()=>this.setState({emotions:this.state.emotions===false}),false,'orange-emotions','Variantes émotionnelles de la voix selon le profil de l’appel (peur, inquiétude, calme) ou voix neutres.'),
+      this.button('Disposition : '+(this.state.layout==='columns'?'colonnes':'plein écran'),()=>{const layout=this.state.layout==='columns'?'focus':'columns';try{localStorage.setItem('orange-layout',layout);}catch(e){}this.setState({layout});},false,'orange-layout','Un appel plein écran sous la file des appels, ou la console en trois colonnes.'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
       this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),
       typeof location!=='undefined'?h('span',{key:'line',className:'oc-muted',title:'Une personne peut appeler cette console depuis son téléphone : ouvrez cette adresse sur le mobile (identifiants de la console), puis « Appeler ».'},'Appel réel : '+location.origin+'/appel'):null,
@@ -1026,7 +1036,79 @@ class Component extends DCLogic {
     if(this.state.session.status==='idle'&&!this.state.calls.length)return this.entry();
     const m=this.consoleModel();
     const a=this.playbackState();
+    if(this.state.layout==='focus')return h('div',{id:'orange-console',className:'oc oc-focus','data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.queueStrip(m),this.focusPane(m));
     return h('div',{id:'orange-console',className:'oc'+(this.state.view==='call'?'':' oc-full'),'data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.callList(m),this.callPane(m),this.copilot(m));
+  }
+  // ---------------- Full-screen layout: a queue strip, one call at a time, the decisions as big buttons ----------------
+  // The queue is one strip of pills: the calls that need you first (orange, or purple when you hold them), then the AI's
+  // (green; purple dot while it picks up), a « + n » when the strip is full, and a count of closed calls.
+  queueStrip(m) {
+    const live=[...m.mine.map(d=>[d,'op']),...m.alerts.map(d=>[d,'alert']),...m.ai.map(d=>[d,d.c.phase==='ringing'?'in':'ai'])];
+    const pill=([d,tone])=>h('button',{key:d.id,type:'button',className:'oc-pill oc-pill-'+tone+(d.selected&&this.state.view==='call'?' sel':''),'data-call':d.id,title:(d.headline||d.status||'')+' · '+d.id,onClick:()=>this.open(d.id)},
+      h('span',{className:'oc-pilldot'}),h('span',{className:'oc-pilltext oc-ellipsis'},d.category),h('span',{className:'oc-mono oc-pilltime'},d.dur));
+    const shown=live.slice(0,8),more=live.length-shown.length,closed=m.history.length+m.closed.length;
+    return h('div',{className:'oc-strip',role:'tablist'},
+      h('button',{key:'home',type:'button',className:'oc-pill oc-pill-home'+(this.state.view!=='call'?' sel':''),onClick:()=>this.goFloor(),title:'Vue d’ensemble · Échap'},'Vue d’ensemble'),
+      ...shown.map(pill),
+      more>0?h('button',{key:'more',type:'button',className:'oc-pill oc-pill-more',onClick:()=>this.goFloor(),title:'Les autres appels sont sur la vue d’ensemble'},'+ '+more):null,
+      live.length?null:h('span',{key:'empty',className:'oc-muted oc-stripnote'},m.arrival),
+      closed?h('span',{key:'closed',className:'oc-muted oc-stripnote'},'Clôturés · '+closed):null);
+  }
+  // The open call fills the screen: who and where, the conversation, the summary with its facts and signals, then the
+  // decisions; the operator's talk box when the call is theirs; the details on demand.
+  focusPane(m) {
+    const c=this.sel();
+    if(!c||this.state.view!=='call')return this.focusBoard(m);
+    const d=this.decorate(c),mode=this.modeFor(c),signals=c.lastAnalysis?.signals||[];
+    this.placeLine(c);  // the place line follows the facts and the lookup, whatever set them
+    const header=h('div',{className:'oc-head oc-fhead'},
+      h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
+        h('span',{className:'oc-muted oc-ellipsis',title:c.id+' · '+c.phone},c.sc.place),h('span',{className:'oc-fstate',style:{color:mode.color},title:mode.sub},mode.title),h('span',{className:'oc-mono oc-right'},d.dur)));
+    const facts=c.facts.filter(f=>f.k!=='Lieu').map(f=>f.k+' : '+f.v).join(' · ');
+    const brief=h('div',{className:'oc-brief'},
+      h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'Résumé'),h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.')),
+      facts?h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'Éléments'),h('span',{className:'oc-muted'},facts)):null,
+      signals.length?h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'À vérifier'),h('span',{className:'oc-signal'},signals.map(q=>'« '+q+' »').join(' · '))):null);
+    const controls=this.callControls();
+    return h('div',{className:'oc-main oc-fmain'},header,controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),brief,this.decisionBar(c),this.talkBox(c),
+      this.more('details')?h('div',{className:'oc-fdetails'},this.guardBlock(c),this.latencyBlock(c),this.toolsBlock(c)):null);
+  }
+  // The decisions, as big buttons: the three services (an AI proposal is highlighted and one click validates it; otherwise the
+  // click is the operator's own decision, recorded the same way, as a simulation), then taking or handing back the call.
+  decisionBar(c) {
+    const acts=c.actions||[];
+    const big=DISPATCH_TOOLS.map(([tool,name,label])=>{const a=acts.filter(x=>x.tool===tool&&x.status!=='declined').at(-1);
+      const state=a?.status==='done'?'done':a?.status==='proposed'?'proposed':a?.status==='running'?'running':'idle';
+      const sub={done:'déclenché · simulation',proposed:'proposé par l’IA · valider',running:'en cours…',idle:'déclencher'}[state];
+      return h('button',{key:tool,type:'button',id:'orange-big-'+tool,className:'oc-big oc-big-'+state,disabled:c.ended||state==='done'||state==='running',title:label+' · décision enregistrée en simulation, aucune transmission aux secours',
+        onClick:()=>this.decide(c,tool)},h('span',{className:'oc-bigname'},name),h('span',{className:'oc-bigsub'},sub));});
+    const take=c.ended||c.liveCaller?null:c.takenOver
+      ?h('button',{key:'take',type:'button',id:'orange-big-take',className:'oc-big oc-big-op',onClick:()=>this.handBackCall(c)},h('span',{className:'oc-bigname'},'Rendre à l’IA'),h('span',{className:'oc-bigsub'},'l’IA reprend la conversation'))
+      :h('button',{key:'take',type:'button',id:'orange-big-take',className:'oc-big oc-big-take',onClick:()=>this.takeOverCall(c)},h('span',{className:'oc-bigname'},'Prendre l’appel'),h('span',{className:'oc-bigsub'},'vous répondez, l’IA suggère'));
+    const small=h('div',{className:'oc-smallrow'},
+      ...(c.ended?(c.reviewed?[h('span',{key:'closed',className:'oc-end'},'Dossier clos · '+fmt(c.reviewedAt))]:[this.button('Clore le dossier',()=>this.closeCase(c),false,'orange-close-case',undefined,{emphasis:true})])
+        :[this.button(c.liveCaller?'Terminer mon appel':c.auto?'Clôturer l’appel':'Clôturer le test',()=>this.endCall(c),false,'orange-close',undefined,{tone:'quiet'}),
+          this.button('Autre décision…',()=>this.dispatch(),false,'orange-decision','Enregistre une décision opérateur · démonstration, aucune transmission aux secours',{tone:'quiet'})]),
+      this.button('Fermer',()=>this.goFloor(),false,undefined,'Retour à la vue d’ensemble · Échap',{tone:'quiet'}),
+      this.moreButton('details'));
+    return h('div',{className:'oc-decisions'},h('div',{className:'oc-bigrow'},...big,take),small);
+  }
+  async decide(c,tool) {
+    if(c.ended)return;
+    c.actions=c.actions||[];
+    let a=c.actions.filter(x=>x.tool===tool&&x.status!=='declined').at(-1);
+    if(a&&a.status!=='proposed')return;  // done or running: nothing to do twice
+    if(!a){const found=DISPATCH_TOOLS.find(t=>t[0]===tool);if(!found)return;
+      a={id:'A'+(++this.actionSeq||(this.actionSeq=1)),key:tool,tool,label:found[2],kind:'dispatch',args:{},reason:'décision opérateur',status:'proposed',by:'opérateur',at:this.state.shift,turn:c.ti};c.actions.push(a);}
+    await this.approveTool(c,a);
+  }
+  // With no call open, the full-screen layout shows the situation board and the closed calls waiting to be filed.
+  focusBoard(m) {
+    const rows=m.history.map(d=>h('div',{key:d.id,className:'oc-row'+(d.selected?' sel':''),role:'button',tabIndex:0,'data-call':d.id,onClick:()=>this.open(d.id)},
+      this.kui('Badge',{color:d.sevColor,kind:'outline'},d.sev),h('div',{className:'oc-rowtext'},h('span',{className:'oc-title'},d.category),h('span',{className:'oc-muted oc-rowstatus'},d.c.endLabel+' · '+d.id)),
+      h('span',{className:'oc-mono oc-right'},fmt(d.c.endedAt))));
+    return h('div',{className:'oc-main'},h('div',{className:'oc-board'},...this.boardChildren(m),
+      ...(rows.length?[h('div',{key:'hh',className:'oc-feedhead'},'Clôturés · à relire puis clore le dossier'),...rows]:[])));
   }
   callList(m) {
     const section=(label,dot,count,extra)=>h('div',{key:'s:'+label,className:'oc-sec'},h('span',{className:'oc-dot',style:{background:dot}}),h('span',null,label),
@@ -1100,35 +1182,42 @@ class Component extends DCLogic {
             :[this.button("Prendre l'appel",()=>this.takeOverCall(c),false,undefined,undefined,{emphasis:true})]),
           ...(c.ended?[]:[this.button(c.liveCaller?'Terminer mon appel':c.auto?'Clôturer':'Clôturer le test',()=>this.endCall(c),false,'orange-close',undefined,{tone:'quiet'})]),
           this.button('Fermer',()=>this.goFloor(),false,undefined,'Fermer l’écoute · Échap',{tone:'quiet'}))));
-    // Each speaker's look lives in CSS (.oc-turn-caller/-ai/-op/-sys) so the style toggle can restyle the bubbles.
+    const controls=this.callControls();
+    return h('div',{className:'oc-main'},header,controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),this.talkBox(c));
+  }
+  // Each speaker's look lives in CSS (.oc-turn-caller/-ai/-op/-sys) so the style toggle can restyle the bubbles. Each turn
+  // is its bubble under an avatar only — a robot for the AI, a person for the caller and the operator; the speaker and the
+  // time live in the avatar's tooltip (no label or clock in front of the bubble, asked away).
+  transcriptView(c) {
     const kind=who=>who==='Agent IA'?'ai':who==='Vous'?'op':who==='Système'?'sys':'caller';
     const p=this.state.playback,playing=!!p&&p.callId===c.id&&!p.paused,spoken=playing?c.tr.map(t=>t.who).lastIndexOf(SPEAKER_ROW[p.speaker]):-1;
-    // Each turn is its bubble under an avatar only — a robot for the AI, a person for the caller and the operator; the
-    // speaker and the time live in the avatar's tooltip (no label or clock in front of the bubble, asked away).
-    const transcript=h('div',{className:'oc-tr',ref:this.trRef},...c.tr.map((t,i)=>{const k=kind(t.who);return h('div',{key:i,className:'oc-turn oc-turn-'+k},
+    return h('div',{className:'oc-tr',ref:this.trRef},...c.tr.map((t,i)=>{const k=kind(t.who);return h('div',{key:i,className:'oc-turn oc-turn-'+k},
         k==='sys'?null:h('div',{className:'oc-turnhead'},h('span',{className:'oc-avatar',role:'img','aria-label':t.who+' · '+t.ts,title:t.who+' · '+t.ts},k==='ai'?ICONS.robot:ICONS.human)),
         h('div',{className:'oc-bubble'},t.text,i===spoken?h('span',{className:'oc-cursor'},' ▍'):null));}));
+  }
+  waveRow(c) {
     if(!this.waveEl)this.waveEl=h('canvas',{ref:this.waveRef,width:640,height:28,style:{width:'100%',height:'28px',display:'block',borderRadius:'6px'}});
     const live=this.waveMode.amp>0.5;
-    const wave=h('div',{className:'oc-wave'},h('span',{className:'oc-dot'+(live?' oc-pulse':''),style:{background:live?this.waveMode.color:SEC}}),
+    return h('div',{className:'oc-wave'},h('span',{className:'oc-dot'+(live?' oc-pulse':''),style:{background:live?this.waveMode.color:SEC}}),
       h('span',{className:'oc-wavelabel',style:{color:live?this.waveMode.color:SEC}},this.waveLabel(c)),h('div',{className:'oc-wavebox'},this.waveEl));
-    const controls=this.callControls();
-    return h('div',{className:'oc-main'},header,controls?h('div',{className:'oc-ctl'},controls):null,transcript,wave,this.talkBox(c));
   }
   // With no call open, the centre is a live situation board: four figures, the arrival countdown and the activity feed.
   situationBoard(m) {
+    return h('div',{className:'oc-main'},h('div',{className:'oc-board'},...this.boardChildren(m)));
+  }
+  boardChildren(m) {
     const s=this.state.session,alerts=m.mine.length+m.alerts.length,done=m.history.length+m.closed.length;
     const waiting=s.status==='running'&&s.launched<s.total&&this.aiCalls()<AI_CALLS;
     const frac=waiting?1-Math.min(1,Math.max(0,(this.nextArrivalAt||0)-Date.now())/ARRIVAL_MS):0;
     const tile=(key,value,label,tone)=>h('div',{key,className:'oc-tile oc-tile-'+tone},h('span',{className:'oc-tilevalue'},String(value)),h('span',{className:'oc-tilelabel'},label));
-    return h('div',{className:'oc-main'},h('div',{className:'oc-board'},
-      h('div',{className:'oc-boardhead'},h('span',{className:'oc-boardtitle'},'Vue d’ensemble'),h('span',{className:'oc-muted'},`${s.launched}/${s.total} appels arrivés`)),
-      h('div',{className:'oc-tiles'},tile('live',m.live,m.live>1?'appels en cours':'appel en cours','neutral'),tile('ai',m.ai.length,'pris en charge par l’IA','ai'),
+    return [
+      h('div',{key:'head',className:'oc-boardhead'},h('span',{className:'oc-boardtitle'},'Vue d’ensemble'),h('span',{className:'oc-muted'},`${s.launched}/${s.total} appels arrivés`)),
+      h('div',{key:'tiles',className:'oc-tiles'},tile('live',m.live,m.live>1?'appels en cours':'appel en cours','neutral'),tile('ai',m.ai.length,'pris en charge par l’IA','ai'),
         tile('alerts',alerts,'à traiter','alert'),tile('done',done,'clôturés','neutral')),
-      h('div',{className:'oc-arrival'},h('div',{className:'oc-arrivalbar'},h('span',{style:{width:Math.round(frac*100)+'%'}})),h('span',{className:'oc-muted oc-arrivaltext'},m.arrival)),
-      h('div',{className:'oc-feedhead'},'Activité'),
-      h('div',{className:'oc-feed'},...this.activityFeed(8).map((e,i)=>h('div',{key:i,className:'oc-event oc-event-'+e.kind},h('span',{className:'oc-mono'},e.at),h('span',{className:'oc-eventtext oc-ellipsis'},e.text)))),
-      h('div',{className:'oc-boardhint oc-muted'},'Sélectionnez un appel pour l’écouter · Échap pour revenir ici.')));
+      h('div',{key:'arrival',className:'oc-arrival'},h('div',{className:'oc-arrivalbar'},h('span',{style:{width:Math.round(frac*100)+'%'}})),h('span',{className:'oc-muted oc-arrivaltext'},m.arrival)),
+      h('div',{key:'fh',className:'oc-feedhead'},'Activité'),
+      h('div',{key:'feed',className:'oc-feed'},...this.activityFeed(8).map((e,i)=>h('div',{key:i,className:'oc-event oc-event-'+e.kind},h('span',{className:'oc-mono'},e.at),h('span',{className:'oc-eventtext oc-ellipsis'},e.text)))),
+      h('div',{key:'hint',className:'oc-boardhint oc-muted'},'Sélectionnez un appel pour l’écouter · Échap pour revenir ici.')];
   }
   activityFeed(n) {
     const events=[];

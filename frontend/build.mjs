@@ -55,6 +55,31 @@ nve-button[data-tone=ai]{--background:transparent;--border:1px solid rgba(118,18
 .oc-svc::before{content:"";width:7px;height:7px;border-radius:50%;flex:none;background:var(--color-gray-500);}
 .oc-svc-ok{color:var(--text-color-primary);} .oc-svc-ok::before{background:var(--color-green-500);} .oc-svc-warn::before{background:#FF7900;}
 .oc-details>.oc-block{padding:0;border:0;background:none;box-shadow:none;}
+/* Full-screen layout: a queue strip over one call. */
+.oc-focus{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);}
+.oc-strip{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-color-base);background:var(--background-color-surface-base);overflow-x:auto;white-space:nowrap;min-height:46px;}
+.oc-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid var(--border-color-base);background:transparent;font:inherit;font-size:13px;color:var(--text-color-primary);cursor:pointer;max-width:260px;flex:none;}
+.oc-pill:hover{border-color:var(--text-color-secondary);} .oc-pill.sel{border-color:#111;background:#111;color:#fff;} .oc-pill.sel .oc-pilltime{color:rgba(255,255,255,.75);}
+.oc-pilldot{width:8px;height:8px;border-radius:50%;background:var(--color-gray-500);flex:none;}
+.oc-pill-alert .oc-pilldot{background:#FF7900;} .oc-pill-op .oc-pilldot,.oc-pill-in .oc-pilldot{background:#9b51e0;} .oc-pill-ai .oc-pilldot{background:var(--color-green-500);}
+.oc-pill-home .oc-pilldot,.oc-pill-more .oc-pilldot{display:none;} .oc-pill-home,.oc-pill-more{color:var(--text-color-secondary);}
+.oc-pilltime{font-size:12px;color:var(--text-color-secondary);} .oc-stripnote{font-size:12px;margin-left:auto;flex:none;}
+.oc-fmain .oc-tr{padding:20px max(16px,8%);gap:14px;} .oc-fmain .oc-bubble{font-size:16px;max-width:min(760px,82%);}
+.oc-fhead .oc-callname{font-size:22px;} .oc-fstate{font-weight:600;font-size:13px;white-space:nowrap;}
+.oc-brief{flex:none;display:flex;flex-direction:column;gap:6px;padding:10px max(16px,8%) 6px;border-top:1px solid var(--border-color-base);background:var(--background-color-surface-base);}
+.oc-briefline{display:flex;gap:12px;align-items:baseline;} .oc-briefline .oc-h{flex:none;min-width:76px;} .oc-briefline .oc-summary{font-size:15px;}
+.oc-decisions{flex:none;display:flex;flex-direction:column;gap:8px;padding:8px max(16px,8%) 12px;background:var(--background-color-surface-base);}
+.oc-bigrow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
+.oc-big{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 16px;border-radius:10px;border:2px solid var(--border-color-base);background:transparent;font:inherit;color:var(--text-color-primary);cursor:pointer;text-align:left;min-height:72px;}
+.oc-big:disabled{cursor:default;} .oc-bigname{font-size:16px;font-weight:700;} .oc-bigsub{font-size:12px;color:var(--text-color-secondary);}
+@keyframes bigpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,121,0,.35);}50%{box-shadow:0 0 0 6px rgba(255,121,0,0);}}
+.oc-big-proposed{border-color:#FF7900;background:rgba(255,121,0,.08);animation:bigpulse 1.6s ease-in-out infinite;} .oc-big-proposed .oc-bigsub{color:#FF7900;font-weight:600;}
+.oc-big-done{border-color:var(--color-green-500);background:rgba(118,185,0,.10);opacity:1;} .oc-big-done .oc-bigsub{color:#4f8a00;font-weight:600;}
+.oc-big-take{border-color:#111;background:#111;color:#fff;} .oc-big-take .oc-bigsub{color:rgba(255,255,255,.75);} .oc-big-op{border-color:#9b51e0;}
+.oc-smallrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;}
+.oc-fdetails{flex:none;padding:8px max(16px,8%) 12px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border-color-base);max-height:40vh;overflow-y:auto;}
+.oc-focus .oc-talk{padding-left:max(16px,8%);padding-right:max(16px,8%);}
+@media (max-width:900px){.oc-bigrow{grid-template-columns:repeat(2,minmax(0,1fr));}}
 .oc-switch{display:inline-flex;align-items:center;gap:8px;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;}
 .oc-switch-track{position:relative;width:30px;height:16px;border-radius:999px;background:var(--color-gray-500);transition:background .15s;flex:none;}
 .oc-switch-knob{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.35);transition:transform .15s;}

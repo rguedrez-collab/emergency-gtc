@@ -429,7 +429,7 @@ def main():
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.add_init_script(TIMING_JS)
-        page.goto(base, wait_until="networkidle", timeout=60000)
+        page.goto(base + ("&" if "?" in base else "?") + "layout=columns", wait_until="networkidle", timeout=60000)  # the scripted checks drive the three-column console
         start = page.locator("#orange-start-session")
         start.wait_for()
         box = start.bounding_box()

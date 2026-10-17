@@ -311,14 +311,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(card(quiet.id).headline,'« il y a de la fumée dans le hall »');assert.equal(card(flagged.id).headline,'Signal à vérifier : « il ne respire plus »');
   assert.match(card(quiet.id).status,/^tour 2 · /);assert.equal(m.alerts[0].id,flagged.id,'signal calls first');
   const row=m.ai.find(r=>r.id===ringing.id);assert.equal(row.status,'décroché en cours');assert.equal(row.sev,'Entrant');assert.equal(row.category,'Nouvel appel · évaluation en cours');
-  const shown=texts(app.consoleView()).join(' ');
+  const shown=texts((app.state.layout='columns',app.consoleView())).join(' ');
   for(const expected of ["Prendre l'appel",'Signal à vérifier : « il ne respire plus »','Sélectionnez un appel','TEST-3 · décroché en cours'])
     assert.ok(shown.includes(expected),expected);
   assert.ok(!shown.includes('tour 2 · ')&&!shown.includes('IA · '),'cards carry no processing status (« IA · tour n · … »); rows keep their state');
   quiet.takenOver=true;assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('en ligne · opérateur'),'a call the operator holds says so');quiet.takenOver=false;
   // Progressive disclosure: collapsed cards hold back the quote, the id and the secondary actions until the chevron (or selection).
   assert.ok(!shown.includes('« il y a de la fumée dans le hall »')&&!shown.includes('Plus tard')&&!shown.includes(quiet.id),'collapsed card');
-  app.state.more={['card:'+quiet.id]:true};const opened=texts(app.consoleView()).join(' ');
+  app.state.more={['card:'+quiet.id]:true};const opened=texts((app.state.layout='columns',app.consoleView())).join(' ');
   for(const expected of ['« il y a de la fumée dans le hall »',quiet.id,'Plus tard'])assert.ok(opened.includes(expected),'expanded card: '+expected);
   assert.ok(!opened.includes("Écouter d'abord"),'one secondary action only');
   app.state.more={};app.state.view='call';app.state.selId=quiet.id;app.waveMode={amp:0,color:'#3a3a3a'};
@@ -335,7 +335,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(app.waveMode.color,'var(--oc-caller)');assert.equal(app.waveMode.amp,1);assert.ok(!('soundLabel' in v)&&!('audioPlayer' in v),'no header sound label, no player');
   assert.equal(v.consoleView.props['data-speaker'],'caller');assert.equal(v.consoleView.props['data-playing'],'true');assert.equal(v.consoleView.props['data-call'],c.id);
   app.state.playback=null;app.renderVals();
-  app.goFloor();assert.ok(texts(app.consoleView()).join(' ').includes('Sélectionnez un appel'));
+  app.goFloor();assert.ok(texts((app.state.layout='columns',app.consoleView())).join(' ').includes('Sélectionnez un appel'));
 }
 // Arrival tones are opt-in and the phone-line graph degrades to plain playback without Web Audio.
 {
@@ -527,11 +527,11 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.session.status='stopped';app.state.settings=false;const stopped=ids(app.controls().children[0]);
   assert.ok(stopped.includes('orange-start-session')&&stopped.includes('orange-user-call')&&!stopped.includes('orange-pause-session'));app.state.session.status='running';app.state.settings=true;
   assert.ok(!settings.includes('orange-new'));app.state.tools=true;assert.ok(ids(app.controls().children[1]).includes('orange-new'));
-  assert.ok(texts(app.consoleView()).length>0);assert.equal(app.consoleView().props.className,'oc oc-full','overview: no player, full height');
+  assert.ok(texts((app.state.layout='columns',app.consoleView())).length>0);assert.equal((app.state.layout='columns',app.consoleView()).props.className,'oc oc-full','overview: no player, full height');
   // No fixed player: the console root carries the playback state for the scripts (speaker, playing, call).
-  assert.equal(app.consoleView().props.id,'orange-console');assert.equal(app.consoleView().props['data-speaker'],'idle');assert.equal(app.consoleView().props['data-playing'],'false');
+  assert.equal((app.state.layout='columns',app.consoleView()).props.id,'orange-console');assert.equal((app.state.layout='columns',app.consoleView()).props['data-speaker'],'idle');assert.equal((app.state.layout='columns',app.consoleView()).props['data-playing'],'false');
   app.state.view='call';app.state.selId=app.state.calls[0].id;app.waveMode={amp:0,color:'#3a3a3a'};  // renderVals() sets waveMode before each render
-  assert.equal(app.consoleView().props.className,'oc');assert.ok(!JSON.stringify(app.renderVals()).includes('oc-player'),'no player strip anywhere');
+  assert.equal((app.state.layout='columns',app.consoleView()).props.className,'oc');assert.ok(!JSON.stringify(app.renderVals()).includes('oc-player'),'no player strip anywhere');
   const groups=bar.children[0].children.map(g=>g.props.className);assert.deepEqual(groups,['oc-bargroup','oc-bargroup oc-barstatus']);
   assert.ok(ids(bar.children[0].children[1]).includes('orange-settings')&&!ids(bar.children[0].children[1]).includes('orange-session-progress'),'status group: settings, not the counter');
 }
@@ -781,4 +781,32 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-console.log('PASS: 58 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
+// Full-screen layout (default): a queue strip, the open call with its conversation, the summary and big decision buttons.
+{
+  const app=make();app.state.layout='focus';app.state.session={status:'paused',id:1,launched:3,total:100,finished:0,failed:0};  // paused: the scheduler leaves the calls alone
+  const c=app.createCall(true,{index:0,auto:true,background:true}),other=app.createCall(true,{index:1,auto:true,background:true});
+  c.alerted=true;c.lastAnalysis={signals:['elle ne respire plus']};c.score=85;c.summary='Chute à domicile.';c.facts=[{k:'Lieu',v:'12 rue des Lilas'},{k:'Personnes',v:'une personne'}];c.phase='gap';other.phase='gap';
+  app.state.view='floor';let view=app.consoleView(),shown=texts(view).join(' ');
+  assert.equal(view.props.className,'oc oc-focus');assert.ok(shown.includes('Vue d’ensemble')&&shown.includes(c.sc.cat)&&shown.includes('Nouvel appel'),'strip + board: '+shown.slice(0,240));
+  assert.ok(JSON.stringify(view).includes('oc-pill-alert')&&JSON.stringify(view).includes('oc-pill-ai'),'pills carry the tone of each call');
+  app.open(c.id);app.waveMode={amp:0,color:'#3a3a3a'};shown=texts(app.consoleView()).join(' ');
+  for(const expected of ['Résumé','Chute à domicile.','Personnes : une personne','« elle ne respire plus »','SAMU','Pompiers','Police','Prendre l’appel','déclencher','Clôturer l’appel','Fermer','12 rue des Lilas'])
+    assert.ok(shown.includes(expected),'focus pane: '+expected+' in '+shown.slice(0,500));
+  assert.ok(!shown.includes('Journal des traitements')&&!shown.includes('Dernier verdict'),'details folded');
+  const posts=[];app.api=async(call,path,payload)=>{if(path!=='/api/tool')return {json:async()=>result};posts.push({path,payload});return {json:async()=>({tool:payload.tool,status:'done',simulated:true,ms:3,result:{service:'SAMU'}})};};
+  app.tts=async()=>({});app.play=async()=>{};  // the background calls keep running on the scripted model while the decisions are made
+  await app.decide(c,'dispatch_ambulance');
+  assert.ok(posts.length===1&&posts[0].path==='/api/tool'&&posts[0].payload.tool==='dispatch_ambulance'&&posts[0].payload.approve===true,'the big button is the operator’s decision, recorded as a simulation');
+  const a=c.actions.find(x=>x.tool==='dispatch_ambulance');assert.ok(a.status==='done'&&a.by==='opérateur'&&a.reason==='décision opérateur',JSON.stringify(a));
+  shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('déclenché · simulation'),shown.slice(0,300));
+  await app.decide(c,'dispatch_ambulance');assert.equal(posts.length,1,'a done decision is not sent twice');
+  // An AI proposal lights the button up and is validated by the same click.
+  c.actions.push({id:'A9',key:'dispatch_fire',tool:'dispatch_fire',label:'Déclencher les pompiers',kind:'dispatch',args:{},reason:'« le feu »',status:'proposed',by:'ia'});
+  shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('proposé par l’IA · valider')&&JSON.stringify(app.consoleView()).includes('oc-big-proposed'));
+  await app.decide(c,'dispatch_fire');assert.equal(posts.length,2);assert.equal(c.actions.find(x=>x.id==='A9').status,'done');
+  // Taking the call swaps the fourth button; Détails opens the folded blocks; the toggle remembers the layout.
+  app.takeOverCall(c);shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('Rendre à l’IA')&&!shown.includes('Prendre l’appel'));
+  app.state.more={details:true};shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('Journal des traitements'),'Détails opens the log');
+  app.state.settings=true;assert.ok(JSON.stringify(app.controls()).includes('orange-layout'),'Réglages carries the layout toggle');
+}
+console.log('PASS: 59 controller checks, including microphone-call entry, roles, permission denial, late capture cancellation, progressive disclosure, the case lifecycle, vacation persistence, the situation board, caller sites with per-turn latency and existing session/audio regressions');
