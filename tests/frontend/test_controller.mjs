@@ -781,14 +781,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   await app.analyzeCall(c);await tick(10);
   assert.equal(JSON.stringify(analyzed.actions),JSON.stringify([{tool:'lookup_address',status:'done',label:'8 Cours Gambetta 69007 Lyon'},{tool:'dispatch_fire',status:'done',label:null}]),'the AI is told what the operator validated');
 }
-// Full-screen layout (default): a queue strip, the open call with its conversation, the summary and big decision buttons.
+// Focus layout (default): the call list, the open call with its conversation, the summary and big decision buttons; no right panel.
 {
   const app=make();app.state.layout='focus';app.state.session={status:'paused',id:1,launched:3,total:100,finished:0,failed:0};  // paused: the scheduler leaves the calls alone
   const c=app.createCall(true,{index:0,auto:true,background:true}),other=app.createCall(true,{index:1,auto:true,background:true});
   c.alerted=true;c.lastAnalysis={signals:['elle ne respire plus']};c.score=85;c.summary='Chute à domicile.';c.facts=[{k:'Lieu',v:'12 rue des Lilas'},{k:'Personnes',v:'une personne'}];c.phase='gap';other.phase='gap';
   app.state.view='floor';let view=app.consoleView(),shown=texts(view).join(' ');
-  assert.equal(view.props.className,'oc oc-focus');assert.ok(shown.includes('Vue d’ensemble')&&shown.includes(c.sc.cat)&&shown.includes('Nouvel appel'),'strip + board: '+shown.slice(0,240));
-  assert.ok(JSON.stringify(view).includes('oc-pill-alert')&&JSON.stringify(view).includes('oc-pill-ai'),'pills carry the tone of each call');
+  assert.equal(view.props.className,'oc oc-focus');assert.ok(shown.includes('À traiter')&&shown.includes('Vue d’ensemble')&&shown.includes(c.sc.cat)&&shown.includes('Nouvel appel'),'list + board: '+shown.slice(0,240));
+  assert.ok(JSON.stringify(view).includes('oc-card')&&!JSON.stringify(view).includes('oc-side'),'the call list stays, the right panel goes');
   app.open(c.id);app.waveMode={amp:0,color:'#3a3a3a'};shown=texts(app.consoleView()).join(' ');
   for(const expected of ['Résumé','Chute à domicile.','Personnes : une personne','« elle ne respire plus »','SAMU','Pompiers','Police','Prendre l’appel','déclencher','Clôturer l’appel','Fermer','12 rue des Lilas'])
     assert.ok(shown.includes(expected),'focus pane: '+expected+' in '+shown.slice(0,500));

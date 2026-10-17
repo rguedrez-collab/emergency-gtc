@@ -940,7 +940,7 @@ class Component extends DCLogic {
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
       this.button('Voix appelants : '+(this.state.emotions!==false?'émotions':'neutres'),()=>this.setState({emotions:this.state.emotions===false}),false,'orange-emotions','Variantes émotionnelles de la voix selon le profil de l’appel (peur, inquiétude, calme) ou voix neutres.'),
-      this.button('Disposition : '+(this.state.layout==='columns'?'colonnes':'plein écran'),()=>{const layout=this.state.layout==='columns'?'focus':'columns';try{localStorage.setItem('orange-layout',layout);}catch(e){}this.setState({layout});},false,'orange-layout','Un appel plein écran sous la file des appels, ou la console en trois colonnes.'),
+      this.button('Disposition : '+(this.state.layout==='columns'?'colonnes':'plein écran'),()=>{const layout=this.state.layout==='columns'?'focus':'columns';try{localStorage.setItem('orange-layout',layout);}catch(e){}this.setState({layout});},false,'orange-layout','La liste des appels et un appel en grand avec les décisions, ou la console en trois colonnes.'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
       this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),
       typeof location!=='undefined'?h('span',{key:'line',className:'oc-muted',title:'Une personne peut appeler cette console depuis son téléphone : ouvrez cette adresse sur le mobile (identifiants de la console), puis « Appeler ».'},'Appel réel : '+location.origin+'/appel'):null,
@@ -1036,29 +1036,15 @@ class Component extends DCLogic {
     if(this.state.session.status==='idle'&&!this.state.calls.length)return this.entry();
     const m=this.consoleModel();
     const a=this.playbackState();
-    if(this.state.layout==='focus')return h('div',{id:'orange-console',className:'oc oc-focus','data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.queueStrip(m),this.focusPane(m));
+    if(this.state.layout==='focus')return h('div',{id:'orange-console',className:'oc oc-focus','data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.callList(m),this.focusPane(m));
     return h('div',{id:'orange-console',className:'oc'+(this.state.view==='call'?'':' oc-full'),'data-speaker':a.role,'data-playing':String(a.playing),'data-call':a.who},this.callList(m),this.callPane(m),this.copilot(m));
   }
-  // ---------------- Full-screen layout: a queue strip, one call at a time, the decisions as big buttons ----------------
-  // The queue is one strip of pills: the calls that need you first (orange, or purple when you hold them), then the AI's
-  // (green; purple dot while it picks up), a « + n » when the strip is full, and a count of closed calls.
-  queueStrip(m) {
-    const live=[...m.mine.map(d=>[d,'op']),...m.alerts.map(d=>[d,'alert']),...m.ai.map(d=>[d,d.c.phase==='ringing'?'in':'ai'])];
-    const pill=([d,tone])=>h('button',{key:d.id,type:'button',className:'oc-pill oc-pill-'+tone+(d.selected&&this.state.view==='call'?' sel':''),'data-call':d.id,title:(d.headline||d.status||'')+' · '+d.id,onClick:()=>this.open(d.id)},
-      h('span',{className:'oc-pilldot'}),h('span',{className:'oc-pilltext oc-ellipsis'},d.category),h('span',{className:'oc-mono oc-pilltime'},d.dur));
-    const shown=live.slice(0,8),more=live.length-shown.length,closed=m.history.length+m.closed.length;
-    return h('div',{className:'oc-strip',role:'tablist'},
-      h('button',{key:'home',type:'button',className:'oc-pill oc-pill-home'+(this.state.view!=='call'?' sel':''),onClick:()=>this.goFloor(),title:'Vue d’ensemble · Échap'},'Vue d’ensemble'),
-      ...shown.map(pill),
-      more>0?h('button',{key:'more',type:'button',className:'oc-pill oc-pill-more',onClick:()=>this.goFloor(),title:'Les autres appels sont sur la vue d’ensemble'},'+ '+more):null,
-      live.length?null:h('span',{key:'empty',className:'oc-muted oc-stripnote'},m.arrival),
-      closed?h('span',{key:'closed',className:'oc-muted oc-stripnote'},'Clôturés · '+closed):null);
-  }
+  // ---------------- Focus layout: the call list on the left, one call full width, the decisions as big buttons ----------------
   // The open call fills the screen: who and where, the conversation, the summary with its facts and signals, then the
   // decisions; the operator's talk box when the call is theirs; the details on demand.
   focusPane(m) {
     const c=this.sel();
-    if(!c||this.state.view!=='call')return this.focusBoard(m);
+    if(!c||this.state.view!=='call')return this.situationBoard(m);
     const d=this.decorate(c),mode=this.modeFor(c),signals=c.lastAnalysis?.signals||[];
     this.placeLine(c);  // the place line follows the facts and the lookup, whatever set them
     const header=h('div',{className:'oc-head oc-fhead'},
@@ -1101,14 +1087,6 @@ class Component extends DCLogic {
     if(!a){const found=DISPATCH_TOOLS.find(t=>t[0]===tool);if(!found)return;
       a={id:'A'+(++this.actionSeq||(this.actionSeq=1)),key:tool,tool,label:found[2],kind:'dispatch',args:{},reason:'décision opérateur',status:'proposed',by:'opérateur',at:this.state.shift,turn:c.ti};c.actions.push(a);}
     await this.approveTool(c,a);
-  }
-  // With no call open, the full-screen layout shows the situation board and the closed calls waiting to be filed.
-  focusBoard(m) {
-    const rows=m.history.map(d=>h('div',{key:d.id,className:'oc-row'+(d.selected?' sel':''),role:'button',tabIndex:0,'data-call':d.id,onClick:()=>this.open(d.id)},
-      this.kui('Badge',{color:d.sevColor,kind:'outline'},d.sev),h('div',{className:'oc-rowtext'},h('span',{className:'oc-title'},d.category),h('span',{className:'oc-muted oc-rowstatus'},d.c.endLabel+' · '+d.id)),
-      h('span',{className:'oc-mono oc-right'},fmt(d.c.endedAt))));
-    return h('div',{className:'oc-main'},h('div',{className:'oc-board'},...this.boardChildren(m),
-      ...(rows.length?[h('div',{key:'hh',className:'oc-feedhead'},'Clôturés · à relire puis clore le dossier'),...rows]:[])));
   }
   callList(m) {
     const section=(label,dot,count,extra)=>h('div',{key:'s:'+label,className:'oc-sec'},h('span',{className:'oc-dot',style:{background:dot}}),h('span',null,label),
