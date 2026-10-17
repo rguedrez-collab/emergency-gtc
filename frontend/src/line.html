@@ -44,7 +44,8 @@
   .turn.sys{align-self:center;color:var(--muted);font-size:13px;font-style:italic;}
   .meta{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);}
   .hint{font-size:13px;color:var(--muted);line-height:1.5;}
-  .install{display:flex;gap:12px;align-items:center;border-color:var(--orange);} .install p{margin:0;flex:1;font-size:14px;line-height:1.4;}
+  .install{display:flex;flex-direction:column;gap:12px;border-color:var(--orange);} .install p{margin:0;font-size:14px;line-height:1.45;}
+  .install .row{display:flex;gap:10px;} .install .row button{flex:1;margin:0;}
   .install button{background:var(--orange);border-color:var(--orange);color:#111;font-weight:600;white-space:nowrap;}
   .install .later{background:transparent;border-color:var(--line);color:var(--muted);font-weight:400;}
   footer{padding:10px 18px 16px;font-size:12px;color:var(--muted);text-align:center;}
@@ -57,8 +58,7 @@
   <div id="status" class="status off" role="status">Prêt à appeler</div>
   <section id="install" class="card install" hidden>
     <p id="installtext">Ajoutez cette application à l’écran d’accueil : elle s’ouvre en plein écran, comme une application.</p>
-    <button id="installbtn">Installer</button>
-    <button id="installlater" class="later" title="Ne plus proposer">Plus tard</button>
+    <div class="row"><button id="installbtn">Installer</button><button id="installlater" class="later" title="Ne plus proposer">Plus tard</button></div>
   </section>
   <section id="setup" class="card">
     <label for="name">Prénom ou pseudonyme (facultatif, fictif)</label>
@@ -90,6 +90,8 @@
   const saved = k => { try { return localStorage.getItem('appel-' + k) || ''; } catch (e) { return ''; } };
   const keep = (k, v) => { try { localStorage.setItem('appel-' + k, v); } catch (e) {} };
   $('key').value = saved('key'); $('name').value = $('name').value || saved('name');
+  $('key').onchange = () => keep('key', $('key').value.trim());  // kept as soon as it is typed: installing re-opens the page
+  $('name').onchange = () => keep('name', $('name').value.trim());
   const auth = () => { const k = $('key').value.trim(); return k ? {'Authorization': 'Bearer ' + k} : {}; };
   const headers = () => ({...auth(), 'X-Line-Token': line.token});
 
