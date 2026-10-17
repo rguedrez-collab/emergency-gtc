@@ -942,6 +942,41 @@ class GatewayTests(unittest.TestCase):
                 status, body = self.request("/appel")
                 self.assertEqual(status, 200); self.assertIn("Maintenir pour parler".encode(), body)
 
+    def test_the_phone_api_opens_the_line_to_an_app_and_nothing_else(self):
+        """An app (Android, or an HTML app in a WebView) uses an API key and another origin: the line routes answer, the
+        console's routes stay closed, and a phone key never acts for the console."""
+        def call(method, path, headers=None, body=None):
+            req = Request(self.base + path, data=body, headers=headers or {}, method=method)
+            try:
+                with urlopen(req, timeout=3) as resp:
+                    return resp.status, dict(resp.headers), resp.read()
+            except HTTPError as exc:
+                return exc.code, dict(exc.headers), exc.read()
+        app = {"Origin": "https://app.example"}
+        with patch.dict(server.os.environ, {"ORANGE_PHONE_KEYS": "phone-key-1, phone-key-2", "ORANGE_CORS_ORIGINS": "https://app.example"}):
+            status, headers, _ = call("OPTIONS", "/api/line", app)
+            self.assertEqual((status, headers.get("Access-Control-Allow-Origin"), "X-Line-Token" in headers.get("Access-Control-Allow-Headers", "")), (204, "https://app.example", True))
+            self.assertEqual(call("OPTIONS", "/api/line", {"Origin": "https://evil.example"})[0], 403, "an unknown origin gets no preflight")
+            key = {"Authorization": "Bearer phone-key-2", "Content-Type": "application/json", **app}
+            status, headers, body = call("POST", "/api/line", key, b'{"name": "Application"}')
+            self.assertEqual((status, headers.get("Access-Control-Allow-Origin")), (200, "https://app.example"), body[:200])
+            line = json.loads(body); token = {"X-Line-Token": line["token"], "X-Api-Key": "phone-key-1", **app}
+            self.assertEqual(json.loads(call("GET", f"/api/line/{line['id']}/events?since=0", token)[2])["status"], "ringing")
+            self.assertEqual(call("POST", f"/api/line/{line['id']}/speech", {**token, "X-Filename": "speech.wav", "Content-Type": "application/octet-stream"}, b"RIFF" + b"\0" * 400)[0], 200)
+            self.assertEqual(json.loads(call("GET", "/api/phone", {"X-Api-Key": "phone-key-1"})[2])["auth"]["phone_key"], True)
+            # The key opens nothing else, and never the console's side of a line.
+            self.assertEqual(call("GET", "/api/health", {"Authorization": "Bearer phone-key-1"})[0], 401)
+            self.assertEqual(call("GET", "/api/line/pending", {"Authorization": "Bearer phone-key-1"})[0], 403)
+            self.assertEqual(call("POST", f"/api/line/{line['id']}/claim", {"Authorization": "Bearer phone-key-1", "Content-Type": "application/json"}, b'{"call": "TEST-1"}')[0], 403)
+            self.assertEqual(call("GET", f"/api/line/{line['id']}/events", {"Authorization": "Bearer phone-key-1"})[0], 403, "a phone must present its line token")
+            self.assertEqual(call("POST", "/api/line", {"Authorization": "Bearer wrong", "Content-Type": "application/json"}, b"{}")[0], 401)
+            # The console's own credentials still work from the allowed origin, and the cross-site guard stays for others.
+            self.assertEqual(call("POST", f"/api/line/{line['id']}/claim", {"Authorization": self.httpd.expected_auth, "Content-Type": "application/json", **app}, b'{"call": "TEST-1"}')[0], 200)
+            self.assertEqual(call("POST", "/api/latency", {"Authorization": self.httpd.expected_auth, "Content-Type": "application/json", "Origin": "https://evil.example"}, b"{}")[0], 403)
+        # Without configuration: no CORS, no keys.
+        self.assertEqual(call("OPTIONS", "/api/line", app)[0], 403)
+        self.assertEqual(call("POST", "/api/line", {"Authorization": "Bearer phone-key-1", "Content-Type": "application/json"}, b"{}")[0], 401)
+
     def test_the_guardrail_can_be_switched_off_from_the_console(self):
         with patch.dict(server.os.environ, {"ORANGE_LLM_URL": "http://proxy:8100/v1/chat/completions"}):
             try:

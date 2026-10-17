@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ligne mobile · client de test</title>
+<style>
+  :root{color-scheme:light;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+  body{margin:0;background:#f4f4f4;color:#111;padding:env(safe-area-inset-top,0) 16px env(safe-area-inset-bottom,0);}
+  h1{font-size:18px;margin:16px 0 4px;} .sub{color:#666;font-size:13px;margin:0 0 14px;}
+  label{display:block;font-size:12px;color:#666;margin:10px 0 4px;} input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px;}
+  button{font:inherit;border:0;border-radius:10px;padding:12px 16px;cursor:pointer;}
+  .call{width:100%;background:#111;color:#fff;font-size:17px;margin-top:14px;}
+  .talk{width:100%;background:#FF7900;color:#fff;font-size:20px;padding:28px 16px;margin:12px 0;user-select:none;-webkit-user-select:none;touch-action:none;}
+  .talk.on{background:#c85f00;} .hang{width:100%;background:#fff;color:#111;border:1px solid #ccc;}
+  .status{font-size:13px;color:#666;min-height:18px;margin:6px 0;} .status.live{color:#2b7a0b;} .status.talk{color:#FF7900;} .status.off{color:#b00020;}
+  .turn{padding:10px 12px;border-radius:12px;margin:6px 0;font-size:15px;line-height:1.4;max-width:92%;} .me{background:#fff;border:1px solid #ddd;margin-left:auto;}
+  .ai{background:#111;color:#fff;} .op{background:#efe0ff;} .sys{background:transparent;color:#666;font-style:italic;font-size:13px;}
+  .meta{font-size:11px;opacity:.75;margin-top:4px;} footer{font-size:11px;color:#888;margin:18px 0 10px;}
+  details{font-size:12px;color:#666;margin:8px 0;} code{font-size:12px;}
+</style>
+</head>
+<body>
+<h1>Ligne mobile · client de test</h1>
+<p class="sub">Appelle la plateforme de démonstration depuis ce téléphone (données fictives, pas une ligne d’urgence).</p>
+<section id="setup">
+  <label for="base">Adresse de la console (https://…)</label><input id="base" placeholder="https://console.example" autocomplete="url">
+  <label for="key">Clé d’accès (API key)</label><input id="key" placeholder="clé fournie par l’équipe" autocomplete="off">
+  <label for="name">Votre prénom (facultatif)</label><input id="name" placeholder="Camille" autocomplete="given-name">
+  <button id="call" class="call">Appeler</button>
+  <div id="status" class="status"></div>
+  <details><summary>Comment ça marche</summary>La page crée une ligne (<code>POST /api/line</code>), envoie chaque phrase enregistrée (<code>POST /api/line/{id}/speech</code>) et lit les réponses (<code>GET …/events</code>, <code>GET …/audio/{idx}</code>). La console, ouverte dans un navigateur, décroche la ligne.</details>
+</section>
+<section id="live" hidden>
+  <div id="status2" class="status live">Appel en cours</div>
+  <button id="talk" class="talk">Maintenir pour parler</button>
+  <div id="rtt" class="status"></div>
+  <div id="transcript"></div>
+  <button id="hang" class="hang">Raccrocher</button>
+</section>
+<footer>Démonstration · aucune transmission à de vrais secours</footer>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const saved = k => { try { return localStorage.getItem('phone-' + k) || ''; } catch (e) { return ''; } };
+  const keep = (k, v) => { try { localStorage.setItem('phone-' + k, v); } catch (e) {} };
+  $('base').value = saved('base'); $('key').value = saved('key'); $('name').value = saved('name');
+  let base = '', key = '', line = null, since = 0, polling = null, recorder = null, chunks = [], sentAt = null, player = null, queue = [], playing = false, ended = false;
+  const H = () => ({'Authorization': 'Bearer ' + key, 'X-Line-Token': line ? line.token : ''});
+  const status = (text, cls) => { for (const id of ['status', 'status2']) { const el = $(id); if (el) { el.textContent = text; el.className = 'status ' + (cls || ''); } } };
+  const say = (cls, text, meta) => { const d = document.createElement('div'); d.className = 'turn ' + cls; d.textContent = text;
+    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
+    $('transcript').appendChild(d); d.scrollIntoView({block: 'end'}); return d; };
+  function unlock() {  // the first tap unlocks audio playback on phones
+    player = player || new Audio();
+    const pcm = new ArrayBuffer(44 + 4800), v = new DataView(pcm), str = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, pcm.byteLength - 8, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, 4800, true);
+    player.src = URL.createObjectURL(new Blob([pcm], {type: 'audio/wav'})); player.play().catch(() => {});
+  }
+  async function playNext() {
+    if (playing || !queue.length || ended) return;
+    playing = true; const e = queue.shift();
+    try {
+      const r = await fetch(`${base}/api/line/${line.id}/audio/${e.idx}`, {headers: H()});
+      const url = URL.createObjectURL(await r.blob());
+      await new Promise(resolve => { player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
+    } catch (err) {}
+    playing = false; playNext();
+  }
+  async function poll() {
+    if (!line || ended) return;
+    try {
+      const r = await fetch(`${base}/api/line/${line.id}/events?since=${since}`, {headers: H()});
+      if (r.status === 403 || r.status === 404) { finish('Ligne fermée.'); return; }
+      const d = await r.json();
+      if (d.status === 'live') status('En ligne · la plateforme vous écoute', 'live');
+      for (const e of d.events || []) {
+        since = Math.max(since, e.idx + 1);
+        if (e.type === 'reply') {
+          const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null;
+          say(e.speaker === 'operator' ? 'op' : 'ai', e.text || '(réponse vocale)', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
+          if (rtt) { $('rtt').textContent = `Dernier aller-retour : ${(rtt / 1000).toFixed(1)} s`;
+            fetch(`${base}/api/line/${line.id}/latency`, {method: 'POST', headers: {...H(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {}); }
+          queue.push(e); playNext();
+        } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel.'); return; }
+      }
+    } catch (err) {}
+    polling = setTimeout(poll, 700);
+  }
+  async function startCall() {
+    base = $('base').value.trim().replace(/\/+$/, ''); key = $('key').value.trim();
+    if (!/^https?:\/\//.test(base)) { status('Indiquez l’adresse de la console (https://…).', 'off'); return; }
+    keep('base', base); keep('key', key); keep('name', $('name').value.trim());
+    $('call').disabled = true;
+    try {
+      unlock();
+      const r = await fetch(`${base}/api/line`, {method: 'POST', headers: {...H(), 'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim()})});
+      if (r.status === 401) throw Error('Clé refusée (401).');
+      if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ').');
+      line = await r.json(); since = 0; ended = false;
+      $('setup').hidden = true; $('live').hidden = false;
+      status('Appel en cours · en attente de la plateforme', 'live');
+      say('sys', 'Appel établi. Maintenez « Maintenir pour parler » pour vous exprimer.');
+      poll();
+    } catch (err) { status(err.message.includes('fetch') ? 'Réseau ou CORS : vérifiez l’adresse et ORANGE_CORS_ORIGINS côté console.' : err.message, 'off'); $('call').disabled = false; }
+  }
+  async function talkStart(ev) {
+    ev.preventDefault();
+    if (!line || ended || recorder) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}, video: false});
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+      if (!mime) { stream.getTracks().forEach(t => t.stop()); throw Error('Enregistrement non pris en charge par ce navigateur.'); }
+      chunks = []; recorder = new MediaRecorder(stream, {mimeType: mime}); recorder.mime = mime; recorder.startedAt = performance.now();
+      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); send(new Blob(chunks, {type: mime}), mime, performance.now() - recorder.startedAt); recorder = null; };
+      recorder.start(); $('talk').classList.add('on'); $('talk').textContent = 'Je vous écoute… relâchez pour envoyer'; status('Vous parlez', 'talk');
+      recorder.timer = setTimeout(() => { if (recorder && recorder.state === 'recording') recorder.stop(); }, 30000);
+    } catch (err) { status(err.name === 'NotAllowedError' ? 'Micro refusé : autorisez le microphone.' : err.message, 'off'); }
+  }
+  function talkStop(ev) {
+    if (ev) ev.preventDefault();
+    if (recorder && recorder.state === 'recording') { clearTimeout(recorder.timer); recorder.stop(); }
+    $('talk').classList.remove('on'); $('talk').textContent = 'Maintenir pour parler'; if (line && !ended) status('En ligne', 'live');
+  }
+  async function send(blob, mime, durationMs) {
+    if (!line || ended) return;
+    if (blob.size < 2000 || durationMs < 400) { say('sys', 'Phrase trop courte : maintenez le bouton pendant que vous parlez.'); return; }
+    const ext = mime.includes('mp4') ? '.mp4' : mime.includes('ogg') ? '.ogg' : '.webm';
+    const bubble = say('me', `Vous · ${(durationMs / 1000).toFixed(1)} s`, 'envoi…');
+    try {
+      sentAt = performance.now();
+      const r = await fetch(`${base}/api/line/${line.id}/speech`, {method: 'POST', headers: {...H(), 'Content-Type': 'application/octet-stream', 'X-Filename': 'speech' + ext}, body: blob});
+      bubble.querySelector('.meta').textContent = r.ok ? 'envoyé · la plateforme écoute' : 'échec de l’envoi (' + r.status + ')';
+      if (!r.ok) sentAt = null;
+    } catch (err) { bubble.querySelector('.meta').textContent = 'réseau indisponible'; sentAt = null; }
+  }
+  function finish(reason) {
+    if (ended) return; ended = true; clearTimeout(polling); talkStop();
+    $('live').hidden = true; $('setup').hidden = false; $('call').disabled = false; status(reason, 'off');
+  }
+  async function hangUp() {
+    if (!line) return;
+    try { await fetch(`${base}/api/line/${line.id}/end`, {method: 'POST', headers: {...H(), 'Content-Type': 'application/json'}, body: '{}'}); } catch (err) {}
+    finish('Vous avez raccroché.');
+  }
+  $('call').onclick = startCall;
+  const talk = $('talk');
+  talk.addEventListener('pointerdown', talkStart); talk.addEventListener('pointerup', talkStop); talk.addEventListener('pointercancel', talkStop); talk.addEventListener('pointerleave', e => { if (recorder) talkStop(e); });
+  talk.addEventListener('contextmenu', e => e.preventDefault());
+  $('hang').onclick = hangUp;
+})();
+</script>
+</body>
+</html>

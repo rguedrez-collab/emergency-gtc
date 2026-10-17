@@ -8,7 +8,7 @@ Everything is synthetic: no real call, no dispatch, no transmission to emergency
 ## Layout
 
 ```
-backend/            gateway (Python, standard library only) — fixed, next to the console
+backend/            gateway (Python, standard library only) — fixed, next to the console; its phone API is in docs/PHONE_API.md
   server.py           routes, model orchestration, speech guard, guardrails, vacation persistence,
                       forwarding of caller turns to caller sites + per-site latency log
   env.example         settings template (models, caller sites, guardrails; copy to backend/.env)
@@ -164,6 +164,8 @@ to this gateway. Everything below is configured through environment variables (o
 | `ORANGE_STATE_DIR`, `ORANGE_DB_PATH` | `state/`, `state/orange.db` | Runtime state and the SQLite database. |
 | `ORANGE_STATIC_FILE` | `frontend/dist/urgence.html` | The page served at `/`. |
 | `ORANGE_LINE_FILE` | `frontend/src/line.html` | The caller's phone page served at `/appel`. |
+| `ORANGE_PHONE_KEYS` | unset | API keys for an app on the caller's side (the line routes only); see `docs/PHONE_API.md`. |
+| `ORANGE_CORS_ORIGINS` | unset | Origins allowed to call the API from another site (`*` or a list), for an HTML app on a phone. |
 | `F5_GUARDRAILS_*` | unset | Option A guardrails (see `backend/env.example`). |
 
 ### Caller sites

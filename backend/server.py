@@ -493,6 +493,36 @@ LINE_TTL_S = 1800
 LINE_MAX_EVENTS = 80       # events kept per line; the audio of older ones is dropped first
 LINE_ID = re.compile(r"^[A-Za-z0-9_-]{6,24}$")
 LINE_SPEAKERS = ("assistant", "operator")
+
+
+# --- The phone side as an API for apps (Android, an HTML app in a WebView…): the line routes, reachable with an API key
+# instead of the console's password, from another origin when CORS is opened. The key opens nothing else.
+def cors_origins():
+    """Origins allowed to call the gateway from another site: ORANGE_CORS_ORIGINS, '*' or a comma-separated list."""
+    return [o.strip().rstrip("/") for o in os.environ.get("ORANGE_CORS_ORIGINS", "").split(",") if o.strip()]
+
+
+def phone_keys():
+    """API keys for the phone side: ORANGE_PHONE_KEYS, comma-separated. Empty: the console's password only."""
+    return [k.strip() for k in os.environ.get("ORANGE_PHONE_KEYS", "").split(",") if k.strip()]
+
+
+def phone_path(path):
+    return path == "/api/line" or path.startswith("/api/line/") or path in ("/api/phone", "/appel")
+
+
+def phone_api():
+    """GET /api/phone: what an app needs to know to place a call on the line (no secret, no host)."""
+    return {"service": "Orange · ligne mobile de démonstration", "demo": True, "poll_ms": 700, "max_audio_bytes": MAX_AUDIO,
+            "auth": {"phone_key": bool(phone_keys()), "how": "Authorization: Bearer <clé> (ou X-Api-Key), sinon l'identifiant/mot de passe de la console"},
+            "cors": cors_origins() or None,
+            "line": {"create": "POST /api/line {\"name\": \"…\"} -> {id, token, poll_ms}",
+                     "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max)",
+                     "events": "GET /api/line/{id}/events?since=N · X-Line-Token -> {status, events:[{idx, type: speech|claimed|reply|end, speaker, text, size}]}",
+                     "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée)",
+                     "end": "POST /api/line/{id}/end · X-Line-Token", "latency": "POST /api/line/{id}/latency {rtt_ms, handler: ai|operator}"},
+            "notes": ["La ligne est prise par la console ouverte dans un navigateur : sans console en session, l'appel reste « ringing ».",
+                      "Les réponses arrivent comme des événements « reply » ; leur audio se lit par index.", "Aucune transmission à de vrais secours."]}
 lines, lines_lock = {}, threading.Lock()
 
 
@@ -1529,16 +1559,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "microphone=(self), geolocation=()")
         self.send_header("X-Frame-Options", "DENY")
+        origin = self.allowed_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Expose-Headers", "X-TTS-MS, X-Voice-Preset, X-Voice-Delivery, X-Voice-Speed")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def allowed_origin(self):
+        """The request's Origin when CORS lets it in (echoed, never '*', so credentials work), else None."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return None
+        allowed = cors_origins()
+        return origin if ("*" in allowed or origin.rstrip("/") in allowed) else None
+
+    def cross_origin_blocked(self):
+        """Cross-site writes are refused unless the origin is allowed by ORANGE_CORS_ORIGINS (an app on a phone)."""
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != self.headers.get("Host") and not self.allowed_origin():
+            self.reply(403, {"error": "cross-origin requests are disabled"})
+            return True
+        return False
+
+    def do_OPTIONS(self):
+        """CORS preflight for an app on another origin: no authentication, answered only for an allowed origin."""
+        if self.allowed_origin():
+            self.reply(204, b"", "text/plain", extra={"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Api-Key, X-Line-Token, X-Filename, X-Speaker, X-Text, X-Model",
+                "Access-Control-Max-Age": "600"})
+        else:
+            self.reply(403, {"error": "origin not allowed"})
+
+    def phone_key_ok(self):
+        header = self.headers.get("Authorization", "")
+        supplied = header[7:].strip() if header.startswith("Bearer ") else self.headers.get("X-Api-Key", "").strip()
+        return bool(supplied) and any(hmac.compare_digest(supplied.encode("utf-8", "replace"), key.encode()) for key in phone_keys())
+
     def authorized(self):
         # Bytes comparison: a non-ASCII header must be rejected, not crash the handler.
+        self.phone_auth = False
         supplied = self.headers.get("Authorization", "").encode("latin-1", "replace")
         if hmac.compare_digest(supplied, self.server.expected_auth.encode()):
+            return True
+        if phone_path(urlsplit(self.path).path) and self.phone_key_ok():
+            self.phone_auth = True  # a phone key: the line routes only, and only the phone's side of them
             return True
         self.reply(401, {"error": "Authentication required"}, extra={"WWW-Authenticate": 'Basic realm="Orange emergency demo"'})
         return False
@@ -1563,8 +1632,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, latency_report())
         elif path == "/appel":
             self.reply(200, LINE_FILE.read_bytes(), "text/html; charset=utf-8")
+        elif path == "/api/phone":
+            self.reply(200, phone_api())
         elif path == "/api/line/pending":
-            self.reply(200, lines_pending())
+            if self.phone_auth:
+                self.reply(403, {"error": "console only"})
+            else:
+                self.reply(200, lines_pending())
         elif path.startswith("/api/line/"):
             self.line_get_route(path)
         else:
@@ -1578,6 +1652,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def line_get_route(self, path):
         parts = path.split("/")[3:]  # ['<id>', 'events' | 'audio', ...]
         token = self.line_token()
+        if self.phone_auth and token is None:
+            self.reply(403, {"error": "line token required"})
+            return
         line = line_get(parts[0] if parts else None, token)  # the console (no token) reads any line; a phone only its own
         if line is None:
             self.reply(404 if token is None else 403, {"error": "ligne inconnue"})
@@ -1595,9 +1672,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(404, {"error": "not found"})
 
     def line_post_route(self, path):
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1613,6 +1688,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             action = parts[1] if len(parts) == 2 else None
             token = self.line_token()
+            if self.phone_auth and (token is None or action in ("claim", "reply")):
+                self.reply(403, {"error": "console only"})  # a phone key never claims a line or speaks for the platform
+                return
             # The phone must present the line's token for what it sends; the console (operator) acts on any line.
             line = line_get(parts[0], token)
             if line is None:
@@ -1664,9 +1742,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     def latency_route(self):
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1682,9 +1758,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def guardrail_route(self):
         """POST /api/guardrail {"enabled": bool}: the operator's toggle. The guardrail stays configured; while off, the AI's
         turns go to the model directly (the simulated caller's path is unchanged)."""
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1704,9 +1778,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.reply(200, {"guardrail": guardrail_status()})
 
     def tool_route(self):
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1723,9 +1795,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     def session_route(self, path):
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1770,9 +1840,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path not in ROUTE_GATES:
             self.reply(404, {"error": "not found; no dispatch API is implemented"})
             return
-        origin = self.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != self.headers.get("Host"):
-            self.reply(403, {"error": "cross-origin requests are disabled"})
+        if self.cross_origin_blocked():
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
