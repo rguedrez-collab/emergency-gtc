@@ -35,6 +35,7 @@ const initialLayout = () => {
   return 'focus';
 };
 // The three services an operator can dispatch (same tool ids and labels as the gateway's catalogue).
+const initialSideOpen = () => { try { return localStorage.getItem('orange-side') !== 'closed'; } catch (e) { return true; } };
 const DISPATCH_TOOLS = [['dispatch_ambulance', 'SAMU', 'Déclencher le SAMU · ambulance'], ['dispatch_fire', 'Pompiers', 'Déclencher les pompiers'], ['dispatch_police', 'Police', 'Déclencher la police']];
 // SCENARIOS is injected from samples.mjs: 100 synthetic caller-only test calls.
 // Model names in the footnote follow the gateway's configuration (see labels()).
@@ -60,7 +61,7 @@ const fakePhone = seed => {
 };
 
 class Component extends DCLogic {
-  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, layout:initialLayout(), more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
+  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, layout:initialLayout(), sideOpen:initialSideOpen(), more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
     callers:[], latency:null, sitePolicy:'auto', analytics:false};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
@@ -1050,15 +1051,26 @@ class Component extends DCLogic {
     const header=h('div',{className:'oc-head oc-fhead'},
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
         h('span',{className:'oc-muted oc-ellipsis',title:c.id+' · '+c.phone},c.sc.place),h('span',{className:'oc-fstate',style:{color:mode.color},title:mode.sub},mode.title),h('span',{className:'oc-mono oc-right'},d.dur)));
-    const facts=c.facts.filter(f=>f.k!=='Lieu').map(f=>f.k+' : '+f.v).join(' · ');
-    const brief=h('div',{className:'oc-brief'},
-      h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'Résumé'),h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.')),
-      facts?h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'Éléments'),h('span',{className:'oc-muted'},facts)):null,
-      signals.length?h('div',{className:'oc-briefline'},h('span',{className:'oc-h'},'À vérifier'),h('span',{className:'oc-signal'},signals.map(q=>'« '+q+' »').join(' · '))):null);
     const controls=this.callControls();
-    return h('div',{className:'oc-main oc-fmain'},header,controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),brief,this.decisionBar(c),this.talkBox(c),
+    const main=h('div',{className:'oc-main oc-fmain'},header,controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),this.talkBox(c));
+    return h('div',{className:'oc-fwrap'},main,this.sidePanel(c,signals));
+  }
+  // The rounded panel on the right of the conversation: the summary, what to check, the decisions, the details on demand.
+  // It folds to a thin rail (the toggle stays, with an orange dot while a proposal of the AI waits for the operator).
+  sidePanel(c,signals) {
+    const open=this.state.sideOpen!==false,pending=(c.actions||[]).some(a=>a.kind==='dispatch'&&a.status==='proposed');
+    const toggle=h('button',{key:'toggle',type:'button',id:'orange-side-toggle',className:'oc-fside-toggle','aria-expanded':String(open),title:open?'Replier le panneau':'Déplier le panneau',
+      onClick:()=>this.toggleSide()},open?'›':'‹',pending&&!open?h('span',{className:'oc-fside-dot'}):null);
+    if(!open)return h('aside',{className:'oc-fside collapsed'},toggle,h('span',{className:'oc-fside-rail'},'Résumé · décisions'));
+    const facts=c.facts.filter(f=>f.k!=='Lieu').map(f=>f.k+' : '+f.v).join(' · ');
+    return h('aside',{className:'oc-fside'},toggle,
+      h('div',{className:'oc-block'},h('span',{className:'oc-h'},'Résumé'),h('span',{className:'oc-summary',style:{color:c.summary?CALLER:SEC}},c.summary||'En attente des premiers propos de l’appelant.'),
+        facts?h('span',{className:'oc-muted'},facts):null),
+      signals.length?h('div',{className:'oc-block'},h('span',{className:'oc-h'},'À vérifier'),...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,
+      this.decisionBar(c),
       this.more('details')?h('div',{className:'oc-fdetails'},this.guardBlock(c),this.latencyBlock(c),this.toolsBlock(c)):null);
   }
+  toggleSide() {const sideOpen=this.state.sideOpen===false;try{localStorage.setItem('orange-side',sideOpen?'open':'closed');}catch(e){}this.setState({sideOpen});}
   // The decisions, as big buttons: the three services (an AI proposal is highlighted and one click validates it; otherwise the
   // click is the operator's own decision, recorded the same way, as a simulation), then taking or handing back the call.
   decisionBar(c) {

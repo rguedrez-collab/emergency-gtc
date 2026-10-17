@@ -804,6 +804,12 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   c.actions.push({id:'A9',key:'dispatch_fire',tool:'dispatch_fire',label:'Déclencher les pompiers',kind:'dispatch',args:{},reason:'« le feu »',status:'proposed',by:'ia'});
   shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('proposé par l’IA · valider')&&JSON.stringify(app.consoleView()).includes('oc-big-proposed'));
   await app.decide(c,'dispatch_fire');assert.equal(posts.length,2);assert.equal(c.actions.find(x=>x.id==='A9').status,'done');
+  // The summary and the decisions sit in a rounded panel on the right of the conversation; it folds to a rail and back.
+  let json=JSON.stringify(app.consoleView());assert.ok(json.includes('oc-fside')&&!json.includes('oc-fside collapsed')&&json.includes('orange-side-toggle'),'open panel');
+  c.actions.push({id:'A10',key:'dispatch_police',tool:'dispatch_police',label:'Déclencher la police',kind:'dispatch',args:{},reason:'« menace »',status:'proposed',by:'ia'});  // a proposal still waiting
+  app.toggleSide();assert.equal(app.state.sideOpen,false);json=JSON.stringify(app.consoleView());shown=texts(app.consoleView()).join(' ');
+  assert.ok(json.includes('oc-fside collapsed')&&json.includes('oc-fside-dot')&&!shown.includes('proposé par l’IA · valider'),'folded: a rail with the toggle and the pending-proposal dot, no decisions shown');
+  app.toggleSide();assert.equal(app.state.sideOpen,true);assert.ok(texts(app.consoleView()).join(' ').includes('proposé par l’IA · valider'),'unfolded: the decisions are back');
   // Taking the call swaps the fourth button; Détails opens the folded blocks; the toggle remembers the layout.
   app.takeOverCall(c);shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('Rendre à l’IA')&&!shown.includes('Prendre l’appel'));
   app.state.more={details:true};shown=texts(app.consoleView()).join(' ');assert.ok(shown.includes('Journal des traitements'),'Détails opens the log');
