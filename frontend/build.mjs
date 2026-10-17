@@ -57,8 +57,8 @@ nve-button[data-tone=ai]{--background:transparent;--border:1px solid rgba(118,18
 .oc-details>.oc-block{padding:0;border:0;background:none;box-shadow:none;}
 /* Focus layout: the call list, then one call full width with the decisions. */
 .oc.oc-focus{grid-template-columns:380px minmax(0,1fr) !important;grid-template-rows:minmax(0,1fr) !important;}
-.oc-fwrap{display:flex;min-width:0;min-height:0;}
-.oc-fwrap>.oc-fmain{flex:1;min-width:0;}
+.oc-fwrap{display:flex;flex:1;min-width:0;min-height:0;}
+.oc-fcenter{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;}
 .oc-fside{position:relative;flex:none;width:400px;margin:12px 12px 12px 0;padding:16px 16px 14px;border:1px solid var(--border-color-base);border-radius:14px;background:var(--background-color-surface-base);box-shadow:0 8px 28px rgba(0,0,0,.07);display:flex;flex-direction:column;gap:14px;overflow-y:auto;min-height:0;transition:width .18s ease;}
 .oc-fside.collapsed{width:48px;padding:12px 0;align-items:center;gap:10px;overflow:hidden;}
 .oc-fside-toggle{position:absolute;top:10px;left:-14px;width:28px;height:28px;border-radius:50%;border:1px solid var(--border-color-base);background:var(--background-color-surface-base);box-shadow:0 2px 8px rgba(0,0,0,.12);font:inherit;font-size:16px;line-height:1;color:var(--text-color-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;}

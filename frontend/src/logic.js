@@ -1052,8 +1052,9 @@ class Component extends DCLogic {
       h('div',{className:'oc-top'},this.kui('Badge',{color:d.sevColor,kind:'solid'},d.sev),h('span',{className:'oc-callname'},d.category),
         h('span',{className:'oc-muted oc-ellipsis',title:c.id+' · '+c.phone},c.sc.place),h('span',{className:'oc-fstate',style:{color:mode.color},title:mode.sub},mode.title),h('span',{className:'oc-mono oc-right'},d.dur)));
     const controls=this.callControls();
-    const main=h('div',{className:'oc-main oc-fmain'},header,controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),this.talkBox(c));
-    return h('div',{className:'oc-fwrap'},main,this.sidePanel(c,signals));
+    // The header runs across the whole width; under it, the conversation on the left and the rounded panel on the right.
+    const centre=h('div',{className:'oc-fcenter'},controls?h('div',{className:'oc-ctl'},controls):null,this.transcriptView(c),this.waveRow(c),this.talkBox(c));
+    return h('div',{className:'oc-main oc-fmain'},header,h('div',{className:'oc-fwrap'},centre,this.sidePanel(c,signals)));
   }
   // The rounded panel on the right of the conversation: the summary, what to check, the decisions, the details on demand.
   // It folds to a thin rail (the toggle stays, with an orange dot while a proposal of the AI waits for the operator).
