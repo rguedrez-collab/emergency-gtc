@@ -942,6 +942,23 @@ class GatewayTests(unittest.TestCase):
                 status, body = self.request("/appel")
                 self.assertEqual(status, 200); self.assertIn("Maintenir pour parler".encode(), body)
 
+    def test_the_phone_page_is_an_installable_web_app(self):
+        """The phone page, its manifest, service worker and icons are public (nothing secret in them); the API stays closed."""
+        for path, mime in (("/appel", "text/html"), ("/appel/manifest.webmanifest", "application/manifest+json"), ("/appel/sw.js", "text/javascript"),
+                           ("/appel/icon-192.png", "image/png"), ("/appel/icon-512.png", "image/png"), ("/appel/apple-touch-icon.png", "image/png")):
+            req = Request(self.base + path)
+            with urlopen(req, timeout=3) as resp:
+                self.assertEqual(resp.status, 200, path); self.assertIn(mime, resp.headers.get("Content-Type", ""), path); body = resp.read()
+            if path.endswith(".png"):
+                self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n", path)
+        manifest = json.loads(urlopen(Request(self.base + "/appel/manifest.webmanifest"), timeout=3).read())
+        self.assertEqual((manifest["start_url"], manifest["display"], len(manifest["icons"])), ("/appel", "standalone", 2))
+        page = urlopen(Request(self.base + "/appel"), timeout=3).read().decode()
+        for needle in ('rel="manifest"', "beforeinstallprompt", "serviceWorker.register", 'id="key"'):
+            self.assertIn(needle, page)
+        self.assertEqual(self.request("/api/line", {}, auth=False)[0], 401, "the API itself still needs a key or the console's password")
+        self.assertEqual(self.request("/appel/../server.py", auth=False)[0], 401)
+
     def test_the_phone_api_opens_the_line_to_an_app_and_nothing_else(self):
         """An app (Android, or an HTML app in a WebView) uses an API key and another origin: the line routes answer, the
         console's routes stay closed, and a phone key never acts for the console."""

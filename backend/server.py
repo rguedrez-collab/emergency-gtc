@@ -511,6 +511,47 @@ def phone_path(path):
     return path == "/api/line" or path.startswith("/api/line/") or path in ("/api/phone", "/appel")
 
 
+APP_MANIFEST = {"name": "Orange · Appel de démonstration", "short_name": "Appel démo", "lang": "fr", "start_url": "/appel", "scope": "/appel",
+                "display": "standalone", "orientation": "portrait", "background_color": "#0f1114", "theme_color": "#000000",
+                "description": "Appeler la plateforme de régulation de démonstration depuis ce téléphone (données fictives, pas une ligne d'urgence).",
+                "icons": [{"src": "/appel/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                          {"src": "/appel/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}]}
+APP_SW = b"""// Service worker of the phone page: the shell is cached so the app opens instantly; the API is never cached.
+const SHELL='appel-shell-v1', ASSETS=['/appel','/appel/manifest.webmanifest','/appel/icon-192.png','/appel/icon-512.png'];
+self.addEventListener('install',e=>{e.waitUntil(caches.open(SHELL).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting()));});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==SHELL).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
+self.addEventListener('fetch',e=>{const url=new URL(e.request.url);
+  if(e.request.method!=='GET'||url.pathname.startsWith('/api/'))return;  // calls, audio and events always go to the network
+  if(e.request.mode==='navigate'||ASSETS.includes(url.pathname))e.respondWith(fetch(e.request).then(r=>{const copy=r.clone();caches.open(SHELL).then(c=>c.put(e.request,copy));return r;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/appel'))));
+});
+"""
+
+
+def _png(size, draw):
+    """A PNG (RGB, no dependencies): draw(x, y) -> (r, g, b)."""
+    import struct, zlib
+    raw = b"".join(b"\0" + b"".join(bytes(draw(x, y)) for x in range(size)) for y in range(size))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+
+
+def app_icon(size):
+    """The app's icon: the brand square with a white ring (a line) and a dot (the call), drawn, not shipped."""
+    c, ring_in, ring_out, dot = size / 2, size * 0.27, size * 0.36, size * 0.075
+    def draw(x, y):
+        dx, dy = x + 0.5 - c, y + 0.5 - c
+        r = (dx * dx + dy * dy) ** 0.5
+        if ring_in <= r <= ring_out or ((dx - c * 0.62) ** 2 + (dy - c * 0.62) ** 2) ** 0.5 <= dot:
+            return (255, 255, 255)
+        return (255, 121, 0)
+    return _png(size, draw)
+
+
+APP_ICONS = {192: app_icon(192), 512: app_icon(512), 180: app_icon(180)}
+PUBLIC_APP_PATHS = {"/appel", "/appel/manifest.webmanifest", "/appel/sw.js", "/appel/icon-192.png", "/appel/icon-512.png", "/appel/apple-touch-icon.png"}
+
+
 def phone_api():
     """GET /api/phone: what an app needs to know to place a call on the line (no secret, no host)."""
     return {"service": "Orange · ligne mobile de démonstration", "demo": True, "poll_ms": 700, "max_audio_bytes": MAX_AUDIO,
@@ -1617,6 +1658,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/healthz":  # liveness/readiness for orchestrators: no auth, no model probe, nothing about the data
             self.reply(200, {"ok": True})
             return
+        if path in PUBLIC_APP_PATHS:  # the phone page and what makes it installable: public, nothing secret (the API itself stays closed)
+            self.phone_auth = False
+            if path == "/appel":
+                self.reply(200, LINE_FILE.read_bytes(), "text/html; charset=utf-8")
+            elif path == "/appel/manifest.webmanifest":
+                self.reply(200, json.dumps(APP_MANIFEST, ensure_ascii=False).encode(), "application/manifest+json")
+            elif path == "/appel/sw.js":
+                self.reply(200, APP_SW, "text/javascript; charset=utf-8", extra={"Service-Worker-Allowed": "/appel"})
+            else:
+                size = 180 if "apple" in path else int(path.rsplit("-", 1)[1].split(".")[0])
+                self.reply(200, APP_ICONS[size], "image/png")
+            return
         if not self.authorized():
             return
         if path in ("/", "/urgence.html", "/index.html"):
@@ -1630,8 +1683,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, state) if state else self.reply(404, {"error": "aucune session enregistrée"})
         elif path == "/api/latency":
             self.reply(200, latency_report())
-        elif path == "/appel":
-            self.reply(200, LINE_FILE.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/phone":
             self.reply(200, phone_api())
         elif path == "/api/line/pending":

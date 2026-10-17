@@ -156,6 +156,9 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   or `X-Api-Key`) that opens nothing else and never the console's side of a line (`claim`, `reply`, `pending`); `ORANGE_CORS_ORIGINS`
   opens CORS (preflight `OPTIONS`, echoed origin, exposed timing headers) and relaxes the cross-site guard for those origins;
   `GET /api/phone` describes the contract. `tools/phone_client.html` is a standalone test client (any host, WebView, Capacitor).
+  `/appel` is installable (PWA): `/appel/manifest.webmanifest`, `/appel/sw.js` (shell cache, never `/api/`), icons drawn in
+  code (`app_icon`), all served without authentication (`PUBLIC_APP_PATHS`); the page keeps the access key in localStorage
+  and shows an install banner (`beforeinstallprompt`, iOS hint).
 - Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
   `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
   off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration

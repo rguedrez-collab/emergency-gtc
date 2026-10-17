@@ -34,6 +34,14 @@ Accepted audio for `speech`: one utterance, 30 s at most, 15 MB at most, contain
 `.webm` / `.ogg` (Opus), `.mp4` / `.m4a` (AAC), `.wav`, `.mp3`. Android `MediaRecorder` with `OutputFormat.MPEG_4` +
 `AudioEncoder.AAC` gives a `.m4a`; Chrome's `MediaRecorder` gives `audio/webm;codecs=opus`.
 
+## Install the phone page as an app
+
+`/appel` is an installable web app (manifest, service worker, icons served by the gateway, all public): open
+`https://<console-host>/appel` on the phone. Chrome on Android shows a banner « Installer » (or the browser's own
+« Ajouter à l'écran d'accueil »); iOS Safari: Partager → Sur l'écran d'accueil. The app opens full screen, asks for
+the access key once (remembered on the phone) and then places calls like any other client of this API. Without a key it
+falls back to the console's own login.
+
 ## Minimal clients
 
 HTML / JavaScript (works in Chrome on Android, a WebView, Capacitor; `tools/phone_client.html` is a complete one):

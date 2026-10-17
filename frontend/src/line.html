@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Appel démo">
+<link rel="manifest" href="/appel/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/appel/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/appel/icon-192.png">
 <title>Appeler · démonstration</title>
 <style>
   /* The caller's side of the demonstration: one screen, one big button. Works in Android Chrome (and as a page added to the
@@ -37,6 +44,9 @@
   .turn.sys{align-self:center;color:var(--muted);font-size:13px;font-style:italic;}
   .meta{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);}
   .hint{font-size:13px;color:var(--muted);line-height:1.5;}
+  .install{display:flex;gap:12px;align-items:center;border-color:var(--orange);} .install p{margin:0;flex:1;font-size:14px;line-height:1.4;}
+  .install button{background:var(--orange);border-color:var(--orange);color:#111;font-weight:600;white-space:nowrap;}
+  .install .later{background:transparent;border-color:var(--line);color:var(--muted);font-weight:400;}
   footer{padding:10px 18px 16px;font-size:12px;color:var(--muted);text-align:center;}
   [hidden]{display:none!important;}
 </style>
@@ -45,9 +55,16 @@
 <header><span class="mark"></span><b>Orange · Appel de démonstration</b><span id="site"></span></header>
 <main>
   <div id="status" class="status off" role="status">Prêt à appeler</div>
+  <section id="install" class="card install" hidden>
+    <p id="installtext">Ajoutez cette application à l’écran d’accueil : elle s’ouvre en plein écran, comme une application.</p>
+    <button id="installbtn">Installer</button>
+    <button id="installlater" class="later" title="Ne plus proposer">Plus tard</button>
+  </section>
   <section id="setup" class="card">
     <label for="name">Prénom ou pseudonyme (facultatif, fictif)</label>
     <input id="name" maxlength="40" autocomplete="off" placeholder="Ex. Camille">
+    <label for="key" style="margin-top:10px">Clé d’accès (fournie par l’équipe · mémorisée sur ce téléphone)</label>
+    <input id="key" autocomplete="off" placeholder="clé d’accès" inputmode="text">
     <p class="hint">Vous allez parler à une plateforme de régulation de démonstration : une assistance IA vous répond, un opérateur peut reprendre l’appel. Aucune donnée n’est transmise à des secours réels. Ne décrivez pas une urgence réelle ici : appelez le 112.</p>
     <button id="call" class="call">Appeler</button>
   </section>
@@ -69,7 +86,23 @@
     $('transcript').appendChild(d); d.scrollIntoView({block: 'end'}); return d; };
   $('site').textContent = location.host;
   let line = null, since = 0, polling = null, recorder = null, chunks = [], sentAt = null, player = null, queue = [], playing = false, ended = false;
-  const headers = () => ({'X-Line-Token': line.token});
+  // The access key is remembered on this phone; without one, the browser's own login to the console (Basic) is used.
+  const saved = k => { try { return localStorage.getItem('appel-' + k) || ''; } catch (e) { return ''; } };
+  const keep = (k, v) => { try { localStorage.setItem('appel-' + k, v); } catch (e) {} };
+  $('key').value = saved('key'); $('name').value = $('name').value || saved('name');
+  const auth = () => { const k = $('key').value.trim(); return k ? {'Authorization': 'Bearer ' + k} : {}; };
+  const headers = () => ({...auth(), 'X-Line-Token': line.token});
+
+  // Installable: Chrome on Android offers « Installer » (the banner below); iOS Safari needs Partager → Sur l’écran d’accueil.
+  let installEvent = null;
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; if (!standalone && !saved('install-later')) $('install').hidden = false; });
+  window.addEventListener('appinstalled', () => { $('install').hidden = true; installEvent = null; });
+  if (ios && !standalone && !saved('install-later')) { $('installtext').textContent = 'Ajoutez cette page à l’écran d’accueil : Partager, puis « Sur l’écran d’accueil ».'; $('installbtn').hidden = true; $('install').hidden = false; }
+  $('installbtn').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) {} installEvent = null; $('install').hidden = true; };
+  $('installlater').onclick = () => { keep('install-later', '1'); $('install').hidden = true; };
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/appel/sw.js', {scope: '/appel'}).catch(() => {});
 
   // Audio out: replies are played one after the other; the first tap on « Appeler » unlocks playback.
   function unlock() {
@@ -115,7 +148,9 @@
     $('call').disabled = true;
     try {
       unlock();
-      const r = await fetch('/api/line', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim()})});
+      keep('key', $('key').value.trim()); keep('name', $('name').value.trim());
+      const r = await fetch('/api/line', {method: 'POST', headers: {...auth(), 'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim()})});
+      if (r.status === 401) throw Error($('key').value.trim() ? 'Clé d’accès refusée : vérifiez la clé fournie par l’équipe.' : 'Accès refusé : saisissez la clé d’accès fournie par l’équipe.');
       if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ').');
       line = await r.json(); since = 0; ended = false;
       $('setup').hidden = true; $('live').hidden = false; $('hang').hidden = false;
@@ -175,7 +210,7 @@
   talk.addEventListener('pointerdown', talkStart); talk.addEventListener('pointerup', talkStop); talk.addEventListener('pointercancel', talkStop); talk.addEventListener('pointerleave', e => { if (recorder) talkStop(e); });
   talk.addEventListener('contextmenu', e => e.preventDefault());
   $('hang').onclick = hangUp;
-  window.addEventListener('pagehide', () => { if (line && !ended) navigator.sendBeacon && navigator.sendBeacon(`/api/line/${line.id}/end?token=${encodeURIComponent(line.token)}`, '{}'); });
+  window.addEventListener('pagehide', () => { if (line && !ended) fetch(`/api/line/${line.id}/end`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}', keepalive: true}).catch(() => {}); });
 })();
 </script>
 </body>
