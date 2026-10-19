@@ -306,7 +306,8 @@ CREATE TABLE IF NOT EXISTS latency (id INTEGER PRIMARY KEY AUTOINCREMENT, at REA
 CREATE INDEX IF NOT EXISTS latency_location ON latency (location, at);
 """
 # Columns added after the first release; an existing database gets them on open (CREATE TABLE IF NOT EXISTS never alters).
-LATENCY_ADDED_COLUMNS = (("handler", "TEXT"), ("operator_ms", "INTEGER"), ("op_tts_ms", "INTEGER"), ("op_stt_ms", "INTEGER"), ("phone_ms", "INTEGER"))
+LATENCY_ADDED_COLUMNS = (("handler", "TEXT"), ("operator_ms", "INTEGER"), ("op_tts_ms", "INTEGER"), ("op_stt_ms", "INTEGER"), ("phone_ms", "INTEGER"),
+                         ("first_voice_ms", "INTEGER"), ("answer_ms", "INTEGER"))
 CALLS_ADDED_COLUMNS = (("actions", "TEXT"),)  # the AI's tool calls and the operator's decisions on them
 _written = {}  # (base, call id) -> fingerprint of the last version written, so unchanged calls are not rewritten every 2 s
 # Per-turn latency samples posted by the browser (POST /api/latency): where the caller's line came from and how long
@@ -314,7 +315,11 @@ _written = {}  # (base, call id) -> fingerprint of the last version written, so 
 # `handler` says who answered the caller on that turn: the AI ('ai') or the operator who took the call over ('operator');
 # operator turns carry the human's reaction time (caller's last words -> answer sent), their voice synthesis and, when
 # they spoke, their own transcription. `phone_ms` is a round trip measured by a real caller's phone (mobile line).
-LATENCY_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms", "stt_ms", "analyze_ms", "reply_tts_ms", "operator_ms", "op_tts_ms", "op_stt_ms", "phone_ms")
+# A real caller's phone measures what the person perceives: `first_voice_ms` (last word -> first voice heard, wait messages
+# included), `answer_ms` (last word -> the answer's voice), `network_ms` (HTTP round trip), `phone_ms` (end of speech signalled -> answer received).
+LATENCY_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms", "stt_ms", "analyze_ms", "reply_tts_ms", "operator_ms", "op_tts_ms", "op_stt_ms", "phone_ms",
+                  "first_voice_ms", "answer_ms")
+LATENCY_PHONE_FIELDS = ("answer_ms", "first_voice_ms", "network_ms", "phone_ms")
 LATENCY_SITE_FIELDS = ("caller_ms", "network_ms", "llm_ms", "tts_ms")      # what a caller site is responsible for
 LATENCY_CONSOLE_FIELDS = ("stt_ms", "analyze_ms", "reply_tts_ms")          # what the console's own models take
 LATENCY_OPERATOR_FIELDS = ("operator_ms", "op_tts_ms", "op_stt_ms")       # what the human operator takes, after a takeover
@@ -476,10 +481,10 @@ def latency_report(window=LATENCY_WINDOW):
     for handler in LATENCY_HANDLERS:
         theirs = [r for r in rows if (r.get("handler") or "ai") == handler and any(r[k] is not None for k in LATENCY_CONSOLE_FIELDS + LATENCY_OPERATOR_FIELDS)]
         handlers[handler] = {"n": len(theirs), **{k: _stats(r[k] for r in theirs) for k in LATENCY_CONSOLE_FIELDS + LATENCY_OPERATOR_FIELDS}}
-    phone = [r for r in rows if r.get("phone_ms") is not None]
+    phone = [r for r in rows if any(r.get(k) is not None for k in ("phone_ms", "answer_ms", "first_voice_ms"))]
     return {"samples": len(rows), "window": window, "sites": sites,
             "console": {k: _stats(r[k] for r in rows) for k in LATENCY_CONSOLE_FIELDS},
-            "handlers": handlers, "phone": {"n": len(phone), "phone_ms": _stats(r["phone_ms"] for r in phone)},
+            "handlers": handlers, "phone": {"n": len(phone), **{k: _stats(r[k] for r in phone) for k in LATENCY_PHONE_FIELDS}},
             "recent": [{k: r.get(k) for k in ("at", "call_id", "turn", "location", "requested", "fallback", "handler", *LATENCY_FIELDS)} for r in rows[:20]]}
 
 
@@ -562,7 +567,8 @@ def phone_api():
                      "pause": "POST /api/line/{id}/pause · X-Line-Token : fin de la prise de parole après des morceaux X-Continue (la plateforme répond alors)",
                      "events": "GET /api/line/{id}/events?since=N&wait=5 · X-Line-Token -> {status, events:[{idx, type: speech|pause|claimed|reply|end, speaker, text, size, more}]} · wait = attente longue (s, 8 max)",
                      "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée) · un reply avec standby:true est un message d'attente",
-                     "end": "POST /api/line/{id}/end · X-Line-Token", "latency": "POST /api/line/{id}/latency {rtt_ms, handler: ai|operator}"},
+                     "end": "POST /api/line/{id}/end · X-Line-Token",
+                     "latency": "POST /api/line/{id}/latency {answer_ms: dernier mot -> voix de la réponse, first_voice_ms: dernier mot -> première voix (messages d'attente compris), network_ms: aller-retour HTTP, rtt_ms: pause -> réponse reçue, handler: ai|operator}"},
             "notes": ["La ligne est prise par la console ouverte dans un navigateur : sans console en session, l'appel reste « ringing ».",
                       "Les réponses arrivent comme des événements « reply » ; leur audio se lit par index.", "Aucune transmission à de vrais secours."]}
 lines, lines_lock = {}, threading.Lock()
@@ -1800,6 +1806,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise ValueError("line token required")
                 payload = json.loads(body) if body else {}
                 sample = {"location": "ligne", "requested": "ligne", "call": "LIGNE-" + line["id"], "phone_ms": payload.get("rtt_ms"),
+                          "network_ms": payload.get("network_ms"), "first_voice_ms": payload.get("first_voice_ms"), "answer_ms": payload.get("answer_ms"),
                           "handler": payload.get("handler") if payload.get("handler") in LATENCY_HANDLERS else "ai"}
                 self.reply(200, {"saved": True, "id": save_latency(sample)})
             else:

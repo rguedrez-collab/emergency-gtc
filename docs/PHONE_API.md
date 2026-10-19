@@ -21,7 +21,7 @@ GET  /api/line/{id}/events?since=0&wait=5 (X-Line-Token)      -> {"status": "rin
 POST /api/line/{id}/speech           (X-Line-Token, X-Filename: speech.webm, body = audio bytes; X-Continue: 1 = a piece, more follows)
 POST /api/line/{id}/pause            (X-Line-Token)             end of an utterance sent in pieces: the platform answers now
 GET  /api/line/{id}/audio/{idx}      (X-Line-Token)           -> audio/wav 24 kHz mono (a reply, by event index)
-POST /api/line/{id}/latency          (X-Line-Token) {"rtt_ms": 2300, "handler": "ai"|"operator"}   (optional telemetry)
+POST /api/line/{id}/latency          (X-Line-Token) {"answer_ms": 3800, "first_voice_ms": 1900, "network_ms": 80, "rtt_ms": 2300, "handler": "ai"|"operator"}
 POST /api/line/{id}/end              (X-Line-Token)
 GET  /api/phone                                               -> this contract, as JSON
 ```
@@ -96,6 +96,14 @@ client.newCall(Request.Builder().url("$base/api/line/$id/speech").header("Author
     .header("X-Filename", "speech.m4a").post(File(cacheDir, "speech.m4a").asRequestBody("application/octet-stream".toMediaType())).build()).execute()
 // poll /api/line/$id/events?since=N with the same two headers; for a "reply" event download /api/line/$id/audio/{idx} and play it with MediaPlayer.
 ```
+
+## What the phone measures
+
+The phone page reports, per turn, what the caller perceives: `answer_ms` = from the caller's last word to the moment
+the answer's audio starts playing on the phone; `first_voice_ms` = last word to the first voice heard (a wait message
+counts); `network_ms` = HTTP round trip to the gateway (a probe at call start and every 15 s, median of the last five);
+`rtt_ms` = end-of-speech marker sent to answer received. The page shows them under the captions; the gateway aggregates
+them in `GET /api/latency` under `phone` and the console's « Analytique » panel shows the medians.
 
 ## Checks from a shell
 

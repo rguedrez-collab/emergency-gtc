@@ -930,8 +930,9 @@ class GatewayTests(unittest.TestCase):
             req = Request(self.base + f"/api/line/{lid}/audio/2?token={line['token']}", headers={"Authorization": self.httpd.expected_auth})
             with urlopen(req, timeout=3) as resp:
                 self.assertTrue(resp.read().startswith(b"RIFF")); self.assertEqual(resp.headers["Content-Type"], "audio/wav")
-            self.assertEqual(self.request(f"/api/line/{lid}/latency", {"rtt_ms": 2300, "handler": "ai"}, headers=phone)[0], 200)
-            self.assertEqual(json.loads(self.request("/api/latency")[1])["phone"]["phone_ms"]["median"], 2300)
+            self.assertEqual(self.request(f"/api/line/{lid}/latency", {"rtt_ms": 2300, "handler": "ai", "network_ms": 80, "first_voice_ms": 1900, "answer_ms": 3800}, headers=phone)[0], 200)
+            seen = json.loads(self.request("/api/latency")[1])["phone"]
+            self.assertEqual((seen["phone_ms"]["median"], seen["network_ms"]["median"], seen["first_voice_ms"]["median"], seen["answer_ms"]["median"]), (2300, 80, 1900, 3800), "what the caller's phone perceived")
             # A hands-free phone sends pieces (X-Continue) and then a pause; the console sees both kinds of events.
             status, body = self.request(f"/api/line/{lid}/speech", raw=b"RIFF" + b"\0" * 300, headers={**phone, "Content-Type": "application/octet-stream", "X-Filename": "speech.wav", "X-Continue": "1"})
             self.assertEqual((status, json.loads(body)["idx"]), (200, 3))

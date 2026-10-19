@@ -49,6 +49,7 @@
   .who{font-size:28px;font-weight:500;margin-top:10px;} .num{font-size:16px;color:var(--muted);} .state{font-size:17px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:22px;}
   .captions{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;padding:18px 4px 10px;min-height:110px;}
   .cap{font-size:17px;line-height:1.4;color:#e5e5ea;} .cap.op{color:#fff;} .cap small{display:block;font-size:11px;color:var(--muted);margin-bottom:2px;letter-spacing:.06em;text-transform:uppercase;}
+  .tele{font-size:12px;color:var(--muted);min-height:16px;font-variant-numeric:tabular-nums;padding:0 4px;}
   .listen{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted);min-height:22px;margin:4px 0 14px;}
   .listen i{width:12px;height:12px;border-radius:50%;background:#48484a;flex:none;transition:transform .09s linear,background .2s;}
   .listen.on i{background:var(--green);} .listen.talk i{background:var(--orange);} .listen.wait i{background:#8e8e93;} .listen.off i{background:var(--red);}
@@ -92,6 +93,7 @@
   <div class="callhead"><div id="avatar" class="avatar">18</div><div id="who" class="who">Sapeurs-Pompiers</div><div id="num" class="num">18</div><div id="substate" class="state">Appel en cours…</div></div>
   <div id="captions" class="captions" aria-live="polite"></div>
   <div id="keypad2" class="keypad small" hidden></div>
+  <div id="tele" class="tele"></div>
   <div id="listen" class="listen"><i></i><span id="listentext"></span></div>
   <button id="talk" class="talk" type="button" hidden>Maintenir pour parler</button>
   <div class="controls">
@@ -197,6 +199,26 @@
   // --- The call
   let line = null, since = 0, polling = null, ended = false, live = false, startedAt = null, timerId = null, sentAt = null;
   let player = null, queue = [], playing = false, aiTalking = false, quietUntil = 0, muted = false, captionsOn = true, vad = null, recorder = null, micError = '';
+  // What the caller perceives, per turn: last word → first voice heard (wait messages included) → the answer's voice; plus the network.
+  let turn = null, networkMs = null, probes = [], probeTimer = null;
+  async function probe() {
+    if (!line || ended) return;
+    const t = performance.now();
+    try { await fetch(`/api/line/${line.id}/events?since=1000000`, {headers: headers(), cache: 'no-store'}); probes.push(Math.round(performance.now() - t)); if (probes.length > 5) probes.shift();
+      networkMs = [...probes].sort((a, b) => a - b)[Math.floor(probes.length / 2)]; $('quality').textContent = `réseau ${networkMs} ms`; } catch (e) {}
+  }
+  const s1 = ms => (ms / 1000).toFixed(1) + ' s';
+  function heard(e) {  // a reply's audio actually started on this phone
+    const now = Date.now(); if (!turn) return;
+    if (!turn.firstVoiceAt) turn.firstVoiceAt = now;
+    if (e.standby || turn.answerAt) return;
+    turn.answerAt = now; const t = turn; turn = null;
+    const first = t.firstVoiceAt - t.endedAt, answer = t.answerAt - t.endedAt;
+    if (e.node) { const m = e.node.querySelector('small'); if (m) m.textContent = (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + ' · entendue ' + s1(answer) + ' après votre dernier mot'; }
+    $('tele').textContent = `réponse perçue ${s1(answer)}` + (first < answer - 300 ? ` · première voix ${s1(first)}` : '') + (networkMs != null ? ` · réseau ${networkMs} ms` : '');
+    fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
+      body: JSON.stringify({rtt_ms: t.rttMs, network_ms: networkMs, first_voice_ms: first, answer_ms: answer, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {});
+  }
   function unlock() {  // the first tap unlocks playback of the replies (silence, as WAV)
     player = player || new Audio();
     const pcm = new ArrayBuffer(44 + 4800), v = new DataView(pcm), str = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
@@ -210,6 +232,7 @@
     const d = document.createElement('div'); d.className = 'cap ' + cls;
     if (meta) { const m = document.createElement('small'); m.textContent = meta; d.appendChild(m); }
     d.appendChild(document.createTextNode(text)); const box = $('captions'); box.appendChild(d); while (box.children.length > 3) box.removeChild(box.firstChild);
+    return d;
   }
   const listening = (mode, text) => { $('listen').className = 'listen ' + mode; $('listentext').textContent = text; };
   const idle = () => listening(muted ? 'off' : 'on', muted ? 'Micro coupé' : 'Je vous écoute');
@@ -228,6 +251,7 @@
       if (r.status === 401) throw Error($('key').value.trim() ? 'Clé d’accès refusée · Réglages' : 'Clé d’accès requise · Réglages');
       if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ')');
       line = await r.json(); since = 0; ended = false; live = false; startedAt = null; queue = []; playing = false; aiTalking = false; muted = false;
+      turn = null; probes = []; networkMs = null; $('tele').textContent = ''; $('quality').textContent = ''; probe(); clearInterval(probeTimer); probeTimer = setInterval(probe, 15000);
       $('mute').classList.remove('on'); icon($('mute').firstElementChild, 'mic'); $('captions').innerHTML = ''; $('captions').hidden = !captionsOn; $('keypad2').hidden = true; $('keys').classList.remove('on');
       $('avatar').textContent = $('endavatar').textContent = dialed.length <= 3 ? dialed : '☎'; $('who').textContent = $('endwho').textContent = label(dialed);
       $('num').textContent = dialed; $('substate').textContent = 'Appel en cours…'; $('avatar').classList.add('ring'); $('talk').hidden = true;
@@ -265,12 +289,12 @@
       const copy = new Float32Array(x);
       if (v.state !== 'speaking') {  // idle, or the tail of silence after a piece
         v.pre.push(copy); if (v.pre.length > PRE) v.pre.shift();
-        if (loud) { if (++v.onset >= 2) { v.state = 'speaking'; v.frames = v.pre; v.pre = []; v.silent = 0; v.voiced = v.onset; listening('talk', 'Vous parlez…'); } }
+        if (loud) { if (++v.onset >= 2) { v.state = 'speaking'; v.frames = v.pre; v.pre = []; v.silent = 0; v.voiced = v.onset; v.lastVoicedAt = Date.now(); listening('talk', 'Vous parlez…'); } }
         else { v.onset = 0; if (v.state === 'tail' && ++v.silent >= END) over(); }
         return;
       }
       v.frames.push(copy);
-      if (loud) { v.silent = 0; v.voiced++; } else v.silent++;
+      if (loud) { v.silent = 0; v.voiced++; v.lastVoicedAt = Date.now(); } else v.silent++;
       if (v.silent >= CHUNK || v.frames.length >= MAX) { const silent = v.silent, cut = v.silent < CHUNK; piece(); v.state = cut ? 'speaking' : 'tail'; v.silent = silent; }
     };
     listening('wait', 'Appel en cours…');
@@ -297,6 +321,7 @@
   async function pause() {  // the utterance is over: the platform answers what it has transcribed (retried: without it the answer waits 15 s)
     if (!line || ended) return;
     listening('wait', 'L’assistance prend note…'); sentAt = performance.now(); typing(true);
+    turn = {endedAt: (vad && vad.lastVoicedAt) || Date.now() - 1200, firstVoiceAt: null, answerAt: null, rttMs: null};
     for (let attempt = 0; attempt < 3 && line && !ended; attempt++) {
       try { const r = await fetch(`/api/line/${line.id}/pause`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); if (r.ok || r.status < 500) return; } catch (e) {}
       await new Promise(resolve => setTimeout(resolve, 400));
@@ -315,7 +340,7 @@
   async function send(blob, filename, durationMs, more) {
     if (!line || ended) return;
     if (blob.size < 2000 || durationMs < 350) { if (!more) idle(); return; }
-    if (!more) { listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now(); }
+    if (!more) { listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now(); turn = {endedAt: Date.now(), firstVoiceAt: null, answerAt: null, rttMs: null}; }
     try {
       const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': filename, ...(more ? {'X-Continue': '1'} : {})}, body: blob});
       if (!r.ok) { sentAt = null; listening('off', 'Envoi impossible (' + r.status + ')'); setTimeout(() => { if (!ended) idle(); }, 2500); }
@@ -331,7 +356,7 @@
     try {
       const r = await fetch(`/api/line/${line.id}/audio/${e.idx}`, {headers: headers()});
       const blob = await r.blob(), url = URL.createObjectURL(blob);
-      await new Promise(resolve => { player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
+      await new Promise(resolve => { player.onplaying = () => heard(e); player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
     } catch (err) { /* the caption is on screen anyway */ }
     playing = false; aiTalking = false; quietUntil = Date.now() + 500;
     if (!ended) { if (queue.length) playNext(); else if (vad) idle(); else if (!$('talk').hidden) listening('wait', 'Maintenez le bouton pour parler'); }
@@ -351,11 +376,10 @@
       }
       for (const e of d.events || []) {
         since = Math.max(since, e.idx + 1);
-        if (e.type === 'reply' && e.standby) { caption('ai', e.text || '…', 'Assistance IA'); queue.push(e); playNext(); }
+        if (e.type === 'reply' && e.standby) { e.node = caption('ai', e.text || '…', 'Assistance IA'); queue.push(e); playNext(); }
         else if (e.type === 'reply') {
-          const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null;
-          caption(e.speaker === 'operator' ? 'op' : 'ai', e.text || '…', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
-          if (rtt) fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {});
+          const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null; if (turn) turn.rttMs = rtt;
+          e.node = caption(e.speaker === 'operator' ? 'op' : 'ai', e.text || '…', e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA');
           queue.push(e); playNext();
         } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel'); return; }
       }
@@ -363,7 +387,7 @@
     polling = setTimeout(poll, delay);
   }
   function finish(reason) {
-    if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); ringback(false); typing(false); stopVad(); talkStop();
+    if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); clearInterval(probeTimer); ringback(false); typing(false); stopVad(); talkStop();
     if (player) try { player.pause(); } catch (e) {} queue = []; playing = false; aiTalking = false;
     $('endtext').textContent = reason + (startedAt ? ' · ' + fmt(Date.now() - startedAt) : ''); show('ended'); vibrate([40, 60, 40]);
     line = null; render();

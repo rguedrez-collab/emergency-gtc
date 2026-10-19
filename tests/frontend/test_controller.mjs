@@ -99,6 +99,13 @@ const withAudio=()=>{const app=new context.TestComponent(),a=new FakeAudio();app
   let top=T(app.controls()).join(' ');assert.ok(top.includes('Lancer la simulation')&&!top.includes('Pause'),top);
   app.state.session.mode='simulation';top=T(app.controls()).join(' ');assert.ok(top.includes('Appels entrants seulement')&&top.includes('Pause'),top);
   assert.ok(JSON.stringify(make().entry()).includes('orange-lines-only'),'the entry screen offers the mode');
+  // Housekeeping on the list: « Tout clôturer » ends the open simulated calls (the line stays live), « Effacer » drops the closed ones.
+  app.state.session.mode='simulation';app.nextArrivalAt=0;await app.pumpSession();await tick(30);
+  const sim=app.state.calls.find(c=>c.auto);assert.ok(sim&&!sim.ended);
+  let list=JSON.stringify(app.callList(app.consoleModel()));assert.ok(list.includes('orange-close-all')&&!list.includes('orange-clear-closed'),'close-all offered, nothing to erase yet');
+  app.closeAllOpen();assert.ok(sim.ended&&!line.ended,'the simulated call is closed, the phone line is not');
+  list=JSON.stringify(app.callList(app.consoleModel()));assert.ok(list.includes('orange-clear-closed'),'erase offered once calls are closed');
+  app.clearClosed();assert.equal(JSON.stringify(app.state.calls.map(c=>c.id)),JSON.stringify([line.id]),'« Effacer » removes the closed calls, keeps the live line');
 }
 // Pause prevents new work; stopping archives remaining tests without dispatch.
 {
@@ -710,7 +717,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.latency={samples:5,sites:[],console:{},handlers:{ai:{n:3},operator:{n:2,operator_ms:{n:2,median:4000,p95:4200},op_tts_ms:{n:2,median:650,p95:700}}},phone:{n:1,phone_ms:{n:1,median:2300,p95:2300}}};
   app.state.view='floor';app.state.selId=null;app.state.callers=[{name:'lyon',ready:true}];
   const board=texts(app.analyticsPanel(null)).join(' ').replace(/ /g,' ');
-  assert.ok(board.includes('Opérateur (prise en charge, médianes) : réaction 4 000 ms · voix 650 ms')&&board.includes('Téléphone (ligne mobile, médiane) : aller-retour 2 300 ms'),board);
+  assert.ok(board.includes('Opérateur (prise en charge, médianes) : réaction 4 000 ms · voix 650 ms')&&board.includes('Téléphone (ligne mobile, médianes) : aller-retour 2 300 ms'),board);
   app.state.analytics=true;const bar=texts(app.controls()).join(' ').replace(/ /g,' ');assert.ok(bar.includes('Opérateur · réaction 4 000 ms')&&bar.includes('Téléphone · aller-retour 2 300 ms'),bar);
 }
 // A real caller on a phone (mobile line): the console adopts the line, answers with audio for the phone, and closes on hang-up.

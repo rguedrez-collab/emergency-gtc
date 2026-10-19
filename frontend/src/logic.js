@@ -325,6 +325,14 @@ class Component extends DCLogic {
     this.nextArrivalAt=0;
     this.setState({calls,session,view:'floor',selId:null,notice:null},()=>{if(typeof fetch==='function')this.persist();this.pumpSession();});
   }
+  closeAllOpen() {
+    this.state.calls.filter(c=>!c.ended&&!c.lineId).forEach(c=>this.endCall(c,'Clôturé par l’opérateur · à revoir'));
+    this.setState({view:'floor',selId:null});
+  }
+  clearClosed() {
+    const calls=this.state.calls.filter(c=>!c.ended),gone=this.state.calls.length-calls.length;if(!gone)return;
+    this.setState({calls,more:{},...(calls.some(c=>c.id===this.state.selId)?{}:{view:'floor',selId:null})},()=>{if(typeof fetch==='function')this.persist();});
+  }
   runSimulation() {
     const s=this.state.session;if(s.mode!=='lignes')return;
     this.setState({session:{...s,mode:'simulation',status:'running'}},()=>this.pumpSession());
@@ -1023,12 +1031,14 @@ class Component extends DCLogic {
     const perSite=names.map(n=>{const st=(lat?.sites||[]).find(x=>x.name===n);return this.siteName(n)+' '+(st?.caller_ms?fmtMs(st.caller_ms.median):'—');});
     const con=lat?.console,steps=con?[['STT',con.stt_ms],['analyse',con.analyze_ms],['voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
     const figure=(key,text,title)=>h('span',{key,className:'oc-chip oc-chip-plain oc-kpis',title},text);
-    const op=lat?.handlers?.operator,phone=lat?.phone?.phone_ms;
+    const op=lat?.handlers?.operator,ph=lat?.phone||{};
+    // What the caller's phone measured: the answer as perceived (last word → voice), the first voice (wait messages included), the network.
+    const phone=[['réponse perçue',ph.answer_ms],['première voix',ph.first_voice_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
     return h('div',{key:'analytics',className:'oc-settings oc-analytics'},h('span',{key:'l',className:'oc-h'},'Analytique'),progress,
       names.length?figure('sites','Appelant · '+perSite.join(' · '),'Latence médiane de l’appelant simulé par site, derniers tours'):null,
       steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null,
       op?.operator_ms?figure('operator','Opérateur · réaction '+fmtMs(op.operator_ms.median),'Médiane du temps de réaction de l’opérateur après prise en charge (dernières paroles de l’appelant → réponse)'):null,
-      phone?figure('phone','Téléphone · aller-retour '+fmtMs(phone.median),'Médiane du délai mesuré par les téléphones des appelants réels (phrase envoyée → réponse reçue)'):null,
+      phone?figure('phone','Téléphone · '+phone,'Mesuré par le téléphone de l’appelant (médianes) : réponse perçue = dernier mot → voix de la réponse · première voix = dernier mot → première voix entendue, messages d’attente compris · réseau = aller-retour HTTP · aller-retour = fin de parole signalée → réponse reçue'):null,
       this.sitesBoard());
   }
   entry() {
@@ -1207,12 +1217,15 @@ class Component extends DCLogic {
       h('span',{className:'oc-mono oc-right',title:d.c.ended?'Heure de clôture':'Durée de l’appel'},d.c.ended?fmt(d.c.reviewed?d.c.reviewedAt:d.c.endedAt):d.dur),
       d.progress!=null?h('span',{className:'oc-progress',style:{width:Math.round(d.progress*100)+'%'},title:'Avancement de l’appel'}):null);
     const alerts=[...m.mine,...m.alerts];
+    // Housekeeping on the list itself: « Tout clôturer » ends the simulated calls still open (phone lines stay),
+    // « Effacer » removes the closed calls from the list (the gateway's archive keeps them).
+    const closable=this.state.calls.filter(c=>!c.ended&&!c.lineId).length;
     return h('div',{className:'oc-col oc-list'},
-      section('À traiter','#FF7900',alerts.length),
+      section('À traiter','#FF7900',alerts.length,closable?this.button('Tout clôturer',()=>this.closeAllOpen(),false,'orange-close-all','Clôture les appels simulés encore ouverts ; les lignes téléphoniques restent',{tone:'quiet',size:'sm'}):null),
       alerts.length?alerts.map(card):empty('e1',this.noAlertsLabel()),
       section('Pris en charge par l’IA','var(--color-green-500)',m.ai.length,m.arrival),
       m.ai.length?m.ai.map(row):empty('e2','Aucun appel en cours.'),
-      m.history.length?section('Clôturés','var(--color-gray-500)',m.history.length):null,
+      m.history.length?section('Clôturés','var(--color-gray-500)',m.history.length,this.button('Effacer',()=>this.clearClosed(),false,'orange-clear-closed','Retire les appels clôturés de la liste (l’archive de la passerelle les conserve)',{tone:'quiet',size:'sm'})):null,
       ...m.history.map(row),
       // Filed cases stay out of the way: a count, and the list on demand.
       m.closed.length?section('Dossiers clos','var(--color-gray-700)',m.closed.length,this.moreButton('closed','Afficher')):null,
@@ -1303,12 +1316,14 @@ class Component extends DCLogic {
         h('span',{className:'oc-mono'},st?.caller_ms?'appelant '+fmtMs(st.caller_ms.median)+' · p95 '+fmtMs(st.caller_ms.p95):'aucune mesure'),
         st?.fallbacks?h('span',{className:'oc-mono oc-right oc-site-warn',title:'Tours repris par l’appelant intégré de la passerelle, ce site étant injoignable'},st.fallbacks+' repli'+(st.fallbacks>1?'s':'')):null);};
     const con=lat?.console,steps=con?[['Transcription',con.stt_ms],['Analyse',con.analyze_ms],['Voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
-    const op=lat?.handlers?.operator,phone=lat?.phone?.phone_ms;
+    const op=lat?.handlers?.operator,ph=lat?.phone||{};
+    // What the caller's phone measured: the answer as perceived (last word → voice), the first voice (wait messages included), the network.
+    const phone=[['réponse perçue',ph.answer_ms],['première voix',ph.first_voice_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
     return h('div',{className:'oc-sites'},h('div',{className:'oc-feedhead'},'Sites appelants · latence'),...names.map(row),
       steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null,
       // The human side, measured apart: the operator's reaction after a takeover, and what a real caller's phone saw.
       op?.operator_ms?h('div',{className:'oc-muted'},'Opérateur (prise en charge, médianes) : réaction '+fmtMs(op.operator_ms.median)+(op.op_tts_ms?' · voix '+fmtMs(op.op_tts_ms.median):'')):null,
-      phone?h('div',{className:'oc-muted'},'Téléphone (ligne mobile, médiane) : aller-retour '+fmtMs(phone.median)):null);
+      phone?h('div',{className:'oc-muted'},'Téléphone (ligne mobile, médianes) : '+phone):null);
   }
   // Where the selected call's caller voice comes from, and the last turn's round trip; shown on scenario calls once a
   // site is configured or was used.
