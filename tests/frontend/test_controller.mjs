@@ -758,6 +758,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(heard.length,1,'the pieces make one caller line');assert.equal(heard[0].text,'Ma mère est tombée dans la salle de bains elle ne répond plus, elle respire mal.');
   assert.equal(posts.filter(p=>p.url==='/api/line/abc123/reply').length,answersBefore+1,'answered once, after the pause');
   assert.equal(c.latency.at(-1).stt_ms,600,'the transcription time of both pieces is accounted');assert.ok(!c.linePending,'nothing left pending');
+  // A breath or a noise piece transcribes to nothing: no error on the call, nothing to answer.
+  {const realT=app.transcribe;app.transcribe=async()=>{throw Error('Aucune parole intelligible. Réessayez.');};const turns=c.tr.length;
+    events=[{idx:11,type:'speech',more:true,filename:'speech.wav'},{idx:12,type:'pause'}];app.pollLineEvents();await tick(20);await idle(c);await tick(20);await idle(c);
+    assert.ok(c.phase!=='error'&&!c.linePending&&c.tr.length===turns,'an unintelligible piece is ignored, nothing is answered');app.transcribe=realT;}
   // The phone reports what the caller perceived: it lands on that turn and on the call's chart; the session chart has a bar per call.
   events=[{idx:8,type:'latency',answer_ms:3800,first_voice_ms:1900,network_ms:80,rtt_ms:2300}];app.pollLineEvents();await tick(20);
   assert.equal(c.latency.at(-1).phone.answer_ms,3800,'the perceived answer time is attached to the last turn');

@@ -799,7 +799,9 @@ INTAKE_RULES = {
     "incident": r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûl\w*|noy\w*|coinc\w*|"
                 r"bloqu\w*|accouch\w*|intox\w*|évanou\w*|perdu connaissance|agress\w*|frapp\w*|menac\w*|arme|couteau|vol\w*|cambriol\w*|feu|flamme|fumée|incendie|explos\w*|gaz|"
                 r"accident|percut\w*|renvers\w*|heurt\w*|effondr\w*|inond\w*|fuite|disparu\w*|suicid\w*|overdose|allerg\w*|piq\w*|mord\w*|électrocut\w*|câble|étincelle)",
-    "location": r"\b(rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square|résidence|lieu-dit|autoroute|nationale|gare|station|métro|arrêt de)\b|\b\d{5}\b",
+    # Spoken addresses as the transcription renders them: « aux quatre rues Gaston Roland » (plural), a town after « à » (« à Saint-Cloud »).
+    "location": r"\b(rues?|avenues?|boulevards?|bd|places?|chemins?|routes?|impasses?|allées?|quais?|cours|squares?|résidence|lieu-dit|autoroute|nationale|gare|station|métro|arrêt de)\b|\b\d{5}\b"
+                r"|(?-i:\b(?:à|À|au|aux|sur|dans|vers|près de)\s+(?:la\s|le\s|les\s|l’|l')?[A-ZÀ-Ý][\wÀ-ÿ’'-]{2,})",
     "state": r"\b(respire|respirer|respiration|souffle|conscien\w*|inconscien\w*|évanoui\w*|réagit|répond (?:pas|plus)|bouge|pouls|réveille)\b",
     "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
     "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",
@@ -1225,7 +1227,7 @@ TOOL_RULES = {  # the caller's words that make a dispatch proposal obvious, what
     "dispatch_police": r"\b(arme|couteau|pistolet|fusil|menace|menaçant|violen\w*|agress\w*|frappe|frappé|cambriol\w*|voleur|bagarre|accident de la route|percut\w*|voitures?|scooter|camion|délit de fuite)\b",
 }
 ADDRESS = re.compile(r"\b(?:(?:\d{1,4}|un|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingt|trente)\s*(?:bis|ter)?\s*,?\s*)?"
-                     r"(?:rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b[^,.;!?]{3,70}(?-i:,\s*(?:à\s+)?[A-ZÀ-Ý][\wÀ-ÿ'’-]+(?:[ -][A-ZÀ-Ý][\wÀ-ÿ'’-]+)*)?", re.I)
+                     r"(?:rues?|avenues?|boulevards?|bd|places?|chemins?|routes?|impasses?|allées?|quais?|cours|squares?)\b[^,.;!?]{3,70}(?-i:,\s*(?:à\s+)?[A-ZÀ-Ý][\wÀ-ÿ'’-]+(?:[ -][A-ZÀ-Ý][\wÀ-ÿ'’-]+)*)?", re.I)
 GEOCODER_URL = os.environ.get("ORANGE_GEOCODER_URL", "https://api-adresse.data.gouv.fr/search/")
 GEOCODER_ENABLED = os.environ.get("ORANGE_GEOCODER", "1") not in ("0", "false", "no")
 
@@ -1276,15 +1278,17 @@ def propose_tools(messages, facts, raw_tools):
 NUMBER_WORDS = {"zéro": 0, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11,
                 "douze": 12, "treize": 13, "quatorze": 14, "quinze": 15, "seize": 16, "vingt": 20, "vingts": 20, "trente": 30, "quarante": 40, "cinquante": 50,
                 "soixante": 60, "septante": 70, "huitante": 80, "octante": 80, "nonante": 90, "cent": 100, "cents": 100, "mille": 1000}
-STREET_WORD = r"(?:bis|ter|rue|avenue|boulevard|bd|place|chemin|route|impasse|allée|quai|cours|square)\b"
+STREET_WORD = r"(?:bis|ter|rues?|avenues?|boulevards?|bd|places?|chemins?|routes?|impasses?|allées?|quais?|cours|squares?)\b"
+PLURAL_STREET = re.compile(r"^(\d{1,4}\s*(?:bis|ter)?\s+)(rues|avenues|boulevards|places|chemins|routes|impasses|allées|quais|squares)\b", re.I)  # « 4 rues X »: the transcription's plural
 LEADING_NUMBER = re.compile(r"^\s*((?:(?:" + "|".join(NUMBER_WORDS) + r")(?:[ -]|-et-| et )?)+)\s*(?=" + STREET_WORD + ")", re.I)
 
 
 def digits_from_words(address):
     """« Quinze rue du Moulin » → « 15 rue du Moulin »: the transcript spells house numbers out, the address base wants digits."""
+    singular = lambda text: PLURAL_STREET.sub(lambda m: m.group(1) + m.group(2)[:-1], text)
     hit = LEADING_NUMBER.match(address)
     if not hit:
-        return address
+        return singular(address)
     total = current = 0
     for token in re.split(r"[ -]+|\bet\b", hit.group(1).lower().replace("quatre-vingt", "huitante").replace("huitantes", "huitante")):
         if not token:
@@ -1298,7 +1302,7 @@ def digits_from_words(address):
                 total, current = total + current, 0
         else:
             current += value
-    return f"{total + current} " + address[hit.end():].lstrip()
+    return singular(f"{total + current} " + address[hit.end():].lstrip())
 
 
 def split_city(address):

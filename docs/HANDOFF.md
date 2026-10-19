@@ -166,6 +166,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   sound, ○ answer; the gateway relays the phone's latency report as a `latency` line event, attached to the turn in
   `pollLineEvents`), a headline (`firstSound`: end of speech → first sound on the phone, median) and a table with the
   numbers of every turn (`numbersTable`); one bar per call (median first sound) with the numbers listed under it.
+  Spoken addresses: the intake's `location` rule accepts the transcription's plurals (« aux quatre rues … ») and a town
+  after « à/au/dans/sur » (capitalised); `ADDRESS`/`STREET_WORD` accept plurals and `digits_from_words` singularises
+  after the house number, so the geocoder sees « 4 rue … ». An unintelligible piece (gateway 422) is ignored by
+  `lineSpeech`, not shown as an error.
   Latency: the phone sends pieces after 0.8 s of silence (`X-Continue: 1`, event `more`) and a `pause` after 1.4 s; the
   console (`lineSpeech`/`lineAnswer`) transcribes pieces as they come into one growing caller line and analyses once,
   on the pause (safety net 15 s: a piece may be 25 s of speech, so an early fallback would answer mid-sentence).

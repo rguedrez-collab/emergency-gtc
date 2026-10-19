@@ -934,7 +934,9 @@ class Component extends DCLogic {
       const r=await this.lineFetch('/api/line/'+c.lineId+'/audio/'+e.idx);if(!r.ok)throw Error('Enregistrement de l’appelant indisponible.');
       const blob=await r.blob();if(c.ended)return;
       const speaking=this.play(c,blob,c.revision,'caller','');
-      const text=((await this.transcribe(c,blob,e.filename||'speech.webm'))||'').trim();if(c.ended)return;
+      let text='';try{text=((await this.transcribe(c,blob,e.filename||'speech.webm'))||'').trim();}
+      catch(err){if(!/intelligible/i.test(err?.message||''))throw err;}  // a breath, a noise: nothing to transcribe, no error for the operator
+      if(c.ended)return;
       clearTimeout(c.lineFlush);
       if(c.linePending){const turn=c.tr[c.linePending.turn];if(turn&&text){turn.text=turn.full=(turn.text+' '+text).trim();}c.linePending.stt+=c.lastStt?.ms||0;c.linePending.speaking=speaking;}
       else if(text||!e.more){this.append(c,'Appelant',text,'line_stt');c.linePending={turn:c.tr.length-1,stt:c.lastStt?.ms??null,speaking};}

@@ -146,6 +146,14 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(state["asked"], ["location", "incident", "state", "access", "landmark"])
         self.assertEqual((state["missing"], state["next"]), (["age", "history", "name"], "handoff"), "no danger, people or callback question; the person just stopped breathing: no administrative question this turn")
         self.assertEqual(server.intake_state(messages[:2])["next"], "location")
+        # A real caller on the phone: the transcription spells the number out, makes « rue » plural, says the town after « à ».
+        spoken = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Chez mon fils qui joue à la PlayStation"},
+                  {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "Aux quatre rues Gaston Roland, à Saint-Cloud."}]
+        heard = server.intake_state(spoken)
+        self.assertIn("location", heard["known"], "a spoken address is an address"); self.assertNotIn(heard["next"], ("location", "location_again"))
+        self.assertIn("location", server.intake_state(spoken[:3] + [{"role": "caller", "text": "À Saint-Cloup, dans une maison"}])["known"], "a town after « à » is a location")
+        self.assertTrue(server.ADDRESS.search("Aux quatre rues Gaston Roland, à Saint-Cloud."), "the geocoder gets it too")
+        self.assertEqual(server.digits_from_words("Quatre rues Gaston Roland, Saint-Cloud"), "4 rue Gaston Roland, Saint-Cloud")
         early = server.intake_state(messages[:4])  # « une situation critique » says nothing about what happened (asked once already, it comes back after
         self.assertEqual((early["missing"], early["next"]), (["incident", "access", "name"], "access"))  # the others) and describes no victim: no state/age question yet
         # An item asked twice without an answer is dropped: the call moves on instead of nagging. A road accident makes
