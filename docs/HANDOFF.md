@@ -161,6 +161,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   and shows an install banner (`beforeinstallprompt`, iOS hint). The page looks like a phone (dialer preset to 18, call
   screen, timer, captions): hands-free with a small VAD (`startVad`, ScriptProcessorNode, 16 kHz WAV, half-duplex while a
   reply plays), hold-to-talk fallback. `POST /api/line` accepts `dialed` (digits), shown on the console's call row.
+  Charts (inline SVG, `latencyChart`/`chartBlock` in the open call, `callsChart` in Analytique): one stacked bar per
+  turn (appelant · STT · analyse · voix, operator turns in orange) with the phone's perceived answer as a marker (the
+  gateway relays the phone's latency report as a `latency` line event, attached to the turn in `pollLineEvents`); one bar
+  per call (median turn), click opens the call.
   Latency: the phone sends pieces after 0.8 s of silence (`X-Continue: 1`, event `more`) and a `pause` after 1.4 s; the
   console (`lineSpeech`/`lineAnswer`) transcribes pieces as they come into one growing caller line and analyses once,
   on the pause (safety net 15 s: a piece may be 25 s of speech, so an early fallback would answer mid-sentence).

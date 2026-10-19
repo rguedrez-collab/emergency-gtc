@@ -933,26 +933,28 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(self.request(f"/api/line/{lid}/latency", {"rtt_ms": 2300, "handler": "ai", "network_ms": 80, "first_voice_ms": 1900, "answer_ms": 3800}, headers=phone)[0], 200)
             seen = json.loads(self.request("/api/latency")[1])["phone"]
             self.assertEqual((seen["phone_ms"]["median"], seen["network_ms"]["median"], seen["first_voice_ms"]["median"], seen["answer_ms"]["median"]), (2300, 80, 1900, 3800), "what the caller's phone perceived")
+            told = json.loads(self.request(f"/api/line/{lid}/events?since=3")[1])["events"]
+            self.assertEqual((told[0]["type"], told[0]["answer_ms"], told[0]["network_ms"]), ("latency", 3800, 80), "the console sees what the phone perceived, on the line")
             # A hands-free phone sends pieces (X-Continue) and then a pause; the console sees both kinds of events.
             status, body = self.request(f"/api/line/{lid}/speech", raw=b"RIFF" + b"\0" * 300, headers={**phone, "Content-Type": "application/octet-stream", "X-Filename": "speech.wav", "X-Continue": "1"})
-            self.assertEqual((status, json.loads(body)["idx"]), (200, 3))
-            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/pause", {}, headers=phone)[1])["idx"], 4)
-            tail = json.loads(self.request(f"/api/line/{lid}/events?since=3")[1])["events"]
+            self.assertEqual((status, json.loads(body)["idx"]), (200, 4))
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/pause", {}, headers=phone)[1])["idx"], 5)
+            tail = json.loads(self.request(f"/api/line/{lid}/events?since=4")[1])["events"]
             self.assertEqual([(e["type"], e.get("more")) for e in tail], [("speech", True), ("pause", None)])
             # Long polling: a request with wait= is held until the line has something new (8 s at most), then released at once.
             import threading, time
-            started = time.monotonic(); held = json.loads(self.request(f"/api/line/{lid}/events?since=5&wait=1", headers=phone)[1])
+            started = time.monotonic(); held = json.loads(self.request(f"/api/line/{lid}/events?since=6&wait=1", headers=phone)[1])
             self.assertTrue(time.monotonic() - started >= 0.8 and held["events"] == [], "nothing new: the request waited for the whole second")
             threading.Timer(0.3, lambda: self.request(f"/api/line/{lid}/pause", {}, headers=phone)).start()
-            started = time.monotonic(); released = json.loads(self.request(f"/api/line/{lid}/events?since=5&wait=5", headers=phone)[1])
+            started = time.monotonic(); released = json.loads(self.request(f"/api/line/{lid}/events?since=6&wait=5", headers=phone)[1])
             self.assertTrue(time.monotonic() - started < 2 and released["events"][-1]["type"] == "pause", "a new event released the wait at once")
             # A standby line (the console's wait message) is a reply flagged standby, so the phone can tell it apart.
-            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/reply", raw=b"RIFF" + b"\0" * 60, headers={"Content-Type": "audio/wav", "X-Text": quote("Je note, restez en ligne."), "X-Speaker": "assistant", "X-Standby": "1"})[1])["idx"], 6)
-            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/events?since=6", headers=phone)[1])["events"][0].get("standby"), True)
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/reply", raw=b"RIFF" + b"\0" * 60, headers={"Content-Type": "audio/wav", "X-Text": quote("Je note, restez en ligne."), "X-Speaker": "assistant", "X-Standby": "1"})[1])["idx"], 7)
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/events?since=7", headers=phone)[1])["events"][0].get("standby"), True)
             # Hang-up from the phone: the line ends, leaves the pending list, and the console sees who ended it.
             self.assertEqual(json.loads(self.request(f"/api/line/{lid}/end", {}, headers=phone)[1])["status"], "ended")
             self.assertEqual(json.loads(self.request("/api/line/pending")[1])["lines"], [])
-            end = json.loads(self.request(f"/api/line/{lid}/events?since=7")[1])["events"]  # after the piece, the pauses and the standby line
+            end = json.loads(self.request(f"/api/line/{lid}/events?since=8")[1])["events"]  # after the latency, the piece, the pauses and the standby line
             self.assertEqual((end[0]["type"], end[0]["by"]), ("end", "phone"))
             self.assertEqual(self.request("/api/line/nope/events")[0], 404)
             self.assertEqual(self.request("/api/line/nope/events", headers={"X-Line-Token": "t"})[0], 403)

@@ -758,6 +758,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(heard.length,1,'the pieces make one caller line');assert.equal(heard[0].text,'Ma mère est tombée dans la salle de bains elle ne répond plus, elle respire mal.');
   assert.equal(posts.filter(p=>p.url==='/api/line/abc123/reply').length,answersBefore+1,'answered once, after the pause');
   assert.equal(c.latency.at(-1).stt_ms,600,'the transcription time of both pieces is accounted');assert.ok(!c.linePending,'nothing left pending');
+  // The phone reports what the caller perceived: it lands on that turn and on the call's chart; the session chart has a bar per call.
+  events=[{idx:8,type:'latency',answer_ms:3800,first_voice_ms:1900,network_ms:80,rtt_ms:2300}];app.pollLineEvents();await tick(20);
+  assert.equal(c.latency.at(-1).phone.answer_ms,3800,'the perceived answer time is attached to the last turn');
+  const chart=JSON.stringify(app.latencyChart(c));assert.ok(chart.includes('oc-chart-phone')&&/réponse perçue par l’appelant : 3.800 ms/.test(chart)&&chart.includes('Analyse'),'per-turn chart with the phone marker: '+chart.slice(0,300));
+  app.state.view='call';app.state.selId=c.id;assert.ok(JSON.stringify(app.copilot(app.consoleModel())).includes('orange-more-chart'),'the chart block is in the open call');
+  app.state.more={'chart-hidden':true};assert.ok(!JSON.stringify(app.copilot(app.consoleModel())).includes('oc-chart-bar'),'and can be folded');app.state.more={};
+  const calls=JSON.stringify(app.callsChart());assert.ok(calls.includes('Réponse par appel')&&calls.includes(c.id+' · ligne mobile'),'one bar per call, the line call included');
+  app.state.view='floor';app.state.selId=null;
   // The operator takes the call: their answer goes to the phone too, and their turn is recorded without waiting for the caller.
   app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
   assert.ok(posts.some(p=>p.url==='/api/line/abc123/reply'&&p.headers['X-Standby']==='1'&&decodeURIComponent(p.headers['X-Text']).startsWith('Un opérateur prend votre appel')),'the caller hears that an operator took the call');

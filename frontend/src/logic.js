@@ -624,10 +624,13 @@ class Component extends DCLogic {
       if(c.auto&&c.id===this.audible()&&rev===c.revision&&!c.ended&&this.canAdvance(c))this.prefetchCaller(c,{role:'assistant',text:d.reply});
     }
     this.recordLatency(c,sample);
+    // A real caller hears the answer now: the phone must not wait for this console's own playback of their recording
+    // (beforeSpeech), which only orders what the operator hears here.
+    let delivered=false;
+    if(c.lineId&&voice&&!c.ended&&!c.takenOver&&rev===c.revision){this.append(c,'Agent IA',d.reply,'contextual_gemma');this.deliver(c,voice,d.reply,'assistant');delivered=true;}
     await beforeSpeech;
     if(c.ended||c.takenOver||rev!==c.revision)return;
-    this.append(c,'Agent IA',d.reply,'contextual_gemma');
-    if(c.lineId&&voice)this.deliver(c,voice,d.reply,'assistant');  // to the phone; played here too when the call is open
+    if(!delivered){this.append(c,'Agent IA',d.reply,'contextual_gemma');if(c.lineId&&voice)this.deliver(c,voice,d.reply,'assistant');}
     if(voice)await this.play(c,voice,rev,'assistant',d.reply);
     if(!c.ended)this.setPhase(c,c.takenOver?'operator':'gap');
   }
@@ -911,6 +914,8 @@ class Component extends DCLogic {
         again=(d.events||[]).length>0||(t0>0&&performance.now()-t0>300);  // held or fruitful: ask again right away (not a tight loop on an old gateway)
         for(const e of d.events||[]){c.lineSeen=Math.max(c.lineSeen||0,e.idx+1);
           if(e.type==='speech'||e.type==='pause')this.lineSpeech(c,e);
+          else if(e.type==='latency'){const row=[...(c.latency||[])].reverse().find(r=>!r.phone)||(c.latency||[]).at(-1);  // what the caller perceived, on the turn it answers
+            if(row){row.phone={answer_ms:e.answer_ms??null,first_voice_ms:e.first_voice_ms??null,network_ms:e.network_ms??null,rtt_ms:e.rtt_ms??null};this.touch();}}
           else if(e.type==='end'&&e.by!=='console'&&!c.ended){this.append(c,'Système','L’appelant a raccroché.','line_end');this.endCall(c,'Appel terminé · à revoir');}
         }
       }catch(e){}finally{c.linePolling=false;if(again&&!c.ended&&!this.disposed)setTimeout(()=>this.pollLineEvents(),0);}})();
@@ -1039,6 +1044,7 @@ class Component extends DCLogic {
       steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null,
       op?.operator_ms?figure('operator','Opérateur · réaction '+fmtMs(op.operator_ms.median),'Médiane du temps de réaction de l’opérateur après prise en charge (dernières paroles de l’appelant → réponse)'):null,
       phone?figure('phone','Téléphone · '+phone,'Mesuré par le téléphone de l’appelant (médianes) : réponse perçue = dernier mot → voix de la réponse · première voix = dernier mot → première voix entendue, messages d’attente compris · réseau = aller-retour HTTP · aller-retour = fin de parole signalée → réponse reçue'):null,
+      this.callsChart(),
       this.sitesBoard());
   }
   entry() {
@@ -1143,6 +1149,7 @@ class Component extends DCLogic {
         facts?h('span',{className:'oc-muted'},facts):null),
       signals.length?h('div',{className:'oc-block'},h('span',{className:'oc-h'},'À vérifier'),...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,
       this.decisionBar(c),
+      this.chartBlock(c),
       this.more('details')?h('div',{className:'oc-fdetails'},this.guardBlock(c),this.latencyBlock(c),this.toolsBlock(c)):null);
   }
   toggleSide() {const sideOpen=this.state.sideOpen===false;try{localStorage.setItem('orange-side',sideOpen?'open':'closed');}catch(e){}this.setState({sideOpen});}
@@ -1376,6 +1383,61 @@ class Component extends DCLogic {
     }
     return h('div',{key:'Latence',className:'oc-block'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Latence · dernier tour'),this.moreButton('latency')),...body);
   }
+  // ---------------- Charts: inline SVG, no library. Per call, one stacked bar per turn (what the caller waited for, stage by
+  // stage) with the phone's perceived answer as a marker; per session, one bar per call (median turn), click opens the call.
+  chartScale(maxMs) {const step=maxMs<=2000?500:maxMs<=5000?1000:maxMs<=12000?2000:5000;return {step,top:Math.max(step,Math.ceil(maxMs/step)*step)};}
+  turnSegments(r) {
+    const seg=[],add=(k,v,color,label)=>{if(v!=null&&v>0)seg.push({k,v,color,label});};
+    if(r.handler==='operator'){add('operator_ms',r.operator_ms,'var(--oc-op)','Réaction opérateur');add('op_tts_ms',r.op_tts_ms,'#b87a2a','Voix opérateur');}
+    else{add('caller_ms',r.caller_ms,'#c9c9cf','Appelant (site)');add('stt_ms',r.stt_ms,'#8e8e93','Transcription');add('analyze_ms',r.analyze_ms,'var(--oc-op)','Analyse');add('reply_tts_ms',r.reply_tts_ms,'var(--oc-ai)','Voix IA');}
+    return seg;
+  }
+  chartGrid(step,top,y,L,W,R) {
+    const grid=[];for(let v=step;v<=top;v+=step)grid.push(h('g',{key:'g'+v},h('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),className:'oc-chart-grid'}),h('text',{x:L-4,y:y(v)+3,textAnchor:'end'},v>=1000?(v/1000).toFixed(v%1000?1:0)+' s':v+' ms')));
+    return grid;
+  }
+  latencyChart(c) {
+    const rows=(c.latency||[]).slice(-30);if(!rows.length)return null;
+    const totals=rows.map(r=>this.turnSegments(r).reduce((a,s)=>a+s.v,0)),phones=rows.map(r=>r.phone?.answer_ms??null),perceived=phones.some(v=>v!=null);
+    const {step,top}=this.chartScale(Math.max(...totals,...phones.filter(v=>v!=null),1));
+    const W=320,H=118,L=30,R=6,T=8,B=20,pw=W-L-R,ph=H-T-B,n=rows.length,slot=pw/n,bw=Math.max(3,Math.min(22,slot*0.66)),y=v=>T+ph-(v/top)*ph;
+    const bars=rows.map((r,i)=>{let acc=0;const x=L+i*slot+(slot-bw)/2,turn=r.turn??i+1;
+      const segs=this.turnSegments(r).map(s=>{const el=h('rect',{key:s.k,x,width:bw,y:y(acc+s.v),height:Math.max(1,y(acc)-y(acc+s.v)),style:{fill:s.color},className:'oc-chart-bar'},h('title',null,`Tour ${turn} · ${s.label} : ${fmtMs(s.v)}`));acc+=s.v;return el;});
+      const p=r.phone,mark=p?.answer_ms!=null?h('g',{key:'p'},h('line',{x1:x-2,x2:x+bw+2,y1:y(p.answer_ms),y2:y(p.answer_ms),className:'oc-chart-phone'}),
+        h('circle',{cx:x+bw/2,cy:y(p.answer_ms),r:2.6,className:'oc-chart-phone'},h('title',null,`Tour ${turn} · réponse perçue par l’appelant : ${fmtMs(p.answer_ms)}`+(p.first_voice_ms!=null&&p.first_voice_ms<p.answer_ms-300?` · première voix ${fmtMs(p.first_voice_ms)}`:'')+(p.network_ms!=null?` · réseau ${fmtMs(p.network_ms)}`:'')))):null;
+      const label=(n<=12||i%Math.ceil(n/12)===0)?h('text',{key:'t',x:x+bw/2,y:H-6,textAnchor:'middle'},String(turn)):null;
+      return h('g',{key:i},...segs,mark,label);});
+    const legend=[['#8e8e93','Transcription'],['var(--oc-op)','Analyse'],['var(--oc-ai)','Voix IA'],...(c.lineId?[['var(--text-color-primary)','Réponse perçue (téléphone)']]:[['#c9c9cf','Appelant (site)']])];
+    const median=arr=>{const v=arr.filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;},med=median(perceived?phones:totals);
+    return h('div',{key:'chart',className:'oc-chartbox'},
+      h('svg',{viewBox:`0 0 ${W} ${H}`,className:'oc-chart',role:'img','aria-label':'Latence par tour'},...this.chartGrid(step,top,y,L,W,R),h('line',{x1:L,x2:W-R,y1:y(0),y2:y(0),className:'oc-chart-axis'}),...bars),
+      h('div',{className:'oc-legend'},...legend.map(([color,label])=>h('span',{key:label},h('i',{style:{background:color}}),label)),
+        med!=null?h('span',{key:'med',className:'oc-legend-med'},'médiane '+fmtMs(med)+(perceived?' perçue':'')):null));
+  }
+  chartBlock(c) {
+    if(!(c.latency||[]).length)return null;
+    const hidden=this.more('chart-hidden');
+    return h('div',{key:'Latence par tour',className:'oc-block oc-chartblock'},h('div',{className:'oc-blockhead'},h('span',{className:'oc-h'},'Latence par tour'),
+      h('button',{type:'button',className:'oc-more',id:'orange-more-chart','aria-expanded':String(!hidden),onClick:e=>{e.stopPropagation();this.setState({more:{...this.state.more,'chart-hidden':!hidden}});}},hidden?'Afficher ▾':'Masquer ▴')),
+      hidden?null:this.latencyChart(c));
+  }
+  callsChart() {
+    const calls=this.state.calls.filter(c=>(c.latency||[]).length).slice(-40);if(!calls.length)return null;
+    const value=c=>{const vals=c.latency.map(r=>r.phone?.answer_ms??this.turnSegments(r).reduce((a,s)=>a+s.v,0)).filter(v=>v>0).sort((a,b)=>a-b);return vals.length?vals[Math.floor(vals.length/2)]:0;};
+    const data=calls.map(c=>({c,v:value(c)})),{step,top}=this.chartScale(Math.max(...data.map(d=>d.v),1));
+    const W=640,H=120,L=34,R=6,T=8,B=22,pw=W-L-R,ph=H-T-B,n=data.length,slot=pw/n,bw=Math.max(3,Math.min(18,slot*0.7)),y=v=>T+ph-(v/top)*ph;
+    const all=data.map(d=>d.v).sort((a,b)=>a-b),med=all[Math.floor(all.length/2)];
+    const bars=data.map((d,i)=>{const x=L+i*slot+(slot-bw)/2,color=d.c.lineId?'var(--text-color-primary)':d.c.takenOver?'var(--oc-op)':'var(--oc-ai)',turns=d.c.latency.length;
+      return h('g',{key:d.c.id,className:'oc-chart-call',onClick:()=>this.open(d.c.id)},
+        h('rect',{x,width:bw,y:y(d.v),height:Math.max(1,y(0)-y(d.v)),style:{fill:color},className:'oc-chart-bar'},h('title',null,`${d.c.id} · ${d.c.phone} · réponse médiane ${fmtMs(d.v)} sur ${turns} tour${turns>1?'s':''}`+(d.c.lineId?' (perçue par le téléphone)':''))),
+        (n<=16||i%Math.ceil(n/16)===0)?h('text',{x:x+bw/2,y:H-7,textAnchor:'middle'},d.c.id.replace('TEST-','')):null);});
+    return h('div',{key:'calls-chart',className:'oc-chartbox oc-chartwide'},h('span',{className:'oc-h'},'Réponse par appel · médiane des tours'),
+      h('svg',{viewBox:`0 0 ${W} ${H}`,className:'oc-chart',role:'img','aria-label':'Réponse par appel'},...this.chartGrid(step,top,y,L,W,R),
+        h('line',{x1:L,x2:W-R,y1:y(med),y2:y(med),className:'oc-chart-median'}),h('text',{x:W-R,y:y(med)-3,textAnchor:'end',className:'oc-chart-medlabel'},'médiane '+fmtMs(med)),
+        h('line',{x1:L,x2:W-R,y1:y(0),y2:y(0),className:'oc-chart-axis'}),...bars),
+      h('div',{className:'oc-legend'},h('span',{key:'a'},h('i',{style:{background:'var(--oc-ai)'}}),'Assistance IA'),h('span',{key:'o'},h('i',{style:{background:'var(--oc-op)'}}),'Prise en charge opérateur'),
+        h('span',{key:'p'},h('i',{style:{background:'var(--text-color-primary)'}}),'Téléphone (perçue par l’appelant)'),h('span',{key:'m',className:'oc-legend-med'},'Cliquez une barre pour ouvrir l’appel')));
+  }
   // Three tiny bars for the call whose audio is actually playing: motion only where something is happening.
   voiceMark(c) {
     const p=this.state.playback;
@@ -1460,6 +1522,7 @@ class Component extends DCLogic {
         c.facts.length?h('div',{className:'oc-kv'},...c.facts.flatMap((f,i)=>[h('span',{key:'k'+i,className:'oc-muted'},f.k),h('span',{key:'v'+i},f.v)])):null),
       this.actionsBlock(c),
       signals.length?block('À vérifier',...signals.map((q,i)=>h('span',{key:i,className:'oc-signal'},'« '+q+' »'))):null,
+      this.chartBlock(c),
       this.detailsBlock(c),
       this.footnote());
   }

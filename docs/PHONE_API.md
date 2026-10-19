@@ -34,6 +34,9 @@ restez en ligne. ») when the answer takes longer than about 3 s, or a notice wh
 (« Un opérateur prend votre appel, restez en ligne. ») or gives it back. Play it like any reply; an operator answers in
 their own time (typed text or microphone on the console), so do not expect a reply within seconds after that notice.
 
+After a latency report the gateway adds a `latency` event to the line (the console draws it on the call's chart); a
+phone client can ignore it.
+
 Events (`type`): `speech` (what the phone sent, with `size`), `claimed` (the console took the line; `status` becomes `live`),
 `reply` (`speaker`: `assistant` or `operator`, `text`, `size`; fetch the audio by `idx`), `end` (`by`: `phone` or `console`).
 Poll `events` with `since` = last `idx` + 1. With `wait=5` the gateway holds the request up to 5 s (8 at most) until

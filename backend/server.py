@@ -565,7 +565,7 @@ def phone_api():
             "line": {"create": "POST /api/line {\"name\": \"…\", \"dialed\": \"18\"} -> {id, token, poll_ms} (dialed : le numéro composé, 15/17/18/112, simple étiquette pour la console)",
                      "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max) · X-Continue: 1 = un morceau, la suite arrive",
                      "pause": "POST /api/line/{id}/pause · X-Line-Token : fin de la prise de parole après des morceaux X-Continue (la plateforme répond alors)",
-                     "events": "GET /api/line/{id}/events?since=N&wait=5 · X-Line-Token -> {status, events:[{idx, type: speech|pause|claimed|reply|end, speaker, text, size, more}]} · wait = attente longue (s, 8 max)",
+                     "events": "GET /api/line/{id}/events?since=N&wait=5 · X-Line-Token -> {status, events:[{idx, type: speech|pause|claimed|reply|latency|end, speaker, text, size, more}]} · wait = attente longue (s, 8 max)",
                      "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée) · un reply avec standby:true est un message d'attente",
                      "end": "POST /api/line/{id}/end · X-Line-Token",
                      "latency": "POST /api/line/{id}/latency {answer_ms: dernier mot -> voix de la réponse, first_voice_ms: dernier mot -> première voix (messages d'attente compris), network_ms: aller-retour HTTP, rtt_ms: pause -> réponse reçue, handler: ai|operator}"},
@@ -1808,7 +1808,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 sample = {"location": "ligne", "requested": "ligne", "call": "LIGNE-" + line["id"], "phone_ms": payload.get("rtt_ms"),
                           "network_ms": payload.get("network_ms"), "first_voice_ms": payload.get("first_voice_ms"), "answer_ms": payload.get("answer_ms"),
                           "handler": payload.get("handler") if payload.get("handler") in LATENCY_HANDLERS else "ai"}
-                self.reply(200, {"saved": True, "id": save_latency(sample)})
+                saved = save_latency(sample)
+                # The console follows the line's events: the caller's perceived timings land on the call's own chart.
+                line_event(line, "latency", answer_ms=_ms(payload.get("answer_ms")), first_voice_ms=_ms(payload.get("first_voice_ms")),
+                           network_ms=_ms(payload.get("network_ms")), rtt_ms=_ms(payload.get("rtt_ms")))
+                self.reply(200, {"saved": True, "id": saved})
             else:
                 self.reply(404, {"error": "not found"})
         except (ValueError, TypeError) as exc:
