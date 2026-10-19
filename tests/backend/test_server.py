@@ -188,6 +188,11 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois dehors, il est inconscient, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "breathing", "out of the fire, everything known, but the person is unconscious: look at the breathing before anything else")
         self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois dehors, il est inconscient mais il respire, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "handoff")
         self.assertTrue(server.STRONG.search("Je regarde... je ne vois rien bouger, sa poitrine bouge pas."), "the answer to « regardez sa poitrine » escalates")
+        # A fire where a neighbour « ne répond pas » behind the door is not a person down: no breathing check, no « restez près de la personne ».
+        neighbour = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Il y a le feu chez mon voisin au troisième, il ne répond pas quand je frappe."},
+                     {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "Onze rue Gabriel Bertillon à Longjumeau."}]
+        st = server.intake_state(neighbour)
+        self.assertEqual((st["critical"], st["fire"], st["next"]), (False, True, "evacuate"))
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
         said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"

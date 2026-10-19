@@ -542,9 +542,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.guardrail=null;assert.ok(!JSON.stringify(app.controls()).includes('oc-services'));
   app.state.settings=true;bar=app.controls();const settings=ids(bar.children[1]);
   for(const id of ['orange-theme','orange-ai-voice','orange-ai-pace','orange-emotions','orange-tones','orange-export','orange-user-call','orange-tools'])assert.ok(settings.includes(id),id);
-  // Emotional caller voices are on by default and travel with every speech and caller request; the setting switches them off.
-  {const app2=make(),call={voice:'fr_female',voiceStyle:'rushed'};assert.equal(JSON.stringify(app2.voiceOptions(call,'caller')),JSON.stringify({voice:'fr_female',style:'rushed',emotion:true}));
-   app2.state.emotions=false;assert.equal(app2.voiceOptions(call,'caller').emotion,false);assert.ok(!('emotion' in app2.voiceOptions(call,'assistant')),'the operator voice has no emotion flag');}
+  // Caller voices are neutral by default (the emotional variants wreck the transcription of addresses); the setting switches the emotional variants on.
+  {const app2=make(),call={voice:'fr_female',voiceStyle:'rushed'};assert.equal(JSON.stringify(app2.voiceOptions(call,'caller')),JSON.stringify({voice:'fr_female',style:'rushed',emotion:false}));
+   app2.state.voiceEmotions=true;assert.equal(app2.voiceOptions(call,'caller').emotion,true);assert.ok(!('emotion' in app2.voiceOptions(call,'assistant')),'the operator voice has no emotion flag');}
+  // A scripted line the ASR drops (one word) does not end the call: the caller's own words stand in and the AI answers.
+  {const app3=make();const c3=app3.createCall(true,{index:0,auto:true,background:true});let analysed=0;
+   app3.tts=async()=>({size:10});app3.play=()=>Promise.resolve();app3.transcribe=async()=>{throw Error('Aucune parole intelligible. Réessayez.');};app3.analyzeCall=async()=>{analysed++;};
+   await app3.callerTurn(c3);const heard=c3.tr.filter(t=>t.who==='Appelant').at(-1);
+   assert.ok(heard&&heard.text===heard.said&&heard.sttMissed&&c3.phase!=='error'&&analysed===1,'the scripted words stand in for the missed transcription');}
   assert.equal(app.state.style,'sober','the sober (light, flat) look is the default without an OS preference');
   // The theme button names the current look and cycles clair → sombre → verre liquide.
   assert.ok(texts(bar).join(' ').includes('Thème : clair'));app.state.style='dark';assert.ok(texts(app.controls()).join(' ').includes('Thème : sombre'));
@@ -761,7 +766,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   // A breath or a noise piece transcribes to nothing: no error on the call, nothing to answer.
   {const realT=app.transcribe;app.transcribe=async()=>{throw Error('Aucune parole intelligible. Réessayez.');};const turns=c.tr.length;
     events=[{idx:11,type:'speech',more:true,filename:'speech.wav'},{idx:12,type:'pause'}];app.pollLineEvents();await tick(20);await idle(c);await tick(20);await idle(c);
-    assert.ok(c.phase!=='error'&&!c.linePending&&c.tr.length===turns,'an unintelligible piece is ignored, nothing is answered');app.transcribe=realT;}
+    assert.ok(c.phase!=='error'&&!c.linePending&&!c.tr.some(t=>t.who==='Appelant'&&c.tr.indexOf(t)>=turns),'an unintelligible piece is ignored, nothing is answered');
+    assert.ok(posts.some(p=>p.url==='/api/line/abc123/reply'&&p.headers['X-Standby']==='1'&&decodeURIComponent(p.headers['X-Text']).startsWith('Pardon, je ne vous ai pas entendu')),'the caller hears that nothing was understood');app.transcribe=realT;}
   // The phone reports what the caller perceived: it lands on that turn and on the call's chart; the session chart has a bar per call.
   events=[{idx:8,type:'latency',answer_ms:3800,first_voice_ms:1900,network_ms:80,rtt_ms:2300}];app.pollLineEvents();await tick(20);
   assert.equal(c.latency.at(-1).phone.answer_ms,3800,'the perceived answer time is attached to the last turn');

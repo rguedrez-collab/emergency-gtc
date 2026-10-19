@@ -63,7 +63,7 @@ const fakePhone = seed => {
 };
 
 class Component extends DCLogic {
-  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, emotions:true, layout:initialLayout(), sideOpen:initialSideOpen(), more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
+  state = {calls:[], selId:null, view:'floor', audioOn:true, opText:'', mic:false, shift:0, nextIn:0, stt:'nemotron', tones:false, tools:false, settings:false, voiceEmotions:false, layout:initialLayout(), sideOpen:initialSideOpen(), more:{}, style:initialStyle(), aiVoice:'fr_female', aiPace:'posé', health:'Vérification des services…',session:{status:'idle',launched:0,finished:0,failed:0,total:100,id:0},
     callers:[], latency:null, sitePolicy:'auto', analytics:false};
   seq = 0; scIdx = 0; disposed = false; autoJobs = new Set(); playToken = 0;
   trRef = React.createRef(); waveRef = React.createRef();
@@ -399,7 +399,7 @@ class Component extends DCLogic {
   }
   // The AI speaks with the selected preset; the human operator takes the other one so the two voices differ.
   voiceOptions(c,speaker) {
-    if(speaker==='caller')return {voice:c.voice,style:c.voiceStyle,emotion:this.state.emotions!==false};
+    if(speaker==='caller')return {voice:c.voice,style:c.voiceStyle,emotion:this.state.voiceEmotions===true};
     const other=this.state.aiVoice==='fr_female'?'fr_male':'fr_female';
     return speaker==='assistant'?{voice:this.state.aiVoice,pace:this.state.aiPace}:{voice:other};
   }
@@ -542,9 +542,12 @@ class Component extends DCLogic {
     if(wait>0){await sleep(wait);if(c.ended)return;}
     // Current revision: after a takeover the caller still finishes what they were saying.
     const speaking=this.play(c,blob,c.revision,'caller',text);
-    const recognized=await this.transcribe(c,blob,'scenario.wav');if(c.ended)return;
-    sample.stt_ms=c.lastStt?.ms??null;
-    c.ti++;this.append(c,'Appelant',recognized,'scenario_audio_stt',{said:text});c.callerLineAt=performance.now();
+    let recognized,missed=false;
+    try{recognized=await this.transcribe(c,blob,'scenario.wav');}
+    catch(e){if(c.ended||!/intelligible/i.test(e?.message||''))throw e;recognized=text;missed=true;}  // a one-word line the ASR dropped: the caller's words stand in, the call goes on
+    if(c.ended)return;
+    sample.stt_ms=missed?null:c.lastStt?.ms??null;
+    c.ti++;this.append(c,'Appelant',recognized,'scenario_audio_stt',{said:text,...(missed?{sttMissed:true}:{})});c.callerLineAt=performance.now();
     await this.analyzeCall(c,speaking,sample);
   }
   // One line of the simulated caller, timed for the latency log. With caller sites configured (ORANGE_CALLERS) the
@@ -554,7 +557,7 @@ class Component extends DCLogic {
     const site=c.location||'local';const t=this.tool(c,'Appelant · '+this.siteName(site),args),t0=performance.now();
     let d;
     try{
-      const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,voice:c.voice,emotion:this.state.emotions!==false,messages,location:site,call:c.id,turn:c.ti});
+      const r=await this.api(c,'/api/caller',{facts:c.callerFacts,style:c.voiceStyle,voice:c.voice,emotion:this.state.voiceEmotions===true,messages,location:site,call:c.id,turn:c.ti});
       d=await r.json();
     }catch(e){if(t.status==='running'){t.status=c.ended?'cancelled':'error';t.result=c.ended?'annulé':e.message;}throw e;}
     const used=d.location||'local',tm=d.timings||{};
@@ -929,7 +932,9 @@ class Component extends DCLogic {
   lineSpeech(c,e) {
     if(c.ended)return;
     if(c.busy){(c.lineQueue=c.lineQueue||[]).push(e);return;}
-    if(e.type==='pause'){clearTimeout(c.lineFlush);if(!c.linePending)return;return this.run(c,()=>this.lineAnswer(c));}
+    if(e.type==='pause'){clearTimeout(c.lineFlush);
+      if(!c.linePending){if(c.lineUnheard){c.lineUnheard=0;this.lineNotice(c,'Pardon, je ne vous ai pas entendu. Vous pouvez répéter ?');}return;}
+      return this.run(c,()=>this.lineAnswer(c));}
     return this.run(c,async()=>{
       const r=await this.lineFetch('/api/line/'+c.lineId+'/audio/'+e.idx);if(!r.ok)throw Error('Enregistrement de l’appelant indisponible.');
       const blob=await r.blob();if(c.ended)return;
@@ -938,6 +943,7 @@ class Component extends DCLogic {
       catch(err){if(!/intelligible/i.test(err?.message||''))throw err;}  // a breath, a noise: nothing to transcribe, no error for the operator
       if(c.ended)return;
       clearTimeout(c.lineFlush);
+      if(text)c.lineUnheard=0;else c.lineUnheard=(c.lineUnheard||0)+1;  // a piece with speech the ASR did not render
       if(c.linePending){const turn=c.tr[c.linePending.turn];if(turn&&text){turn.text=turn.full=(turn.text+' '+text).trim();}c.linePending.stt+=c.lastStt?.ms||0;c.linePending.speaking=speaking;}
       else if(text||!e.more){this.append(c,'Appelant',text,'line_stt');c.linePending={turn:c.tr.length-1,stt:c.lastStt?.ms??null,speaking};}
       c.callerLineAt=performance.now();this.touch();
@@ -1016,7 +1022,7 @@ class Component extends DCLogic {
       this.sitePolicyButton(),
       this.button('Voix IA : '+(this.state.aiVoice==='fr_female'?'femme':'homme'),()=>this.setState({aiVoice:this.state.aiVoice==='fr_female'?'fr_male':'fr_female'}),false,'orange-ai-voice'),
       this.button('Débit IA : '+this.state.aiPace,()=>this.setState({aiPace:this.state.aiPace==='posé'?'vif':'posé'}),false,'orange-ai-pace'),
-      this.button('Voix appelants : '+(this.state.emotions!==false?'émotions':'neutres'),()=>this.setState({emotions:this.state.emotions===false}),false,'orange-emotions','Variantes émotionnelles de la voix selon le profil de l’appel (peur, inquiétude, calme) ou voix neutres.'),
+      this.button('Voix appelants : '+(this.state.voiceEmotions===true?'émotions':'neutres'),()=>this.setState({voiceEmotions:this.state.voiceEmotions!==true}),false,'orange-emotions','Variantes émotionnelles de la voix selon le profil de l’appel (peur, inquiétude, calme) ou voix neutres.'),
       this.button('Disposition : '+(this.state.layout==='columns'?'colonnes':'plein écran'),()=>{const layout=this.state.layout==='columns'?'focus':'columns';try{localStorage.setItem('orange-layout',layout);}catch(e){}this.setState({layout});},false,'orange-layout','La liste des appels et un appel en grand avec les décisions, ou la console en trois colonnes.'),
       this.button('Sonnerie d’arrivée : '+(this.state.tones?'oui':'non'),()=>this.setState({tones:!this.state.tones}),false,'orange-tones'),
       this.button('Exporter le journal',()=>this.download(),!this.state.calls.length,'orange-export','Exporter le journal de la session (JSON)'),

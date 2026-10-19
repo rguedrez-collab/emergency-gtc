@@ -802,6 +802,8 @@ INTAKE_ITEMS = ("location", "incident", "evacuate", "state", "danger", "people",
 FIRE_CUES = re.compile(r"\b(feu|flammes?|fumée|incendie|brûle|ça brûle|ça crame)\b", re.I)
 OUT_CUES = re.compile(r"\b(sortie?s?|dehors|à l'extérieur|sur le palier|dans la rue|en bas|évacué\w*|on est tous là|tout le monde est sorti)\b", re.I)
 OTHERS_INSIDE = re.compile(r"encore (?:à l'intérieur|dedans|chez (?:eux|elle|lui)|là-haut|en haut|dans l'appartement|dans l'immeuble)|(?:n'est|sont|est) pas sortie?s?|coincée?s? (?:à l'intérieur|dedans|en haut)", re.I)
+NO_ANSWER = re.compile(r"(?:me |nous |lui |leur )?(?:répond|réagit) (?:pas|plus)", re.I)
+KNOCKING = re.compile(r"\b(?:je |j')?(?:frappe|frappais|tape|tapais|cogne|cognais)\w*\s*(?:(?:à|a|sur|contre)\s*)?(?:la |sa |leur |à la )?porte\b|\bquand je (?:frappe|tape|cogne)\b", re.I)  # knocking on a door is not violence
 OPENERS = re.compile(r"^\s*(?:d['’]accord|je comprends|je vous entends|très bien|entendu|bien|parfait|compris|ok)\s*[.,!;:…]\s*", re.I)  # « Je vous écoute » is the greeting, not a tic
 INTAKE_RULES = {
     "incident": r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûl\w*|noy\w*|coinc\w*|"
@@ -886,12 +888,15 @@ def intake_state(messages):
             settled.update(k for k in SETTLED_BY_ANSWER if re.search(ASKED_RULES[k], m["text"], re.I))
     known = [k for k in INTAKE_ITEMS if k in settled or re.search(INTAKE_RULES[k], callers, re.I)]
     asked = [k for k in INTAKE_ITEMS if times_asked[k]]
-    critical = bool(CRITICAL.search(callers))
+    fire = bool(FIRE_CUES.search(callers))
+    # In a fire « il ne répond pas » is usually a neighbour behind a door: a victim needs a physical cue (fallen, hurt, unconscious…).
+    victim = bool(VICTIM_CUES.search(KNOCKING.sub(" ", NO_ANSWER.sub(" ", callers) if fire else callers)))
+    # « Il ne répond pas » in a fire is a neighbour behind a door, not a person down: the person-down steps need a described victim.
+    critical = bool(CRITICAL.search(callers)) and (victim or not fire)
     # Only what this call makes relevant is asked: a person's state when someone is hurt or down, the dangers when the
     # incident suggests one, the number of people for a collective event; the callback number is the line's own.
     # The first line describes the incident; its street address is set aside first (« avenue du Parc » is not a park).
     outdoors = bool(caller_lines) and bool(OUTDOOR_CUES.search(ADDRESS.sub(" ", caller_lines[0])))
-    fire = bool(FIRE_CUES.search(callers))
     relevant = ["location", "incident", "name"] + (["landmark"] if outdoors else ["access"]) + (["evacuate"] if fire else [])
     relevant += ["state", "age", "history"] if VICTIM_CUES.search(callers) else []  # what the crew will ask first
     relevant += ["danger"] if DANGER_CUES.search(callers) else []
@@ -909,7 +914,7 @@ def intake_state(messages):
         if step and (step == "breathing" or UNSURE_BREATHING.search(last_caller)):
             next_item = step
     # Someone unresponsive and nothing said about breathing yet: one observation before any administrative question.
-    if critical and not STRONG.search(callers) and "location" in known and not re.search(r"respir", callers, re.I) \
+    if critical and victim and not STRONG.search(callers) and "location" in known and not re.search(r"respir", callers, re.I) \
             and not times_asked["breathing"] and next_item not in ("location", "location_again", "state", "danger", "response_check", "evacuate", "others_inside"):
         next_item = "breathing"
     # The person just stopped breathing or responding: no administrative question this turn, the model stays on the situation.
@@ -922,7 +927,7 @@ def intake_state(messages):
     if "location" not in known:
         next_item = "location" if not times_asked["location"] else "location_again"
     # The last line makes the situation critical (or says the person stopped breathing): acknowledge before anything else.
-    escalated = bool(CRITICAL.search(last_caller)) and (not CRITICAL.search(" ".join(caller_lines[:-1])) or bool(STRONG.search(last_caller)))
+    escalated = critical and bool(CRITICAL.search(last_caller)) and (not CRITICAL.search(" ".join(caller_lines[:-1])) or bool(STRONG.search(last_caller)))
     essentials = [k for k in missing if k in ("location", "incident", "state", "danger", "people", "access", "landmark")]
     return {"known": known, "asked": asked, "missing": missing, "critical": critical, "next": next_item, "escalated": escalated,
             "hazard": bool(DANGER_CUES.search(callers)), "fire": fire, "essentials_missing": essentials}
