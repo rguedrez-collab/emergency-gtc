@@ -18,7 +18,11 @@ if [[ -n "${GCORE_BASE_URL:-}${GCORE_LLM_BASE_URL:-}${GCORE_ASR_BASE_URL:-}${GCO
   export ORANGE_STT_URL="${ORANGE_STT_URL:-$bridge/stt}"
   export ORANGE_TTS_URL="${ORANGE_TTS_URL:-$bridge/tts}"
   export ORANGE_LLM_MODEL="${ORANGE_LLM_MODEL:-$GCORE_LLM_MODEL}"
-  export ORANGE_LLM_LABEL="${ORANGE_LLM_LABEL:-Nemotron 3 Nano}"
+  # The label follows the model unless given: the platform's Nemotron by default, Gemma when the bridge points at a Gemma router.
+  case "${ORANGE_LLM_LABEL:-}" in
+    "") case "$GCORE_LLM_MODEL" in *[Gg]emma*) ORANGE_LLM_LABEL="Gemma 4";; *[Nn]emotron*) ORANGE_LLM_LABEL="Nemotron 3 Nano";; *) ORANGE_LLM_LABEL="${GCORE_LLM_MODEL##*/}";; esac;;
+  esac
+  export ORANGE_LLM_LABEL
   export ORANGE_TTS_MODEL="${ORANGE_TTS_MODEL:-nvidia/magpie-tts-multilingual}"
   export ORANGE_TTS_LABEL="${ORANGE_TTS_LABEL:-Magpie}"
   export ORANGE_STT_MODELS="${ORANGE_STT_MODELS:-${GCORE_ASR_MODEL:-nemotron-asr-streaming}}"
