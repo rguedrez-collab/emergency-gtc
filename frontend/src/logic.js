@@ -1038,12 +1038,12 @@ class Component extends DCLogic {
     const figure=(key,text,title)=>h('span',{key,className:'oc-chip oc-chip-plain oc-kpis',title},text);
     const op=lat?.handlers?.operator,ph=lat?.phone||{};
     // What the caller's phone measured: the answer as perceived (last word → voice), the first voice (wait messages included), the network.
-    const phone=[['réponse perçue',ph.answer_ms],['première voix',ph.first_voice_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
+    const phone=[['premier son',ph.first_voice_ms],['réponse',ph.answer_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
     return h('div',{key:'analytics',className:'oc-settings oc-analytics'},h('span',{key:'l',className:'oc-h'},'Analytique'),progress,
       names.length?figure('sites','Appelant · '+perSite.join(' · '),'Latence médiane de l’appelant simulé par site, derniers tours'):null,
       steps.length?figure('console','Console · '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · '),'Médianes des étapes de la console'):null,
       op?.operator_ms?figure('operator','Opérateur · réaction '+fmtMs(op.operator_ms.median),'Médiane du temps de réaction de l’opérateur après prise en charge (dernières paroles de l’appelant → réponse)'):null,
-      phone?figure('phone','Téléphone · '+phone,'Mesuré par le téléphone de l’appelant (médianes) : réponse perçue = dernier mot → voix de la réponse · première voix = dernier mot → première voix entendue, messages d’attente compris · réseau = aller-retour HTTP · aller-retour = fin de parole signalée → réponse reçue'):null,
+      phone?figure('phone','Téléphone · '+phone,'Mesuré par le téléphone de l’appelant (médianes) : premier son = fin de parole → premier son entendu (message d’attente compris) · réponse = fin de parole → voix de la réponse · réseau = aller-retour HTTP · aller-retour = fin de parole signalée → réponse reçue'):null,
       this.callsChart(),
       this.sitesBoard());
   }
@@ -1325,7 +1325,7 @@ class Component extends DCLogic {
     const con=lat?.console,steps=con?[['Transcription',con.stt_ms],['Analyse',con.analyze_ms],['Voix IA',con.reply_tts_ms]].filter(([,v])=>v):[];
     const op=lat?.handlers?.operator,ph=lat?.phone||{};
     // What the caller's phone measured: the answer as perceived (last word → voice), the first voice (wait messages included), the network.
-    const phone=[['réponse perçue',ph.answer_ms],['première voix',ph.first_voice_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
+    const phone=[['premier son',ph.first_voice_ms],['réponse',ph.answer_ms],['réseau',ph.network_ms],['aller-retour',ph.phone_ms]].filter(([,v])=>v&&v.n).map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ');
     return h('div',{className:'oc-sites'},h('div',{className:'oc-feedhead'},'Sites appelants · latence'),...names.map(row),
       steps.length?h('div',{className:'oc-muted'},'Console (médianes) : '+steps.map(([k,v])=>k+' '+fmtMs(v.median)).join(' · ')):null,
       // The human side, measured apart: the operator's reaction after a takeover, and what a real caller's phone saw.
@@ -1396,23 +1396,42 @@ class Component extends DCLogic {
     const grid=[];for(let v=step;v<=top;v+=step)grid.push(h('g',{key:'g'+v},h('line',{x1:L,x2:W-R,y1:y(v),y2:y(v),className:'oc-chart-grid'}),h('text',{x:L-4,y:y(v)+3,textAnchor:'end'},v>=1000?(v/1000).toFixed(v%1000?1:0)+' s':v+' ms')));
     return grid;
   }
+  // The number that matters to the caller: from the end of their sentence to the first sound their phone plays
+  // (a wait message counts); measured by the phone for a line, otherwise what the console itself took (STT + analysis + voice).
+  firstSound(r) {return r.phone?.first_voice_ms??r.phone?.answer_ms??(['stt_ms','analyze_ms','reply_tts_ms','operator_ms','op_tts_ms'].reduce((a,k)=>a+(r[k]||0),0)||null);}
+  turnNumbers(c) {
+    return (c.latency||[]).slice(-30).map((r,i)=>({turn:r.turn??i+1,first:this.firstSound(r),answer:r.phone?.answer_ms??null,network:r.phone?.network_ms??null,
+      stt:r.stt_ms??null,analyze:r.analyze_ms??null,voice:r.reply_tts_ms??r.op_tts_ms??null,operator:r.handler==='operator'?r.operator_ms:null,measured:!!r.phone}));
+  }
+  numbersTable(c) {
+    const rows=this.turnNumbers(c);if(!rows.length)return null;
+    const s=v=>v==null?'—':v>=1000?(v/1000).toFixed(1).replace('.',',')+' s':v+' ms';
+    return h('table',{className:'oc-nums'},h('thead',null,h('tr',null,...['Tour','Premier son','Réponse','STT','Analyse','Voix','Réseau'].map(t=>h('th',{key:t},t)))),
+      h('tbody',null,...rows.map(r=>h('tr',{key:r.turn},h('td',null,String(r.turn)),h('td',{className:'oc-nums-first',title:r.measured?'Mesuré par le téléphone : fin de parole → premier son':'Console : transcription + analyse + voix'},s(r.first)+(r.measured?'':' *')),
+        h('td',null,s(r.answer??(r.measured?null:r.first))),h('td',null,s(r.stt)),h('td',null,s(r.operator??r.analyze)),h('td',null,s(r.voice)),h('td',null,s(r.network))))));
+  }
   latencyChart(c) {
     const rows=(c.latency||[]).slice(-30);if(!rows.length)return null;
-    const totals=rows.map(r=>this.turnSegments(r).reduce((a,s)=>a+s.v,0)),phones=rows.map(r=>r.phone?.answer_ms??null),perceived=phones.some(v=>v!=null);
-    const {step,top}=this.chartScale(Math.max(...totals,...phones.filter(v=>v!=null),1));
+    const totals=rows.map(r=>this.turnSegments(r).reduce((a,s)=>a+s.v,0)),phones=rows.map(r=>r.phone?.answer_ms??null),firsts=rows.map(r=>r.phone?.first_voice_ms??r.phone?.answer_ms??null),perceived=firsts.some(v=>v!=null);
+    const {step,top}=this.chartScale(Math.max(...totals,...phones.filter(v=>v!=null),...firsts.filter(v=>v!=null),1));
     const W=320,H=118,L=30,R=6,T=8,B=20,pw=W-L-R,ph=H-T-B,n=rows.length,slot=pw/n,bw=Math.max(3,Math.min(22,slot*0.66)),y=v=>T+ph-(v/top)*ph;
     const bars=rows.map((r,i)=>{let acc=0;const x=L+i*slot+(slot-bw)/2,turn=r.turn??i+1;
       const segs=this.turnSegments(r).map(s=>{const el=h('rect',{key:s.k,x,width:bw,y:y(acc+s.v),height:Math.max(1,y(acc)-y(acc+s.v)),style:{fill:s.color},className:'oc-chart-bar'},h('title',null,`Tour ${turn} · ${s.label} : ${fmtMs(s.v)}`));acc+=s.v;return el;});
-      const p=r.phone,mark=p?.answer_ms!=null?h('g',{key:'p'},h('line',{x1:x-2,x2:x+bw+2,y1:y(p.answer_ms),y2:y(p.answer_ms),className:'oc-chart-phone'}),
-        h('circle',{cx:x+bw/2,cy:y(p.answer_ms),r:2.6,className:'oc-chart-phone'},h('title',null,`Tour ${turn} · réponse perçue par l’appelant : ${fmtMs(p.answer_ms)}`+(p.first_voice_ms!=null&&p.first_voice_ms<p.answer_ms-300?` · première voix ${fmtMs(p.first_voice_ms)}`:'')+(p.network_ms!=null?` · réseau ${fmtMs(p.network_ms)}`:'')))):null;
+      const p=r.phone,first=p?.first_voice_ms??p?.answer_ms,mark=first!=null?h('g',{key:'p'},
+        p.answer_ms!=null&&p.answer_ms>first+300?h('circle',{cx:x+bw/2,cy:y(p.answer_ms),r:3,className:'oc-chart-answer'},h('title',null,`Tour ${turn} · réponse entendue ${fmtMs(p.answer_ms)} après la fin de parole`)):null,
+        h('line',{x1:x-2,x2:x+bw+2,y1:y(first),y2:y(first),className:'oc-chart-phone'}),
+        h('circle',{cx:x+bw/2,cy:y(first),r:2.8,className:'oc-chart-phone'},h('title',null,`Tour ${turn} · premier son sur le téléphone ${fmtMs(first)} après la fin de parole`+(p.answer_ms!=null&&p.answer_ms>first+300?` · réponse ${fmtMs(p.answer_ms)}`:'')+(p.network_ms!=null?` · réseau ${fmtMs(p.network_ms)}`:'')))):null;
       const label=(n<=12||i%Math.ceil(n/12)===0)?h('text',{key:'t',x:x+bw/2,y:H-6,textAnchor:'middle'},String(turn)):null;
       return h('g',{key:i},...segs,mark,label);});
-    const legend=[['#8e8e93','Transcription'],['var(--oc-op)','Analyse'],['var(--oc-ai)','Voix IA'],...(c.lineId?[['var(--text-color-primary)','Réponse perçue (téléphone)']]:[['#c9c9cf','Appelant (site)']])];
-    const median=arr=>{const v=arr.filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;},med=median(perceived?phones:totals);
+    const legend=[['#8e8e93','Transcription'],['var(--oc-op)','Analyse'],['var(--oc-ai)','Voix IA'],...(c.lineId?[['var(--text-color-primary)','● premier son sur le téléphone · ○ réponse']]:[['#c9c9cf','Appelant (site)']])];
+    const median=arr=>{const v=arr.filter(x=>x!=null).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null;},med=median(perceived?firsts:rows.map(r=>this.firstSound(r)));
     return h('div',{key:'chart',className:'oc-chartbox'},
+      med!=null?h('div',{className:'oc-headline',title:perceived?'Mesuré par le téléphone de l’appelant : fin de parole → premier son entendu (message d’attente compris), médiane des tours':'Côté console : transcription + analyse + voix, médiane des tours'},
+        h('b',null,fmtMs(med)),' · premier son après la fin de parole'+(perceived?' (mesuré sur le téléphone)':' (console)')):null,
       h('svg',{viewBox:`0 0 ${W} ${H}`,className:'oc-chart',role:'img','aria-label':'Latence par tour'},...this.chartGrid(step,top,y,L,W,R),h('line',{x1:L,x2:W-R,y1:y(0),y2:y(0),className:'oc-chart-axis'}),...bars),
-      h('div',{className:'oc-legend'},...legend.map(([color,label])=>h('span',{key:label},h('i',{style:{background:color}}),label)),
-        med!=null?h('span',{key:'med',className:'oc-legend-med'},'médiane '+fmtMs(med)+(perceived?' perçue':'')):null));
+      h('div',{className:'oc-legend'},...legend.map(([color,label])=>h('span',{key:label},h('i',{style:{background:color}}),label))),
+      this.numbersTable(c),
+      perceived?null:h('span',{className:'oc-muted'},'* sans téléphone réel : temps côté console (transcription + analyse + voix).'));
   }
   chartBlock(c) {
     if(!(c.latency||[]).length)return null;
@@ -1423,20 +1442,22 @@ class Component extends DCLogic {
   }
   callsChart() {
     const calls=this.state.calls.filter(c=>(c.latency||[]).length).slice(-40);if(!calls.length)return null;
-    const value=c=>{const vals=c.latency.map(r=>r.phone?.answer_ms??this.turnSegments(r).reduce((a,s)=>a+s.v,0)).filter(v=>v>0).sort((a,b)=>a-b);return vals.length?vals[Math.floor(vals.length/2)]:0;};
+    const value=c=>{const vals=c.latency.map(r=>this.firstSound(r)).filter(v=>v>0).sort((a,b)=>a-b);return vals.length?vals[Math.floor(vals.length/2)]:0;};
     const data=calls.map(c=>({c,v:value(c)})),{step,top}=this.chartScale(Math.max(...data.map(d=>d.v),1));
     const W=640,H=120,L=34,R=6,T=8,B=22,pw=W-L-R,ph=H-T-B,n=data.length,slot=pw/n,bw=Math.max(3,Math.min(18,slot*0.7)),y=v=>T+ph-(v/top)*ph;
     const all=data.map(d=>d.v).sort((a,b)=>a-b),med=all[Math.floor(all.length/2)];
     const bars=data.map((d,i)=>{const x=L+i*slot+(slot-bw)/2,color=d.c.lineId?'var(--text-color-primary)':d.c.takenOver?'var(--oc-op)':'var(--oc-ai)',turns=d.c.latency.length;
       return h('g',{key:d.c.id,className:'oc-chart-call',onClick:()=>this.open(d.c.id)},
-        h('rect',{x,width:bw,y:y(d.v),height:Math.max(1,y(0)-y(d.v)),style:{fill:color},className:'oc-chart-bar'},h('title',null,`${d.c.id} · ${d.c.phone} · réponse médiane ${fmtMs(d.v)} sur ${turns} tour${turns>1?'s':''}`+(d.c.lineId?' (perçue par le téléphone)':''))),
+        h('rect',{x,width:bw,y:y(d.v),height:Math.max(1,y(0)-y(d.v)),style:{fill:color},className:'oc-chart-bar'},h('title',null,`${d.c.id} · ${d.c.phone} · premier son ${fmtMs(d.v)} après la fin de parole (médiane de ${turns} tour${turns>1?'s':''})`+(d.c.lineId?', mesuré sur le téléphone':', côté console'))),
         (n<=16||i%Math.ceil(n/16)===0)?h('text',{x:x+bw/2,y:H-7,textAnchor:'middle'},d.c.id.replace('TEST-','')):null);});
-    return h('div',{key:'calls-chart',className:'oc-chartbox oc-chartwide'},h('span',{className:'oc-h'},'Réponse par appel · médiane des tours'),
+    const s=v=>v>=1000?(v/1000).toFixed(1).replace('.',',')+' s':v+' ms';
+    return h('div',{key:'calls-chart',className:'oc-chartbox oc-chartwide'},h('span',{className:'oc-h'},'Premier son par appel · fin de parole → premier son, médiane des tours'),
       h('svg',{viewBox:`0 0 ${W} ${H}`,className:'oc-chart',role:'img','aria-label':'Réponse par appel'},...this.chartGrid(step,top,y,L,W,R),
         h('line',{x1:L,x2:W-R,y1:y(med),y2:y(med),className:'oc-chart-median'}),h('text',{x:W-R,y:y(med)-3,textAnchor:'end',className:'oc-chart-medlabel'},'médiane '+fmtMs(med)),
         h('line',{x1:L,x2:W-R,y1:y(0),y2:y(0),className:'oc-chart-axis'}),...bars),
       h('div',{className:'oc-legend'},h('span',{key:'a'},h('i',{style:{background:'var(--oc-ai)'}}),'Assistance IA'),h('span',{key:'o'},h('i',{style:{background:'var(--oc-op)'}}),'Prise en charge opérateur'),
-        h('span',{key:'p'},h('i',{style:{background:'var(--text-color-primary)'}}),'Téléphone (perçue par l’appelant)'),h('span',{key:'m',className:'oc-legend-med'},'Cliquez une barre pour ouvrir l’appel')));
+        h('span',{key:'p'},h('i',{style:{background:'var(--text-color-primary)'}}),'Téléphone (mesuré par l’appelant)'),h('span',{key:'m',className:'oc-legend-med'},'Cliquez une barre pour ouvrir l’appel')),
+      h('div',{className:'oc-chartnums'},...data.map(d=>h('span',{key:d.c.id,className:'oc-chartnum'+(d.c.lineId?' oc-chartnum-phone':''),onClick:()=>this.open(d.c.id),title:d.c.phone},h('b',null,d.c.id.replace('TEST-','')),' ',s(d.v)))));
   }
   // Three tiny bars for the call whose audio is actually playing: motion only where something is happening.
   voiceMark(c) {

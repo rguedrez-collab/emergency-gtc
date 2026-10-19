@@ -215,7 +215,7 @@
     turn.answerAt = now; const t = turn; turn = null;
     const first = t.firstVoiceAt - t.endedAt, answer = t.answerAt - t.endedAt;
     if (e.node) { const m = e.node.querySelector('small'); if (m) m.textContent = (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + ' · entendue ' + s1(answer) + ' après votre dernier mot'; }
-    $('tele').textContent = `réponse perçue ${s1(answer)}` + (first < answer - 300 ? ` · première voix ${s1(first)}` : '') + (networkMs != null ? ` · réseau ${networkMs} ms` : '');
+    $('tele').textContent = `premier son ${s1(first)} après votre dernier mot` + (answer > first + 300 ? ` · réponse ${s1(answer)}` : '') + (networkMs != null ? ` · réseau ${networkMs} ms` : '');
     fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
       body: JSON.stringify({rtt_ms: t.rttMs, network_ms: networkMs, first_voice_ms: first, answer_ms: answer, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {});
   }

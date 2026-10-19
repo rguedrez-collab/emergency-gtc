@@ -761,10 +761,11 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   // The phone reports what the caller perceived: it lands on that turn and on the call's chart; the session chart has a bar per call.
   events=[{idx:8,type:'latency',answer_ms:3800,first_voice_ms:1900,network_ms:80,rtt_ms:2300}];app.pollLineEvents();await tick(20);
   assert.equal(c.latency.at(-1).phone.answer_ms,3800,'the perceived answer time is attached to the last turn');
-  const chart=JSON.stringify(app.latencyChart(c));assert.ok(chart.includes('oc-chart-phone')&&/réponse perçue par l’appelant : 3.800 ms/.test(chart)&&chart.includes('Analyse'),'per-turn chart with the phone marker: '+chart.slice(0,300));
+  const chart=JSON.stringify(app.latencyChart(c));assert.ok(chart.includes('oc-chart-phone')&&/premier son sur le téléphone 1.900 ms/.test(chart)&&chart.includes('Analyse'),'per-turn chart with the first-sound marker: '+chart.slice(0,300));
+  assert.ok(chart.includes('oc-nums')&&chart.includes('"1,9 s"')&&chart.includes('oc-headline'),'the numbers of each turn and the headline sit under the chart: '+chart.slice(0,200));
   app.state.view='call';app.state.selId=c.id;assert.ok(JSON.stringify(app.copilot(app.consoleModel())).includes('orange-more-chart'),'the chart block is in the open call');
   app.state.more={'chart-hidden':true};assert.ok(!JSON.stringify(app.copilot(app.consoleModel())).includes('oc-chart-bar'),'and can be folded');app.state.more={};
-  const calls=JSON.stringify(app.callsChart());assert.ok(calls.includes('Réponse par appel')&&calls.includes(c.id+' · ligne mobile'),'one bar per call, the line call included');
+  const calls=JSON.stringify(app.callsChart());assert.ok(calls.includes('Premier son par appel')&&calls.includes(c.id+' · ligne mobile')&&calls.includes('oc-chartnums'),'one bar per call with its number, the line call included');
   app.state.view='floor';app.state.selId=null;
   // The operator takes the call: their answer goes to the phone too, and their turn is recorded without waiting for the caller.
   app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
