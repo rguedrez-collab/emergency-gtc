@@ -29,6 +29,9 @@ GET  /api/phone                                               -> this contract, 
 `dialed` is optional: the number the person dialed (digits only, e.g. `15`, `17`, `18`, `112`). It is only a label the
 console shows on the call (« ligne mobile · 18 Sapeurs-Pompiers »); every number reaches the same demonstration platform.
 
+A `reply` with `standby: true` is a short wait message in the AI's voice (« Je note, restez en ligne. »), sent when the
+answer takes longer than about 3 s; play it like any reply, the real answer follows.
+
 Events (`type`): `speech` (what the phone sent, with `size`), `claimed` (the console took the line; `status` becomes `live`),
 `reply` (`speaker`: `assistant` or `operator`, `text`, `size`; fetch the audio by `idx`), `end` (`by`: `phone` or `console`).
 Poll `events` with `since` = last `idx` + 1. With `wait=5` the gateway holds the request up to 5 s (8 at most) until
@@ -58,6 +61,9 @@ screen with a timer. Talking is hands-free: a voice activity detector on the mic
 silence and sends them as 16 kHz WAV; the microphone is gated while a reply is playing (no echo), while ringing and while
 muted. Live captions show the operator's words and the reply delay; « Muet », « Sous-titres » and « Clavier » behave as
 on a phone; the red button hangs up. If hands-free is impossible (no Web Audio), a hold-to-talk button appears instead.
+The line never goes dead: as soon as your sentence ends the page plays a soft keyboard sound (« L’assistance prend
+note… »), a standby line in the AI voice arrives if the answer takes more than ~3 s, and an answer that arrives while you
+are still talking waits for your next pause.
 
 ## Minimal clients
 

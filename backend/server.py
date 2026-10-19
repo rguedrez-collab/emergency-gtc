@@ -561,7 +561,7 @@ def phone_api():
                      "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max) · X-Continue: 1 = un morceau, la suite arrive",
                      "pause": "POST /api/line/{id}/pause · X-Line-Token : fin de la prise de parole après des morceaux X-Continue (la plateforme répond alors)",
                      "events": "GET /api/line/{id}/events?since=N&wait=5 · X-Line-Token -> {status, events:[{idx, type: speech|pause|claimed|reply|end, speaker, text, size, more}]} · wait = attente longue (s, 8 max)",
-                     "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée)",
+                     "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée) · un reply avec standby:true est un message d'attente",
                      "end": "POST /api/line/{id}/end · X-Line-Token", "latency": "POST /api/line/{id}/latency {rtt_ms, handler: ai|operator}"},
             "notes": ["La ligne est prise par la console ouverte dans un navigateur : sans console en session, l'appel reste « ringing ».",
                       "Les réponses arrivent comme des événements « reply » ; leur audio se lit par index.", "Aucune transmission à de vrais secours."]}
@@ -1779,7 +1779,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if speaker not in LINE_SPEAKERS:
                     raise ValueError("unsupported speaker")
                 text = unquote(self.headers.get("X-Text", ""))[:1200]
-                event = line_event(line, "reply", audio=body, mime="audio/wav", speaker=speaker, text=text)
+                standby = self.headers.get("X-Standby") == "1"  # a short wait message while the real answer is being prepared
+                event = line_event(line, "reply", audio=body, mime="audio/wav", speaker=speaker, text=text, **({"standby": True} if standby else {}))
                 self.reply(200, {"idx": event["idx"]})
             elif action == "claim":
                 payload = json.loads(body) if body else {}

@@ -713,6 +713,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(app.decorate(c).category,'Appel entrant · ligne mobile','named from the start, not « Nouvel appel · évaluation en cours »');
   await idle(c);const greeting=posts.find(p=>p.url==='/api/line/abc123/reply');
   assert.ok(greeting&&greeting.headers['X-Speaker']==='assistant'&&decodeURIComponent(greeting.headers['X-Text'])===c.tr[0].text,'the phone hears the greeting');
+  assert.equal((c.lineStandby||[]).length,3,'three standby lines are ready in the AI voice for long waits');
   await app.pollLines();assert.equal(app.state.calls.filter(x=>x.lineId==='abc123').length,1,'a line is adopted once');
   app.pollLineEvents();await tick(20);await idle(c);
   const said=c.tr.find(t=>t.source==='line_stt');assert.ok(said&&said.text.includes('accident'),'the recording was fetched and transcribed');
@@ -739,7 +740,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   events=[{idx:1,type:'end',by:'phone'}];app.pollLineEvents();await tick(20);
   assert.ok(c.ended&&c.endLabel==='Appel terminé · à revoir'&&c.tr.some(t=>t.source==='line_end'),'hang-up closes the call');
   assert.ok(posts.some(p=>p.url==='/api/line/abc123/end'),'the console tells the gateway the call is over');
-  assert.ok(!('lineQueue' in app.snapshot().calls[0])&&!('opSample' in app.snapshot().calls[0]),'transient line state stays out of the snapshot');
+  assert.ok(!('lineQueue' in app.snapshot().calls[0])&&!('opSample' in app.snapshot().calls[0])&&!('lineStandby' in app.snapshot().calls[0]),'transient line state stays out of the snapshot');
   delete context.fetch;
 }
 // The guardrail chip is a toggle: one click switches the AI's path off through the gateway, the next one switches it back on.

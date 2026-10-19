@@ -246,14 +246,14 @@
   function startVad(stream) {
     const c = audio(), src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), sink = c.createGain();
     sink.gain.value = 0; src.connect(proc); proc.connect(sink); sink.connect(c.destination);
-    const frameMs = 4096 / c.sampleRate * 1000, CHUNK = Math.ceil(800 / frameMs), END = Math.ceil(1400 / frameMs), MAX = Math.floor(25000 / frameMs), MINV = Math.ceil(350 / frameMs), PRE = Math.ceil(300 / frameMs);
+    const frameMs = 4096 / c.sampleRate * 1000, CHUNK = Math.ceil(800 / frameMs), END = Math.ceil(1200 / frameMs), MAX = Math.floor(25000 / frameMs), MINV = Math.ceil(350 / frameMs), PRE = Math.ceil(300 / frameMs);
     const v = vad = {stream, src, proc, sink, rate: c.sampleRate, floor: null, state: 'idle', frames: [], pre: [], silent: 0, voiced: 0, onset: 0, pieces: 0};
     const piece = () => {  // what was said so far leaves now (trailing silence trimmed to ~250 ms); the utterance may go on
       const frames = v.frames.slice(0, v.frames.length - Math.max(0, v.silent - 3)), voiced = v.voiced;
       v.frames = []; v.voiced = 0; v.onset = 0;
       if (voiced >= MINV) { v.pieces++; send(wav(frames, v.rate), 'speech.wav', frames.length * frameMs, true); }
     };
-    const over = () => { const had = v.pieces > 0; v.state = 'idle'; v.pieces = 0; v.silent = 0; v.frames = []; v.pre = []; v.onset = 0; if (had) pause(); else idle(); };
+    const over = () => { const had = v.pieces > 0; v.state = 'idle'; v.pieces = 0; v.silent = 0; v.frames = []; v.pre = []; v.onset = 0; if (had) { pause(); playNext(); } else idle(); };
     proc.onaudioprocess = e => {
       if (ended || vad !== v) return;
       const x = e.inputBuffer.getChannelData(0); let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i];
@@ -275,9 +275,23 @@
     };
     listening('wait', 'Appel en cours…');
   }
+  // While the platform prepares its answer the line must not go dead: a soft keyboard sound, as an operator taking notes.
+  let typingTimer = null, noiseBuf = null;
+  function keyClick(c) {
+    if (!noiseBuf) { noiseBuf = c.createBuffer(1, Math.floor(c.sampleRate * 0.03), c.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (d.length * 0.18)); }
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = noiseBuf; f.type = 'bandpass'; f.frequency.value = 2200 + Math.random() * 1800; f.Q.value = 0.9; g.gain.value = 0.012 + Math.random() * 0.018;
+    s.connect(f); f.connect(g); g.connect(c.destination); s.start();
+  }
+  function typing(on) {
+    clearTimeout(typingTimer); typingTimer = null; if (!on) return;
+    const c = audio(); let left = 0;
+    const step = () => { if (ended) return; if (left <= 0) { left = 3 + Math.floor(Math.random() * 6); typingTimer = setTimeout(step, 250 + Math.random() * 450); return; } keyClick(c); left--; typingTimer = setTimeout(step, 55 + Math.random() * 90); };
+    typingTimer = setTimeout(step, 300);
+  }
   async function pause() {  // the utterance is over: the platform answers what it has transcribed (retried: without it the answer waits 15 s)
     if (!line || ended) return;
-    listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now();
+    listening('wait', 'L’assistance prend note…'); sentAt = performance.now(); typing(true);
     for (let attempt = 0; attempt < 3 && line && !ended; attempt++) {
       try { const r = await fetch(`/api/line/${line.id}/pause`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); if (r.ok || r.status < 500) return; } catch (e) {}
       await new Promise(resolve => setTimeout(resolve, 400));
@@ -306,7 +320,8 @@
   // Replies: played one after the other; while one plays the microphone is gated, then released shortly after.
   async function playNext() {
     if (playing || !queue.length || ended) return;
-    playing = true; aiTalking = true; const e = queue.shift();
+    if (vad && vad.state !== 'idle') return;  // you are speaking: the answer waits for your pause (over() calls back)
+    typing(false); playing = true; aiTalking = true; const e = queue.shift();
     listening('wait', (e.speaker === 'operator' ? 'L’opérateur' : 'L’assistance') + ' vous parle…');
     try {
       const r = await fetch(`/api/line/${line.id}/audio/${e.idx}`, {headers: headers()});
@@ -342,7 +357,7 @@
     polling = setTimeout(poll, delay);
   }
   function finish(reason) {
-    if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); ringback(false); stopVad(); talkStop();
+    if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); ringback(false); typing(false); stopVad(); talkStop();
     if (player) try { player.pause(); } catch (e) {} queue = []; playing = false; aiTalking = false;
     $('endtext').textContent = reason + (startedAt ? ' · ' + fmt(Date.now() - startedAt) : ''); show('ended'); vibrate([40, 60, 40]);
     line = null; render();

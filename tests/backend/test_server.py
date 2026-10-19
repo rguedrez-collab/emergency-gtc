@@ -945,10 +945,13 @@ class GatewayTests(unittest.TestCase):
             threading.Timer(0.3, lambda: self.request(f"/api/line/{lid}/pause", {}, headers=phone)).start()
             started = time.monotonic(); released = json.loads(self.request(f"/api/line/{lid}/events?since=5&wait=5", headers=phone)[1])
             self.assertTrue(time.monotonic() - started < 2 and released["events"][-1]["type"] == "pause", "a new event released the wait at once")
+            # A standby line (the console's wait message) is a reply flagged standby, so the phone can tell it apart.
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/reply", raw=b"RIFF" + b"\0" * 60, headers={"Content-Type": "audio/wav", "X-Text": quote("Je note, restez en ligne."), "X-Speaker": "assistant", "X-Standby": "1"})[1])["idx"], 6)
+            self.assertEqual(json.loads(self.request(f"/api/line/{lid}/events?since=6", headers=phone)[1])["events"][0].get("standby"), True)
             # Hang-up from the phone: the line ends, leaves the pending list, and the console sees who ended it.
             self.assertEqual(json.loads(self.request(f"/api/line/{lid}/end", {}, headers=phone)[1])["status"], "ended")
             self.assertEqual(json.loads(self.request("/api/line/pending")[1])["lines"], [])
-            end = json.loads(self.request(f"/api/line/{lid}/events?since=6")[1])["events"]  # after the piece, the pause and the timer's pause
+            end = json.loads(self.request(f"/api/line/{lid}/events?since=7")[1])["events"]  # after the piece, the pauses and the standby line
             self.assertEqual((end[0]["type"], end[0]["by"]), ("end", "phone"))
             self.assertEqual(self.request("/api/line/nope/events")[0], 404)
             self.assertEqual(self.request("/api/line/nope/events", headers={"X-Line-Token": "t"})[0], 403)

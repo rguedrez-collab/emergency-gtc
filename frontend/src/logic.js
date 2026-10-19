@@ -8,6 +8,8 @@ const SPEAKING = {caller:'l’appelant parle', assistant:'l’IA parle', operato
 const WAVE = {caller:'var(--oc-caller)', assistant:'var(--oc-ai)', operator:'var(--oc-op)'}, SPEAKER_ROW = {caller:'Appelant', assistant:'Agent IA', operator:'Vous'};
 const fmt = ms => { const t = Math.floor(ms / 1000); return String(Math.floor(t / 60)).padStart(2,'0') + ':' + String(t % 60).padStart(2,'0'); };
 const GREETING = "Je vous écoute. Dites-moi ce qui se passe.";
+// Said to a phone caller after ~3 s without an answer (the guardrail-proxied analysis), in the AI's voice, so the line never goes dead.
+const STANDBY_LINES=['Je note, restez en ligne.','Un instant, je regarde.','D’accord, je note.'];
 // Automatic samples stop at 24 caller turns; a human-driven call may continue to 60.
 const AUTO_TURNS = 24, MAX_TURNS = 60, TURN_GAP_MS = 250;
 // Up to six calls handled by the AI at once; taken-over and manual calls do not count.
@@ -292,7 +294,9 @@ class Component extends DCLogic {
       if(scenario&&!options.auto)this.nextScenario(c);
       else if(!scenario){this.append(c,'Agent IA',GREETING,'fixed_demo_greeting');
         // The phone hears the greeting: synthesized whether or not the call is open here.
-        if(line)this.run(c,async()=>{const b=await this.tts(c,GREETING,'assistant');await this.deliver(c,b,GREETING,'assistant');});}
+        if(line)this.run(c,async()=>{const b=await this.tts(c,GREETING,'assistant');await this.deliver(c,b,GREETING,'assistant');
+          // Standby lines in the same voice, ready for the waits longer than ~3 s: no dead air on the phone.
+          c.lineStandby=[];for(const text of STANDBY_LINES){try{const clip=await this.tts(c,text,'assistant');if(clip&&clip.size)c.lineStandby.push({text,blob:clip});}catch(e){}}});}
     });
     return c;
   }
@@ -788,7 +792,7 @@ class Component extends DCLogic {
   download() {
     const data={mode:'demonstration',exported_at:new Date().toISOString(),dispatch_connected:false,session:this.state.session,
       caller_sites:(this.state.callers||[]).map(s=>s.name),latency:this.state.latency,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,opSample,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,lineStandby,lineStandbyTimer,opSample,...c})=>c)};
     const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='orange-session-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -802,7 +806,7 @@ class Component extends DCLogic {
   // Serializable state only: no abort controllers, prefetched audio, queued speech or transient busy flags.
   snapshot() {
     return {owner:this.ownerId(),takeover:!!this.takeover,startedAt:this.started,session:this.state.session,seq:this.seq,scIdx:this.scIdx,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,opSample,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,lineStandby,lineStandbyTimer,opSample,...c})=>c)};
   }
   persist(final=false) {
     if(this.disposed||this.restoring||this.readOnly||this.state.session.status==='idle'&&!this.state.calls.length)return;
@@ -904,11 +908,22 @@ class Component extends DCLogic {
   }
   async lineAnswer(c) {
     const p=c.linePending||{};c.linePending=null;
-    await this.analyzeCall(c,p.speaking||Promise.resolve(),{location:'ligne',requested:'ligne',fallback:false,handler:c.takenOver?'operator':'ai',stt_ms:p.stt??null});
+    // The analysis takes ~3 s through the guardrail proxy: after 2.8 s the phone hears a standby line; the real answer cancels it.
+    clearTimeout(c.lineStandbyTimer);
+    if(!c.takenOver&&c.lineStandby?.length){c.lineStandbyTimer=setTimeout(()=>this.standby(c),2800);if(c.lineStandbyTimer&&c.lineStandbyTimer.unref)c.lineStandbyTimer.unref();}
+    try{await this.analyzeCall(c,p.speaking||Promise.resolve(),{location:'ligne',requested:'ligne',fallback:false,handler:c.takenOver?'operator':'ai',stt_ms:p.stt??null});}
+    finally{clearTimeout(c.lineStandbyTimer);}
   }
-  deliver(c,blob,text,speaker) {
+  standby(c) {
+    if(c.ended||this.disposed||c.takenOver||!c.lineStandby?.length)return;
+    const clip=c.lineStandby[(c.lineStandbyIdx=((c.lineStandbyIdx??-1)+1)%c.lineStandby.length)];
+    this.append(c,'Système','Message d’attente joué à l’appelant : « '+clip.text+' »','line_standby');  // a system line: not part of the dialogue
+    this.deliver(c,clip.blob,clip.text,'assistant',true);
+  }
+  deliver(c,blob,text,speaker,standby=false) {
     if(!c.lineId||typeof fetch!=='function')return Promise.resolve();
-    return fetch('/api/line/'+c.lineId+'/reply',{method:'POST',headers:{'Content-Type':'audio/wav','X-Text':encodeURIComponent(text||''),'X-Speaker':speaker},body:blob}).catch(()=>{});
+    if(!standby)clearTimeout(c.lineStandbyTimer);  // the real answer is on its way: no standby line after it
+    return fetch('/api/line/'+c.lineId+'/reply',{method:'POST',headers:{'Content-Type':'audio/wav','X-Text':encodeURIComponent(text||''),'X-Speaker':speaker,...(standby?{'X-Standby':'1'}:{})},body:blob}).catch(()=>{});
   }
   // ---------------- Rendering: one console (list · selected call · copilot) over the mockup's header ----------------
   // One button system (NVIDIA Elements) everywhere, styled per theme through its CSS variables.
