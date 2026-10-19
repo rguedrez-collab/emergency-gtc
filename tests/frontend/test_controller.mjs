@@ -736,6 +736,10 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
   const op=posts.filter(p=>p.url==='/api/line/abc123/reply').at(-1);assert.equal(op.headers['X-Speaker'],'operator');
   assert.equal(c.latency.at(-1).handler,'operator');assert.ok(c.latency.at(-1).operator_ms>=0);assert.ok(app.talkBox(c),'after takeover the operator talks');
+  // A line the gateway forgot (restart) is closed, not left open forever.
+  {const lost=app.createCall(false,{background:true,line:{id:'gone1',name:'Perdu',status:'live',created:0}});const realFetch=context.fetch;
+    context.fetch=async(u,init)=>u.startsWith('/api/line/gone1/events')?{ok:false,status:404,json:async()=>({})}:realFetch(u,init);
+    app.pollLineEvents();await tick(20);assert.ok(lost.ended&&lost.endLabel==='Ligne perdue · à revoir'&&lost.tr.some(t=>t.source==='line_lost'),'a forgotten line is closed');context.fetch=realFetch;}
   // The phone hangs up.
   events=[{idx:1,type:'end',by:'phone'}];app.pollLineEvents();await tick(20);
   assert.ok(c.ended&&c.endLabel==='Appel terminé · à revoir'&&c.tr.some(t=>t.source==='line_end'),'hang-up closes the call');

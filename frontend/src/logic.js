@@ -14,7 +14,7 @@ const STANDBY_LINES=['Je note, restez en ligne.','Un instant, je regarde.','D’
 const AUTO_TURNS = 24, MAX_TURNS = 60, TURN_GAP_MS = 250;
 // Up to six calls handled by the AI at once; taken-over and manual calls do not count.
 // While there is room, a new call arrives every six seconds.
-const AI_CALLS = 6, ARRIVAL_MS = 6000, MANUAL_CALLS = 4;
+const AI_CALLS = 6, ARRIVAL_MS = 6000, MANUAL_CALLS = 4, LINE_CALLS = 6;
 const FACT_ORDER = ['Incident','Lieu','Personnes','Rappel','Danger'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const h = (...args) => React.createElement(...args);
@@ -271,7 +271,8 @@ class Component extends DCLogic {
   }
   createCall(scenario=false,options={}) {
     const line=options.line||null;  // a real caller on a phone (mobile line), see adoptLine()
-    if(!options.auto&&this.state.calls.filter(c=>!c.ended&&!c.auto).length>=MANUAL_CALLS){if(!line)window.alert('Quatre tests manuels maximum. Clôturez un test.');return;}
+    if(line){if(this.state.calls.filter(c=>!c.ended&&c.lineId).length>=LINE_CALLS)return;}  // phone callers have their own cap; the line keeps ringing
+    else if(!options.auto&&this.state.calls.filter(c=>!c.ended&&!c.auto&&!c.lineId).length>=MANUAL_CALLS){window.alert('Quatre tests manuels maximum. Clôturez un test.');return;}
     const sc=scenario?SCENARIOS[options.index??this.scIdx++%SCENARIOS.length]:{cat:line?'Appel entrant · ligne mobile':'Appel micro / texte',turns:[]};
     const c={id:'TEST-'+(++this.seq),n:this.seq,sc:{cat:sc.cat,place:'Lieu non renseigné',lang:'FR · test',svc:'Revue opérateur'},
       // Automatic calls ring in as "Entrant" (no score yet), as in the original mockup.
@@ -874,7 +875,9 @@ class Component extends DCLogic {
       c.linePolling=true;const t0=typeof performance!=='undefined'?performance.now():0;let again=false;
       (async()=>{try{
         // The gateway holds the request (wait=5 s) until something happens on the line: the phone's speech reaches the console at once.
-        const r=await this.lineFetch('/api/line/'+c.lineId+'/events?since='+(c.lineSeen||0)+'&wait=5');if(!r.ok)return;const d=await r.json();
+        const r=await this.lineFetch('/api/line/'+c.lineId+'/events?since='+(c.lineSeen||0)+'&wait=5');
+        if(r.status===404){if(!c.ended){this.append(c,'Système','Ligne perdue : la passerelle ne connaît plus cet appel (redémarrage).','line_lost');this.endCall(c,'Ligne perdue · à revoir');}return;}
+        if(!r.ok)return;const d=await r.json();
         again=(d.events||[]).length>0||(t0>0&&performance.now()-t0>300);  // held or fruitful: ask again right away (not a tight loop on an old gateway)
         for(const e of d.events||[]){c.lineSeen=Math.max(c.lineSeen||0,e.idx+1);
           if(e.type==='speech'||e.type==='pause')this.lineSpeech(c,e);
