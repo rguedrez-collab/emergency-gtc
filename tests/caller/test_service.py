@@ -87,6 +87,7 @@ class TurnTests(unittest.TestCase):
         def complete(prompt, temperature):
             prompts.append((prompt, temperature))
             return next(lines)
+        self.assertEqual(simulation.caller_utterance("Adresse : vingt-quatre rue des Écoles, ville : Lyon."), "Vingt-quatre rue des Écoles, Lyon.", "a person does not read a form")
         prompt = simulation.build_prompt({"incident": "Ma mère est tombée"}, "urgent", messages)
         # The caller's character is the system message; the call is chat turns (operator = user, caller = assistant as JSON), alternating, ending on the operator.
         self.assertEqual(prompt[0]["role"], "system"); self.assertIn('"incident": "Ma mère est tombée"', prompt[0]["content"])

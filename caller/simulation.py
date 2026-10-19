@@ -87,11 +87,15 @@ class SimulationError(RuntimeError):
     """The model answered, but the line is unusable: truncated, unreadable, or not a spoken line."""
 
 
+FORM_LABELS = re.compile(r"\b(?:adresse|ville|nom|prénom|étage|code|repère|âge)\s*:\s*", re.I)  # « Adresse : …, ville : … » reads like a form, not a person
+
+
 def caller_utterance(text):
-    """Spoken caller text only: no stage directions, markup or demonstration vocabulary."""
+    """Spoken caller text only: no stage directions, markup, demonstration vocabulary or form labels."""
     if not isinstance(text, str) or not 1 <= len(text.strip()) <= 700 or re.search(r"démonstration|scénario|simulation|[\[\]()*]", text, re.I):
         raise SimulationError("Réplique appelant invalide : nouvel essai nécessaire.")
-    return text.strip()
+    spoken = FORM_LABELS.sub("", text).strip()
+    return (spoken[:1].upper() + spoken[1:]) if spoken else text.strip()
 
 
 # Spoken tics a stressed caller overuses: one per call, the rest is trimmed from the line.
