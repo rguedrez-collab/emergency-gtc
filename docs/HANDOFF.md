@@ -116,7 +116,14 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   (`tools/db_report.py`).
 - Themes are classes on `<html>` (`sober`, `dark`, `glass`, plus `flat` for the first two) and a swap of the
   mockup's ThemeProvider class; speaker colours are CSS variables resolved when the waveform is drawn.
-- Dialogue steering (`backend/server.py`): the gateway keeps the intake checklist (`intake_state`) and tells the
+- Steering modes (`ORANGE_STEERING`, default `prompt`): in prompt mode the model gets `SYSTEM_FREE` (how a French
+  regulator runs a call: location, nature, the safety instruction that fits the situation, state, access, identity last)
+  plus the whole dialogue and a small `contexte` (what the operator validated, the verified address, the last replies),
+  and chooses its own question; the gateway keeps only the hard guards (`spoken_reply`, repetition/overload rewrites with
+  a neutral `FREE_FALLBACKS` line, `trim_opener`, the single announcement of validated help). The checklist below is the
+  `checklist` mode, kept for comparison and for the deterministic tests. Decided on 2026-10-19 after live calls kept
+  hitting transcription variants the hard-coded cues did not know.
+- Dialogue steering (`backend/server.py`, checklist mode): the gateway keeps the intake checklist (`intake_state`) and tells the
   model what to ask next with the reference wording (`recueil.à_demander`, from `QUESTIONS`). Relevance: the
   person's state only when a victim is described, dangers only when the incident suggests one, the number of
   people only for collective events, never the callback number; a short « non » settles the question just asked;

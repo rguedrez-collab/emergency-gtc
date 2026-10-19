@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+import os  # noqa: E402
+os.environ.setdefault("ORANGE_STEERING", "checklist")  # this suite covers the deterministic checklist; FreeSteeringTests covers the default prompt mode
 import server  # noqa: E402
 
 
@@ -1190,3 +1192,57 @@ class GatewayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreeSteeringTests(unittest.TestCase):
+    """The default mode: the model leads the call from the system prompt; the gateway keeps only the hard guards."""
+
+    def completion(self, **fields):
+        content = {"summary": "L'appelant signale un feu.", "facts": [], "signals": [], "question": "évacuation",
+                   "reply": "Sortez tout de suite, fermez la porte derrière vous. Vous êtes dehors ?", "tools": []}
+        content.update(fields)
+        return (json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(content, ensure_ascii=False)}}]}).encode(), {})
+
+    def test_default_mode_is_prompt_and_the_model_leads(self):
+        self.assertEqual(server.steering(), "checklist", "the suite pins the checklist")
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}):
+            self.assertEqual(server.steering(), "prompt")
+            with patch.object(server, "request_model") as request:
+                request.return_value = self.completion()
+                result = server.analyze({"messages": [{"role": "caller", "text": "Un incendé s'est déclaré dans mon immeuble."}]})
+            sent = json.loads(request.call_args.args[1]["messages"][1]["content"])
+            self.assertEqual(request.call_args.args[1]["messages"][0]["content"], server.SYSTEM_FREE)
+            self.assertIn("contexte", sent); self.assertNotIn("recueil", sent, "no order about what to ask")
+            self.assertEqual((result["steering"], result["question"], result["reply_source"]), ("prompt", "évacuation", "contextual_gemma"))
+            self.assertEqual(result["reply"], "Sortez tout de suite, fermez la porte derrière vous. Vous êtes dehors ?", "the model's own line, although the checklist would have asked the address first")
+
+    def test_hard_guards_still_apply(self):
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}), patch.object(server, "request_model") as request:
+            request.side_effect = [self.completion(reply="Je transmets aux pompiers, ils arrivent dans cinq minutes."),
+                                   self.completion(reply="Je reste avec vous. Vous êtes à quelle adresse ?")]
+            result = server.analyze({"messages": [{"role": "caller", "text": "Il y a le feu chez moi."}]})
+            self.assertEqual((result["reply_retries"], result["reply"]), (1, "Je reste avec vous. Vous êtes à quelle adresse ?"))
+            self.assertIn("reprise", json.loads(request.call_args.args[1]["messages"][1]["content"]), "the refused line and the instruction travel inside the message")
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}), patch.object(server, "request_model") as request:
+            request.return_value = self.completion(reply="C'est à quel étage ?")
+            result = server.analyze({"messages": [{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon."}],
+                                     "actions": [{"tool": "dispatch_fire", "status": "done", "label": None}]})
+            self.assertTrue(result["reply"].startswith("Les secours sont prévenus, ils arrivent."), "help validated by the operator is announced once")
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}), patch.object(server, "request_model") as request:
+            said = "Vous êtes à quelle adresse ? Dans quelle ville ?"
+            request.side_effect = [self.completion(reply=said), self.completion(reply=said)]
+            result = server.analyze({"messages": [{"role": "caller", "text": "Il y a le feu chez moi."}, {"role": "assistant", "text": said}, {"role": "caller", "text": "Vite, venez !"}]})
+            self.assertEqual(result["reply_source"], "checklist"); self.assertIn(result["reply"], server.FREE_FALLBACKS, "the same line twice: a neutral line, not the checklist's question")
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}), patch.object(server, "request_model") as request:
+            request.return_value = self.completion(reply="11 rue Gabriel Bertillon, d'accord. Vous êtes sorti de l'immeuble ?")
+            result = server.analyze({"messages": [{"role": "caller", "text": "Le feu, au 11 rue Gabriel Bertillon à Longjumeau."}]})
+            self.assertEqual((result["reply_retries"], result["reply_source"]), (0, "contextual_gemma"), "a short echo of the address followed by a question is fine in prompt mode")
+            self.assertEqual(json.loads(request.call_args.args[1]["messages"][1]["content"])["contexte"]["lieu_entendu"], "11 rue Gabriel Bertillon à Longjumeau")
+        with patch.dict(os.environ, {"ORANGE_STEERING": "prompt"}), patch.object(server, "request_model") as request:
+            # The town was mangled by the transcription; the model has asked the city twice: a third time is refused, the nudge names the place heard.
+            request.side_effect = [self.completion(reply="Dans quelle ville se trouve cette rue ?"), self.completion(reply="Vous êtes sorti de l'immeuble ?")]
+            result = server.analyze({"messages": [{"role": "caller", "text": "Y a du feu dans mon appartement."}, {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"},
+                                                  {"role": "caller", "text": "Onze rue Gabriel Bertillon Langumeau"}, {"role": "assistant", "text": "C'est dans quelle ville ?"},
+                                                  {"role": "caller", "text": "Oui, je suis sorti sur le palier."}]})
+            self.assertEqual((result["reply_retries"], result["reply"]), (1, "Vous êtes sorti de l'immeuble ?"))
+            self.assertIn("Langumeau", json.loads(request.call_args.args[1]["messages"][1]["content"])["reprise"]["consigne"])

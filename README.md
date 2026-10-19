@@ -141,6 +141,7 @@ to this gateway. Everything below is configured through environment variables (o
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `ORANGE_STEERING` | `prompt` | `prompt`: the AI operator leads the call from its system prompt and the whole dialogue, the gateway keeps only hard guards (no external action claimed, nothing medical, no repetition, help announced once when validated). `checklist`: the deterministic intake decides each question. |
 | `ORANGE_LLM_MODEL` | `google/gemma-4-26b-a4b-it` | Model id sent to the LLM endpoint for analysis and the AI operator's replies. |
 | `ORANGE_CALLER_MODEL` | *= `ORANGE_LLM_MODEL`* | Model id for the simulated caller (can be a different, cheaper model). |
 | `ORANGE_TTS_MODEL` | `mistralai/Voxtral-4B-TTS-2603` | Model id sent to the speech endpoint. |
