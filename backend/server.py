@@ -898,7 +898,7 @@ def intake_state(messages):
     # The first line describes the incident; its street address is set aside first (« avenue du Parc » is not a park).
     outdoors = bool(caller_lines) and bool(OUTDOOR_CUES.search(ADDRESS.sub(" ", caller_lines[0])))
     relevant = ["location", "incident", "name"] + (["landmark"] if outdoors else ["access"]) + (["evacuate"] if fire else [])
-    relevant += ["state", "age", "history"] if VICTIM_CUES.search(callers) else []  # what the crew will ask first
+    relevant += ["state", "age", "history"] if victim else []  # what the crew will ask first (a described victim, not a neighbour who does not answer)
     relevant += ["danger"] if DANGER_CUES.search(callers) else []
     relevant += ["people"] if GROUP_CUES.search(callers) else []
     missing = [k for k in INTAKE_ITEMS if k in relevant and k not in known]
