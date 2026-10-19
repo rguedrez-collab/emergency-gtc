@@ -307,12 +307,27 @@ class Component extends DCLogic {
     if(this.state.session.status==='running')this.toggleSession();
     return c;
   }
-  startSession() {
+  startSession(mode='simulation') {
     if(['running','paused'].includes(this.state.session.status))return;
     // Jobs from a stopped session finish unwinding inside the same two-job budget.
     this.cancelRecording();this.stopAudio();this.unlockAudio();this.nextArrivalAt=0;
-    const session={status:'running',launched:0,finished:0,failed:0,total:SCENARIOS.length,id:this.state.session.id+1};
+    const session={status:'running',mode,launched:0,finished:0,failed:0,total:SCENARIOS.length,id:this.state.session.id+1};
     this.setState({session,view:'floor'},()=>this.pumpSession());
+  }
+  // « Appels entrants seulement »: the simulated calls leave the console (the gateway's archive keeps them) and no arrival
+  // is scheduled any more; the phone lines stay and keep coming in. « Lancer la simulation » resumes the arrivals.
+  clearSimulation() {
+    const s=this.state.session;
+    for(const c of this.state.calls){if(c.lineId)continue;c.controllers.forEach(x=>x.abort());this.autoJobs.delete(c.id);
+      if(this.recording?.c===c)this.cancelRecording();if(this.audioCallId===c.id)this.stopAudio();}
+    const calls=this.state.calls.filter(c=>c.lineId),active=['running','paused'].includes(s.status);
+    const session=active?{...s,mode:'lignes',status:'running'}:{status:'running',mode:'lignes',launched:0,finished:0,failed:0,total:SCENARIOS.length,id:s.id+1};
+    this.nextArrivalAt=0;
+    this.setState({calls,session,view:'floor',selId:null,notice:null},()=>{if(typeof fetch==='function')this.persist();this.pumpSession();});
+  }
+  runSimulation() {
+    const s=this.state.session;if(s.mode!=='lignes')return;
+    this.setState({session:{...s,mode:'simulation',status:'running'}},()=>this.pumpSession());
   }
   toggleSession() {
     const s=this.state.session;if(!['running','paused'].includes(s.status))return;
@@ -333,7 +348,7 @@ class Component extends DCLogic {
   async pumpSession() {
     const s=this.state.session;if(s.status!=='running'||this.disposed)return;
     const now=Date.now();
-    if(s.launched<s.total&&this.aiCalls()<AI_CALLS&&now>=(this.nextArrivalAt||0)){
+    if(s.mode!=='lignes'&&s.launched<s.total&&this.aiCalls()<AI_CALLS&&now>=(this.nextArrivalAt||0)){
       const c=this.createCall(true,{auto:true,background:true,index:s.launched});
       if(c){s.launched++;this.nextArrivalAt=now+ARRIVAL_MS;this.chime();this.touch();}
     }
@@ -361,7 +376,7 @@ class Component extends DCLogic {
       }
     }
     const current=this.state.session;
-    if(current.id===s.id&&current.status==='running'&&current.launched===current.total&&!this.state.calls.some(c=>c.sessionId===s.id&&!c.ended)){
+    if(current.mode!=='lignes'&&current.id===s.id&&current.status==='running'&&current.launched===current.total&&!this.state.calls.some(c=>c.sessionId===s.id&&!c.ended)){
       this.setState({session:{...current,status:'completed'}});
     }
   }
@@ -691,11 +706,18 @@ class Component extends DCLogic {
     c.revision++;c.prefetch=null;c.takenOver=true;c.takenAt=this.state.shift;c.alerted=false;c.snoozed=false;
     this.append(c,'Système','Vous avez pris l’appel · l’IA suggère, vous répondez.','operator_takeover');
     c.audit.push({action:'takeover',at:new Date().toISOString()});if(!c.busy)this.setPhase(c,'operator');
+    this.lineNotice(c,'Un opérateur prend votre appel, restez en ligne.');
+  }
+  // A phone caller hears a short notice (AI voice, flagged standby so the phone does not take it for an answer).
+  lineNotice(c,text) {
+    if(!c.lineId||c.ended)return;
+    this.append(c,'Système','Message joué à l’appelant : « '+text+' »','line_notice');
+    Promise.resolve().then(()=>this.tts(c,text,'assistant')).then(b=>{if(!c.ended)return this.deliver(c,b,text,'assistant',true);}).catch(()=>{});
   }
   handBackCall(c) {
     if(!c||c.ended||!c.takenOver)return;this.cancelRecording();c.revision++;c.takenOver=false;if(c.phase==='blocked')c.phase='gap';
     this.append(c,'Système','Prise en charge IA rétablie.','operator_handback');
-    c.audit.push({action:'handback',at:new Date().toISOString()});
+    c.audit.push({action:'handback',at:new Date().toISOString()});this.lineNotice(c,'L’assistance reprend votre appel.');
     if(c.busy)return;
     const pending=this.dialogue(c).at(-1)?.role==='caller',s=this.state.session;
     // No running session can continue this sample: answer the caller, then close it for review.
@@ -952,16 +974,22 @@ class Component extends DCLogic {
     const words={running:'en cours',paused:'en pause',completed:'terminée',stopped:'arrêtée'};
     // Counters as figures with quiet labels, behind « Analytique »; the text content stays "n/100 arrivés · n terminés · n échecs · état" for the scripts.
     const kpi=(key,value,label)=>h('span',{key,className:'oc-kpi'},h('b',null,String(value)),label);
+    const lines=s.mode==='lignes';
     const progress=h('span',{key:'progress',id:'orange-session-progress',role:'status',className:'oc-chip oc-chip-plain oc-kpis'+(s.failed?' oc-chip-warn':'')},
-      kpi('a',`${s.launched}/${s.total}`,' arrivés · '),kpi('f',s.finished,' terminés · '),kpi('e',s.failed,' échecs · '),
+      ...(lines?[h('span',{key:'m'},'Appels entrants seulement · ')]:[kpi('a',`${s.launched}/${s.total}`,' arrivés · '),kpi('f',s.finished,' terminés · '),kpi('e',s.failed,' échecs · ')]),
       h('span',{key:'state',className:'oc-kpistate oc-kpistate-'+s.status},words[s.status]||s.status));
     // Two groups: a narrow window wraps the status group under the actions instead of truncating chips.
     // One dominant action per state (open, or pause/close); unavailable actions are hidden rather than greyed, and
     // everything secondary sits behind two toggles — « Analytique » (counters, latencies) and « Réglages » (theme, voice,
     // export, test calls) — actions on demand.
-    const actions=active?[this.button(s.status==='paused'?'Reprendre':'Pause',()=>this.toggleSession(),false,'orange-pause-session'),
-        this.button('Clore la session',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})]
+    const actions=active?(lines
+        ?[this.button('Lancer la simulation',()=>this.runSimulation(),false,'orange-run-sim','Reprend les arrivées d’appels simulés',{tone:'quiet'}),
+          this.button('Clore la session',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})]
+        :[this.button(s.status==='paused'?'Reprendre':'Pause',()=>this.toggleSession(),false,'orange-pause-session'),
+          this.button('Appels entrants seulement',()=>this.clearSimulation(),false,'orange-lines-only','Efface les appels simulés ; la console n’affiche plus que les appels entrants (téléphone)',{tone:'quiet'}),
+          this.button('Clore la session',()=>this.stopSession(),false,'orange-stop-session',undefined,{tone:'quiet'})])
       :[this.button(s.status==='idle'?'Ouvrir la session':'Nouvelle session',()=>this.startSession(),false,'orange-start-session'),
+        this.button('Appels entrants seulement',()=>this.startSession('lignes'),false,'orange-lines-only','Sans simulation : la console attend les appels passés depuis le téléphone',{tone:'quiet'}),
         this.button('Appel de test · micro',()=>this.startUserCall(),false,'orange-user-call',undefined,{tone:'quiet'})];
     const status=[...(this.state.notice?[chip('notice',this.state.notice,'warn')]:[]),services,
       this.button(this.state.analytics?'Analytique ▴':'Analytique ▾',()=>this.setState({analytics:!this.state.analytics}),false,'orange-analytics','Compteurs de la session et latences',{tone:'quiet'}),
@@ -1013,11 +1041,14 @@ class Component extends DCLogic {
         style:{'--height':'72px','--font-size':'22px','--padding':'0 44px'},
         ref:el=>{if(el)el.onclick=()=>this.startSession();}},'Ouvrir la session'),
       h('p',{'nve-text':'body sm muted'},'Les appels entrants sont pris en charge par l’assistance IA et affichés sans audio. Ouvrez un appel pour l’écouter ou le reprendre.'),
+      h('nve-button',{id:'orange-lines-only',size:'lg',ref:el=>{if(el)el.onclick=()=>this.startSession('lignes');}},'Appels entrants seulement'),
+      h('p',{'nve-text':'body sm muted'},'Sans simulation : la console attend les appels passés depuis l’application téléphone (page /appel).'),
       h('nve-button',{id:'orange-user-call',size:'lg',ref:el=>{if(el)el.onclick=()=>this.startUserCall();}},'Appel de test · microphone'),
       h('p',{'nve-text':'body sm muted'},'Vous tenez le rôle de l’appelant ; l’assistance IA vous répond.')));
   }
   arrivalLabel() {
     const s=this.state.session,wait=Math.ceil(((this.nextArrivalAt||0)-Date.now())/1000);
+    if(s.mode==='lignes')return s.status==='running'?'Appels entrants seulement · en attente d’un appel téléphonique':'Session fermée';
     return s.status==='paused'?'Session en pause':s.status!=='running'?'Session fermée':
       s.launched>=s.total?`File vide · ${s.total} appels reçus`:this.aiCalls()>=AI_CALLS?`${AI_CALLS} appels en cours · file en attente`:
       wait>0?`Prochain appel dans ${wait} s`:'Prochain appel imminent';

@@ -285,8 +285,13 @@
   }
   function typing(on) {
     clearTimeout(typingTimer); typingTimer = null; if (!on) return;
-    const c = audio(); let left = 0;
-    const step = () => { if (ended) return; if (left <= 0) { left = 3 + Math.floor(Math.random() * 6); typingTimer = setTimeout(step, 250 + Math.random() * 450); return; } keyClick(c); left--; typingTimer = setTimeout(step, 55 + Math.random() * 90); };
+    const c = audio(), since = Date.now(); let left = 0;
+    const step = () => {
+      if (ended) return;
+      if (Date.now() - since > 6000) { typingTimer = null; listening('wait', 'En attente de la réponse…'); return; }  // an operator answers in their own time
+      if (left <= 0) { left = 3 + Math.floor(Math.random() * 6); typingTimer = setTimeout(step, 250 + Math.random() * 450); return; }
+      keyClick(c); left--; typingTimer = setTimeout(step, 55 + Math.random() * 90);
+    };
     typingTimer = setTimeout(step, 300);
   }
   async function pause() {  // the utterance is over: the platform answers what it has transcribed (retried: without it the answer waits 15 s)
@@ -346,7 +351,8 @@
       }
       for (const e of d.events || []) {
         since = Math.max(since, e.idx + 1);
-        if (e.type === 'reply') {
+        if (e.type === 'reply' && e.standby) { caption('ai', e.text || '…', 'Assistance IA'); queue.push(e); playNext(); }
+        else if (e.type === 'reply') {
           const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null;
           caption(e.speaker === 'operator' ? 'op' : 'ai', e.text || '…', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
           if (rtt) fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {});

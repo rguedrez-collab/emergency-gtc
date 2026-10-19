@@ -29,8 +29,10 @@ GET  /api/phone                                               -> this contract, 
 `dialed` is optional: the number the person dialed (digits only, e.g. `15`, `17`, `18`, `112`). It is only a label the
 console shows on the call (« ligne mobile · 18 Sapeurs-Pompiers »); every number reaches the same demonstration platform.
 
-A `reply` with `standby: true` is a short wait message in the AI's voice (« Je note, restez en ligne. »), sent when the
-answer takes longer than about 3 s; play it like any reply, the real answer follows.
+A `reply` with `standby: true` is a short message in the AI's voice that is not the answer: a wait message (« Je note,
+restez en ligne. ») when the answer takes longer than about 3 s, or a notice when a human operator takes the call
+(« Un opérateur prend votre appel, restez en ligne. ») or gives it back. Play it like any reply; an operator answers in
+their own time (typed text or microphone on the console), so do not expect a reply within seconds after that notice.
 
 Events (`type`): `speech` (what the phone sent, with `size`), `claimed` (the console took the line; `status` becomes `live`),
 `reply` (`speaker`: `assistant` or `operator`, `text`, `size`; fetch the audio by `idx`), `end` (`by`: `phone` or `console`).

@@ -164,6 +164,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   Latency: the phone sends pieces after 0.8 s of silence (`X-Continue: 1`, event `more`) and a `pause` after 1.4 s; the
   console (`lineSpeech`/`lineAnswer`) transcribes pieces as they come into one growing caller line and analyses once,
   on the pause (safety net 15 s: a piece may be 25 s of speech, so an early fallback would answer mid-sentence).
+  Modes: a session is `simulation` (scripted arrivals, default) or `lignes` (« Appels entrants seulement »: no arrival,
+  the console waits for phone lines); `clearSimulation()` discards the simulated calls (the gateway archive keeps them)
+  and switches to `lignes`, `runSimulation()` resumes the arrivals. On takeover / hand-back of a line call the caller
+  hears a notice (`lineNotice`, standby-flagged reply).
   No dead air: the phone plays a keyboard ambience from the pause until a reply plays and holds replies while the caller
   speaks; the console pre-synthesises `STANDBY_LINES` after the greeting and delivers one (`X-Standby: 1`, event
   `standby`, logged as a Système line) when the analysis exceeds 2.8 s (`lineAnswer`/`standby`). `GET …/events?wait=5` long-polls (gateway holds up to 8 s); console and phone re-arm

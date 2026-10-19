@@ -81,6 +81,25 @@ const withAudio=()=>{const app=new context.TestComponent(),a=new FakeAudio();app
   assert.equal(new Set(app.state.calls.map(c=>c.sampleId)).size,100);assert.equal(turns,1200);
   assert.ok(maxLive<=context.AI_CALLS);assert.ok(app.state.calls.every(c=>c.reviewRequired));assert.equal(app.state.view,'floor');
 }
+// « Appels entrants seulement »: no simulated arrival, phone lines still come in; clearing the simulation keeps the lines.
+{
+  const app=make();app.nextScenario=async c=>{c.ti++;c.phase='gap';};app.tts=async()=>({size:10});app.deliver=async()=>{};
+  const T=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(T):el&&typeof el==='object'?T(el.children||[]):[];
+  app.startSession('lignes');await Promise.resolve();await Promise.resolve();
+  app.nextArrivalAt=0;await app.pumpSession();await app.pumpSession();
+  assert.equal(app.state.session.launched,0,'no simulated call arrives');assert.equal(app.state.session.status,'running','the session stays open, waiting for lines');
+  assert.match(app.arrivalLabel(),/Appels entrants seulement/);
+  const line=app.createCall(false,{background:true,line:{id:'l1',name:'Camille',status:'ringing',created:0}});assert.ok(line&&!line.ended,'a phone line is adopted in this mode');
+  app.runSimulation();await Promise.resolve();await Promise.resolve();app.nextArrivalAt=0;await app.pumpSession();await tick(30);assert.ok(app.state.session.launched>=1&&app.state.calls.some(c=>c.auto),'« Lancer la simulation » resumes the arrivals');
+  app.state.selId=app.state.calls.find(c=>c.auto).id;app.state.view='call';
+  app.clearSimulation();await tick(30);
+  assert.equal(JSON.stringify(app.state.calls.map(c=>c.id)),JSON.stringify([line.id]),'only the phone line remains');assert.equal(app.state.session.mode,'lignes');assert.equal(app.state.session.status,'running');
+  assert.equal(app.state.view,'floor');assert.equal(app.state.selId,null);
+  app.nextArrivalAt=0;await app.pumpSession();assert.equal(app.state.calls.length,1,'no new arrival after clearing');
+  let top=T(app.controls()).join(' ');assert.ok(top.includes('Lancer la simulation')&&!top.includes('Pause'),top);
+  app.state.session.mode='simulation';top=T(app.controls()).join(' ');assert.ok(top.includes('Appels entrants seulement')&&top.includes('Pause'),top);
+  assert.ok(JSON.stringify(make().entry()).includes('orange-lines-only'),'the entry screen offers the mode');
+}
 // Pause prevents new work; stopping archives remaining tests without dispatch.
 {
   const app=make();let turns=0;app.nextScenario=async c=>{c.ti++;turns++;};
@@ -734,7 +753,8 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   assert.equal(c.latency.at(-1).stt_ms,600,'the transcription time of both pieces is accounted');assert.ok(!c.linePending,'nothing left pending');
   // The operator takes the call: their answer goes to the phone too, and their turn is recorded without waiting for the caller.
   app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
-  const op=posts.filter(p=>p.url==='/api/line/abc123/reply').at(-1);assert.equal(op.headers['X-Speaker'],'operator');
+  assert.ok(posts.some(p=>p.url==='/api/line/abc123/reply'&&p.headers['X-Standby']==='1'&&decodeURIComponent(p.headers['X-Text']).startsWith('Un opérateur prend votre appel')),'the caller hears that an operator took the call');
+  const op=posts.filter(p=>p.url==='/api/line/abc123/reply'&&!p.headers['X-Standby']).at(-1);assert.equal(op.headers['X-Speaker'],'operator');
   assert.equal(c.latency.at(-1).handler,'operator');assert.ok(c.latency.at(-1).operator_ms>=0);assert.ok(app.talkBox(c),'after takeover the operator talks');
   // A line the gateway forgot (restart) is closed, not left open forever.
   {const lost=app.createCall(false,{background:true,line:{id:'gone1',name:'Perdu',status:'live',created:0}});const realFetch=context.fetch;
