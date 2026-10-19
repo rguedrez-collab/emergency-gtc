@@ -801,7 +801,7 @@ INTAKE_RULES = {
                 r"accident|percut\w*|renvers\w*|heurt\w*|effondr\w*|inond\w*|fuite|disparu\w*|suicid\w*|overdose|allerg\w*|piq\w*|mord\w*|électrocut\w*|câble|étincelle)",
     # Spoken addresses as the transcription renders them: « aux quatre rues Gaston Roland » (plural), a town after « à » (« à Saint-Cloud »).
     "location": r"\b(rues?|avenues?|boulevards?|bd|places?|chemins?|routes?|impasses?|allées?|quais?|cours|squares?|résidence|lieu-dit|autoroute|nationale|gare|station|métro|arrêt de)\b|\b\d{5}\b"
-                r"|(?-i:\b(?:à|À|au|aux|sur|dans|vers|près de)\s+(?:la\s|le\s|les\s|l’|l')?[A-ZÀ-Ý][\wÀ-ÿ’'-]{2,})",
+                r"|(?-i:\b(?:à|À|au|aux|sur|dans|vers|près de)\s+[A-ZÀ-Ý][\wÀ-ÿ’'-]{2,})",  # a town, not « à la PlayStation »
     "state": r"\b(respire|respirer|respiration|souffle|conscien\w*|inconscien\w*|évanoui\w*|réagit|répond (?:pas|plus)|bouge|pouls|réveille)\b",
     "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
     "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",

@@ -149,6 +149,7 @@ class ExtractionTests(unittest.TestCase):
         # A real caller on the phone: the transcription spells the number out, makes « rue » plural, says the town after « à ».
         spoken = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Chez mon fils qui joue à la PlayStation"},
                   {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "Aux quatre rues Gaston Roland, à Saint-Cloud."}]
+        self.assertEqual(server.intake_state(spoken[:2])["next"], "location", "« chez mon fils qui joue à la PlayStation » is no address")
         heard = server.intake_state(spoken)
         self.assertIn("location", heard["known"], "a spoken address is an address"); self.assertNotIn(heard["next"], ("location", "location_again"))
         self.assertIn("location", server.intake_state(spoken[:3] + [{"role": "caller", "text": "À Saint-Cloup, dans une maison"}])["known"], "a town after « à » is a location")
