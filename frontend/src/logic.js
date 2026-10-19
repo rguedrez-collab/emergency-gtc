@@ -273,7 +273,7 @@ class Component extends DCLogic {
     const sc=scenario?SCENARIOS[options.index??this.scIdx++%SCENARIOS.length]:{cat:line?'Appel entrant · ligne mobile':'Appel micro / texte',turns:[]};
     const c={id:'TEST-'+(++this.seq),n:this.seq,sc:{cat:sc.cat,place:'Lieu non renseigné',lang:'FR · test',svc:'Revue opérateur'},
       // Automatic calls ring in as "Entrant" (no score yet), as in the original mockup.
-      phone:line?'ligne mobile'+(line.name?' · '+line.name:''):fakePhone(sc.id||'test-'+this.seq),started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
+      phone:line?'ligne mobile'+(line.dialed?' · '+line.dialed+({'15':' SAMU','17':' Police','18':' Sapeurs-Pompiers'}[line.dialed]||''):'')+(line.name?' · '+line.name:''):fakePhone(sc.id||'test-'+this.seq),started:Date.now(),t:0,ti:0,scenario:sc.turns,phase:options.auto?'ringing':'gap',score:null,
       tr:[],facts:[],summary:'',takenOver:false,ended:false,endLabel:'',alerted:false,snoozed:false,why:'',suggestion:'',tools:[],
       info:[{k:'Identité',v:line?'Ligne mobile de démonstration':'Numéro fictif, deux chiffres masqués'},{k:'Adresse',v:'Non confirmée'},
         {k:'Source',v:scenario?'Scénario fictif → audio → STT':line?'Téléphone (page /appel) → passerelle → STT':'Micro / texte de test'}],
@@ -284,7 +284,7 @@ class Component extends DCLogic {
     c.callerFacts=sc.facts||null;
     // The site whose service plays this caller (voice included), and the per-turn latency log of the call.
     c.location=scenario?this.pickLocation():'local';c.latency=[];c.lastCaller=null;c.actions=[];
-    if(line){c.lineId=line.id;c.lineName=line.name||'';c.lineSeen=0;c.location='ligne';}
+    if(line){c.lineId=line.id;c.lineName=line.name||'';c.lineDialed=line.dialed||'';c.lineSeen=0;c.location='ligne';}
     // Two voice presets only: a small per-sample pitch/tempo offset keeps callers from sounding identical.
     c.voiceRate=scenario&&sc.id?0.96+((sc.family*7+sc.id.charCodeAt(sc.id.length-1))%9)/100:1;
     if(!options.background){this.cancelRecording();this.stopAudio();this.unlockAudio();}
@@ -859,7 +859,7 @@ class Component extends DCLogic {
   }
   adoptLine(l) {
     const c=this.createCall(false,{background:true,line:l});if(!c)return null;  // four manual calls at most: the line keeps ringing
-    this.append(c,'Système','Appel réel depuis un téléphone (ligne mobile de démonstration). Rien n’est transmis aux secours.','line_open');
+    this.append(c,'Système','Appel réel depuis un téléphone (ligne mobile de démonstration'+(l.dialed?', numéro composé : '+l.dialed:'')+'). Rien n’est transmis aux secours.','line_open');
     c.alerted=true;c.alertAt=this.state.shift;  // a person is waiting: straight to « À traiter »
     if(typeof fetch==='function')fetch('/api/line/'+l.id+'/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({call:c.id})}).catch(()=>{});
     this.touch();return c;

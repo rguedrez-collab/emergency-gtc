@@ -897,10 +897,11 @@ class GatewayTests(unittest.TestCase):
         from urllib.parse import quote
         server.lines.clear()
         with tempfile.TemporaryDirectory() as tmp, patch.object(server, "DB_PATH", server.Path(tmp) / "orange.db"):
-            status, body = self.request("/api/line", {"name": "Camille <b>"})
+            status, body = self.request("/api/line", {"name": "Camille <b>", "dialed": "18 ; drop"})
             self.assertEqual(status, 200, body)
             line = json.loads(body)
-            self.assertEqual(line["name"], "Camille b"); self.assertTrue(line["id"] and line["token"])
+            self.assertEqual((line["name"], line["dialed"]), ("Camille b", "18")); self.assertTrue(line["id"] and line["token"])
+            self.assertEqual(json.loads(self.request("/api/line/pending")[1])["lines"][0]["dialed"], "18", "the console sees the number dialed")
             lid, phone = line["id"], {"X-Line-Token": line["token"]}
             pending = json.loads(self.request("/api/line/pending")[1])["lines"]
             self.assertEqual((pending[0]["id"], pending[0]["status"]), (lid, "ringing")); self.assertNotIn("token", pending[0])
@@ -954,7 +955,7 @@ class GatewayTests(unittest.TestCase):
         manifest = json.loads(urlopen(Request(self.base + "/appel/manifest.webmanifest"), timeout=3).read())
         self.assertEqual((manifest["start_url"], manifest["display"], len(manifest["icons"])), ("/appel", "standalone", 2))
         page = urlopen(Request(self.base + "/appel"), timeout=3).read().decode()
-        for needle in ('rel="manifest"', "beforeinstallprompt", "serviceWorker.register", 'id="key"'):
+        for needle in ('rel="manifest"', "beforeinstallprompt", "serviceWorker.register", 'id="key"', "Sapeurs-Pompiers", "createScriptProcessor", "Maintenir pour parler"):
             self.assertIn(needle, page)
         self.assertEqual(self.request("/api/line", {}, auth=False)[0], 401, "the API itself still needs a key or the console's password")
         self.assertEqual(self.request("/appel/../server.py", auth=False)[0], 401)

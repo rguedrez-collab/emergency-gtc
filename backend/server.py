@@ -557,7 +557,7 @@ def phone_api():
     return {"service": "Orange · ligne mobile de démonstration", "demo": True, "poll_ms": 700, "max_audio_bytes": MAX_AUDIO,
             "auth": {"phone_key": bool(phone_keys()), "how": "Authorization: Bearer <clé> (ou X-Api-Key), sinon l'identifiant/mot de passe de la console"},
             "cors": cors_origins() or None,
-            "line": {"create": "POST /api/line {\"name\": \"…\"} -> {id, token, poll_ms}",
+            "line": {"create": "POST /api/line {\"name\": \"…\", \"dialed\": \"18\"} -> {id, token, poll_ms} (dialed : le numéro composé, 15/17/18/112, simple étiquette pour la console)",
                      "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max)",
                      "events": "GET /api/line/{id}/events?since=N · X-Line-Token -> {status, events:[{idx, type: speech|claimed|reply|end, speaker, text, size}]}",
                      "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée)",
@@ -570,7 +570,9 @@ lines, lines_lock = {}, threading.Lock()
 def line_create(payload):
     name = payload.get("name") if isinstance(payload, dict) else None
     name = re.sub(r"[^\w .'’\-]", "", name, flags=re.UNICODE)[:40].strip() if isinstance(name, str) else ""
-    line = {"id": secrets.token_urlsafe(6), "token": secrets.token_urlsafe(18), "name": name, "created": time.time(), "seen": time.time(),
+    dialed = payload.get("dialed") if isinstance(payload, dict) else None  # the number dialed on the phone page (15, 17, 18, 112…): a label for the console
+    dialed = re.sub(r"\D", "", dialed)[:12] if isinstance(dialed, str) else ""
+    line = {"id": secrets.token_urlsafe(6), "token": secrets.token_urlsafe(18), "name": name, "dialed": dialed, "created": time.time(), "seen": time.time(),
             "status": "ringing", "events": [], "call": None}
     with lines_lock:
         for stale in [k for k, v in lines.items() if time.time() - v["seen"] > LINE_TTL_S]:
@@ -609,14 +611,14 @@ def line_public(line, since=0):
             if e.get("audio") is not None:
                 item["size"] = len(e["audio"])
             events.append(item)
-    return {"id": line["id"], "name": line["name"], "status": line["status"], "created": line["created"], "call": line["call"], "events": events, "now": time.time()}
+    return {"id": line["id"], "name": line["name"], "dialed": line.get("dialed", ""), "status": line["status"], "created": line["created"], "call": line["call"], "events": events, "now": time.time()}
 
 
 def lines_pending():
     now = time.time()
     with lines_lock:
         live = [l for l in lines.values() if l["status"] != "ended" and now - l["seen"] <= LINE_TTL_S]
-    return {"lines": [{"id": l["id"], "name": l["name"], "status": l["status"], "created": l["created"], "call": l["call"], "events": len(l["events"])} for l in live]}
+    return {"lines": [{"id": l["id"], "name": l["name"], "dialed": l.get("dialed", ""), "status": l["status"], "created": l["created"], "call": l["call"], "events": len(l["events"])} for l in live]}
 
 
 QUESTIONS = {
@@ -1735,7 +1737,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not parts or parts == [""]:
                 payload = json.loads(body) if body else {}
                 line = line_create(payload)
-                self.reply(200, {"id": line["id"], "token": line["token"], "name": line["name"], "poll_ms": 700})
+                self.reply(200, {"id": line["id"], "token": line["token"], "name": line["name"], "dialed": line["dialed"], "poll_ms": 700})
                 return
             action = parts[1] if len(parts) == 2 else None
             token = self.line_token()

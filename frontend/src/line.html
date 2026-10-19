@@ -11,208 +11,368 @@
 <link rel="manifest" href="/appel/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/appel/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/appel/icon-192.png">
-<title>Appeler · démonstration</title>
+<title>Téléphone · démonstration</title>
 <style>
-  /* The caller's side of the demonstration: one screen, one big button. Works in Android Chrome (and as a page added to the
-     home screen, or inside a WebView app). Everything goes through the console's gateway over HTTPS: recordings up,
-     spoken replies down. Nothing here is a real emergency line. */
-  :root{color-scheme:dark;--bg:#0f1114;--panel:#15181c;--line:#2b3139;--text:#f3f4f6;--muted:#a3abb5;--orange:#ff7900;--green:#8ccf3a;--red:#e0516a;}
-  *{box-sizing:border-box;}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,"Segoe UI",Roboto,Inter,sans-serif;}
-  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
-  header{display:flex;align-items:center;gap:10px;padding:14px 18px;background:#000;border-bottom:2px solid var(--orange);}
-  header .mark{width:14px;height:14px;background:var(--orange);border-radius:3px;}
-  header b{font-size:15px;} header span{color:var(--muted);font-size:13px;margin-left:auto;}
-  main{flex:1;display:flex;flex-direction:column;gap:14px;padding:18px;max-width:560px;width:100%;margin:0 auto;}
-  .status{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);min-height:20px;}
-  .status::before{content:"";width:8px;height:8px;border-radius:50%;background:#5c6670;flex:none;}
-  .status.live::before{background:var(--green);} .status.talk::before{background:var(--orange);} .status.off::before{background:#5c6670;}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;}
-  label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;}
-  input{width:100%;padding:12px;border-radius:6px;border:1px solid var(--line);background:#0f1114;color:var(--text);font-size:16px;}
-  button{font:inherit;border-radius:6px;border:1px solid var(--line);background:#1c2026;color:var(--text);padding:12px 16px;cursor:pointer;}
-  button:disabled{opacity:.45;cursor:default;}
-  .call{width:100%;padding:18px;font-size:18px;font-weight:600;background:#000;border-color:#000;color:#fff;}
-  .talk{width:100%;padding:34px 16px;font-size:22px;font-weight:700;border-radius:999px;background:var(--orange);border-color:var(--orange);color:#111;user-select:none;-webkit-user-select:none;touch-action:none;}
-  .talk.on{background:#fff;color:#111;box-shadow:0 0 0 6px rgba(255,121,0,.35);}
-  .hang{width:100%;border-color:var(--red);color:#ff8a9a;background:transparent;}
-  .tr{display:flex;flex-direction:column;gap:10px;}
-  .turn{max-width:88%;padding:10px 14px;border-radius:14px;font-size:15px;line-height:1.45;}
-  .turn.me{align-self:flex-end;background:#2a1f14;border:1px solid #5a3a1a;border-bottom-right-radius:4px;}
-  .turn.ai{align-self:flex-start;background:#000;border:1px solid #3a424c;color:#fff;border-bottom-left-radius:4px;}
-  .turn.op{align-self:flex-start;background:#1c2026;border:1px solid #5a636e;border-bottom-left-radius:4px;}
-  .turn.sys{align-self:center;color:var(--muted);font-size:13px;font-style:italic;}
-  .meta{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);}
-  .hint{font-size:13px;color:var(--muted);line-height:1.5;}
-  .install{display:flex;flex-direction:column;gap:12px;border-color:var(--orange);} .install p{margin:0;font-size:14px;line-height:1.45;}
-  .install .row{display:flex;gap:10px;} .install .row button{flex:1;margin:0;}
-  .install button{background:var(--orange);border-color:var(--orange);color:#111;font-weight:600;white-space:nowrap;}
-  .install .later{background:transparent;border-color:var(--line);color:var(--muted);font-weight:400;}
-  footer{padding:10px 18px 16px;font-size:12px;color:var(--muted);text-align:center;}
+  /* The caller's side of the demonstration, shaped like a phone: a dialer preset to 18 (Sapeurs-Pompiers), a call screen
+     with a timer, hands-free talking (voice activity detection; the microphone is gated while the operator speaks), live
+     captions, mute, keypad, a red hang-up. Everything goes through the console's gateway over HTTPS: utterances up as WAV,
+     spoken replies down. Nothing here is a real emergency line; the dialed number only labels the demonstration. */
+  :root{color-scheme:dark;--bg:#000;--fg:#fff;--muted:#9aa0a6;--key:#1c1c1e;--keyhi:#3a3a3c;--green:#30d158;--red:#ff453a;--orange:#ff7900;--glass:rgba(255,255,255,.1);}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html{height:100%;} body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font:16px/1.3 -apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;user-select:none;-webkit-user-select:none;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
+  .screen{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;max-width:430px;width:100%;margin:0 auto;padding:10px 20px 20px;}
+  .top{display:flex;align-items:center;justify-content:space-between;min-height:36px;}
+  .pill{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#111;background:var(--orange);border-radius:999px;padding:4px 10px;font-weight:700;}
+  .icon{width:36px;height:36px;border-radius:50%;background:var(--glass);border:0;color:var(--fg);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;}
+  .icon svg{width:20px;height:20px;}
+  /* dialer */
+  .display{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;padding-bottom:18px;min-height:130px;}
+  .number{font-size:50px;font-weight:300;letter-spacing:.04em;min-height:60px;font-variant-numeric:tabular-nums;}
+  .service{font-size:17px;color:var(--muted);min-height:22px;text-align:center;} .service.err{color:#ff8a80;}
+  .keypad{display:grid;grid-template-columns:repeat(3,76px);gap:14px 26px;justify-content:center;}
+  .key{width:76px;height:76px;border-radius:50%;background:var(--key);border:0;color:var(--fg);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;}
+  .key:active{background:var(--keyhi);}
+  .key b{font-size:31px;font-weight:400;line-height:1;} .key small{font-size:10px;letter-spacing:.14em;color:var(--muted);margin-top:3px;height:12px;}
+  .keypad.small{grid-template-columns:repeat(3,62px);gap:10px 22px;margin:8px 0;} .keypad.small .key{width:62px;height:62px;} .keypad.small .key b{font-size:26px;}
+  .actions{display:grid;grid-template-columns:repeat(3,76px);gap:14px 26px;justify-content:center;margin-top:14px;align-items:center;}
+  .callbtn{grid-column:2;width:76px;height:76px;border-radius:50%;border:0;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .callbtn:disabled{opacity:.45;cursor:default;} .callbtn svg{width:36px;height:36px;}
+  .back{grid-column:3;height:76px;background:transparent;border:0;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .back:disabled{visibility:hidden;} .back svg{width:30px;height:30px;}
+  .foot{text-align:center;font-size:12px;color:var(--muted);margin:16px 0 0;line-height:1.45;}
+  @media (max-height:720px){.key{width:64px;height:64px;}.keypad{grid-template-columns:repeat(3,64px);gap:10px 24px;}.key b{font-size:27px;}.number{font-size:42px;min-height:52px;}.display{min-height:90px;padding-bottom:12px;}}
+  /* in call */
+  .callhead{display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:26px;}
+  .avatar{width:96px;height:96px;border-radius:50%;background:linear-gradient(160deg,#3a3a3c,#1c1c1e);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:600;position:relative;}
+  .avatar.ring::after{content:"";position:absolute;inset:-8px;border-radius:50%;border:2px solid rgba(48,209,88,.7);animation:ring 1.6s ease-out infinite;}
+  @keyframes ring{0%{transform:scale(.92);opacity:.9}100%{transform:scale(1.3);opacity:0}}
+  .who{font-size:28px;font-weight:500;margin-top:10px;} .num{font-size:16px;color:var(--muted);} .state{font-size:17px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:22px;}
+  .captions{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;padding:18px 4px 10px;min-height:110px;}
+  .cap{font-size:17px;line-height:1.4;color:#e5e5ea;} .cap.op{color:#fff;} .cap small{display:block;font-size:11px;color:var(--muted);margin-bottom:2px;letter-spacing:.06em;text-transform:uppercase;}
+  .listen{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted);min-height:22px;margin:4px 0 14px;}
+  .listen i{width:12px;height:12px;border-radius:50%;background:#48484a;flex:none;transition:transform .09s linear,background .2s;}
+  .listen.on i{background:var(--green);} .listen.talk i{background:var(--orange);} .listen.wait i{background:#8e8e93;} .listen.off i{background:var(--red);}
+  .controls{display:grid;grid-template-columns:repeat(3,1fr);gap:18px 10px;justify-items:center;margin:0 0 26px;}
+  .ctl{display:flex;flex-direction:column;align-items:center;gap:8px;background:transparent;border:0;color:var(--fg);font-size:13px;cursor:pointer;touch-action:manipulation;}
+  .ctl span{width:68px;height:68px;border-radius:50%;background:var(--glass);display:flex;align-items:center;justify-content:center;} .ctl span svg{width:28px;height:28px;}
+  .ctl.on span{background:#fff;color:#000;}
+  .hang{width:76px;height:76px;border-radius:50%;border:0;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto;cursor:pointer;}
+  .hang svg{width:36px;height:36px;transform:rotate(135deg);}
+  .talk{width:100%;padding:24px 16px;font-size:20px;font-weight:600;border-radius:999px;background:var(--orange);border:0;color:#111;touch-action:none;margin-bottom:18px;}
+  .talk.on{background:#fff;}
+  /* ended */
+  .endbox{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;padding-bottom:40px;}
+  .again{margin-top:26px;padding:14px 30px;border-radius:999px;border:0;background:var(--green);color:#fff;font-size:17px;font-weight:600;cursor:pointer;}
+  .ghost{margin-top:12px;padding:10px 18px;border-radius:999px;border:0;background:transparent;color:var(--muted);font-size:15px;cursor:pointer;}
+  /* settings sheet and install banner */
+  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-width:430px;margin:0 auto;background:#1c1c1e;border-radius:18px 18px 0 0;padding:18px 20px calc(26px + env(safe-area-inset-bottom));box-shadow:0 -10px 40px rgba(0,0,0,.6);}
+  .sheet h2{margin:0 0 6px;font-size:18px;font-weight:600;display:flex;justify-content:space-between;align-items:center;}
+  .sheet label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px;}
+  .sheet input{width:100%;padding:12px;border-radius:10px;border:0;background:#2c2c2e;color:#fff;font-size:16px;user-select:text;-webkit-user-select:text;}
+  .sheet .hint{font-size:13px;color:var(--muted);line-height:1.45;margin:14px 0 0;}
+  .sheet .inst{width:100%;margin-top:16px;padding:13px;border-radius:12px;border:0;background:var(--orange);color:#111;font-weight:600;font-size:16px;cursor:pointer;}
+  .banner{display:flex;align-items:center;gap:10px;background:#1c1c1e;border-radius:12px;padding:10px 12px;margin:8px 0 0;font-size:14px;}
+  .banner b{flex:1;font-weight:500;line-height:1.3;} .banner button{border:0;border-radius:8px;padding:8px 12px;font:inherit;cursor:pointer;}
+  .banner .go{background:var(--orange);color:#111;font-weight:600;} .banner .x{background:transparent;color:var(--muted);font-size:18px;padding:4px 8px;}
   [hidden]{display:none!important;}
 </style>
 </head>
 <body>
-<header><span class="mark"></span><b>Orange · Appel de démonstration</b><span id="site"></span></header>
-<main>
-  <div id="status" class="status off" role="status">Prêt à appeler</div>
-  <section id="install" class="card install" hidden>
-    <p id="installtext">Ajoutez cette application à l’écran d’accueil : elle s’ouvre en plein écran, comme une application.</p>
-    <div class="row"><button id="installbtn">Installer</button><button id="installlater" class="later" title="Ne plus proposer">Plus tard</button></div>
-  </section>
-  <section id="setup" class="card">
-    <label for="name">Prénom ou pseudonyme (facultatif, fictif)</label>
-    <input id="name" maxlength="40" autocomplete="off" placeholder="Ex. Camille">
-    <label for="key" style="margin-top:10px">Clé d’accès (fournie par l’équipe · mémorisée sur ce téléphone)</label>
-    <input id="key" autocomplete="off" placeholder="clé d’accès" inputmode="text">
-    <p class="hint">Vous allez parler à une plateforme de régulation de démonstration : une assistance IA vous répond, un opérateur peut reprendre l’appel. Aucune donnée n’est transmise à des secours réels. Ne décrivez pas une urgence réelle ici : appelez le 112.</p>
-    <button id="call" class="call">Appeler</button>
-  </section>
-  <section id="live" class="card" hidden>
-    <button id="talk" class="talk">Maintenir pour parler</button>
-    <p class="hint" id="talkhint">Maintenez le bouton, parlez, relâchez : votre phrase part vers la plateforme (30 s maximum).</p>
-    <div id="rtt" class="meta"></div>
-  </section>
-  <section id="transcript" class="tr" aria-live="polite"></section>
-  <button id="hang" class="hang" hidden>Raccrocher</button>
-</main>
-<footer>Démonstration · données fictives · pas une ligne d’urgence</footer>
+<section id="dial" class="screen">
+  <div class="top"><span class="pill">Démonstration</span><button id="gear" class="icon" type="button" aria-label="Réglages"><span data-icon="settings"></span></button></div>
+  <div id="install" class="banner" hidden><b id="installtext">Ajouter à l’écran d’accueil</b><button id="installbtn" class="go" type="button">Installer</button><button id="installlater" class="x" type="button" aria-label="Plus tard">✕</button></div>
+  <div class="display"><div id="number" class="number">18</div><div id="service" class="service">Sapeurs-Pompiers</div></div>
+  <div id="keypad" class="keypad"></div>
+  <div class="actions"><button id="call" class="callbtn" type="button" aria-label="Appeler"><span data-icon="call"></span></button><button id="back" class="back" type="button" aria-label="Effacer"><span data-icon="backspace"></span></button></div>
+  <p class="foot">Aucun appel réel : la ligne aboutit à une plateforme de régulation de démonstration (assistance IA, opérateur).<br>Urgence réelle : composez le 112 depuis votre téléphone.</p>
+</section>
+<section id="incall" class="screen" hidden>
+  <div class="top"><span class="pill">Démonstration</span><span id="quality" class="state"></span></div>
+  <div class="callhead"><div id="avatar" class="avatar">18</div><div id="who" class="who">Sapeurs-Pompiers</div><div id="num" class="num">18</div><div id="substate" class="state">Appel en cours…</div></div>
+  <div id="captions" class="captions" aria-live="polite"></div>
+  <div id="keypad2" class="keypad small" hidden></div>
+  <div id="listen" class="listen"><i></i><span id="listentext"></span></div>
+  <button id="talk" class="talk" type="button" hidden>Maintenir pour parler</button>
+  <div class="controls">
+    <button id="mute" class="ctl" type="button"><span data-icon="mic"></span>Muet</button>
+    <button id="subs" class="ctl on" type="button"><span data-icon="subtitles"></span>Sous-titres</button>
+    <button id="keys" class="ctl" type="button"><span data-icon="dialpad"></span>Clavier</button>
+  </div>
+  <button id="hang" class="hang" type="button" aria-label="Raccrocher"><span data-icon="call"></span></button>
+</section>
+<section id="ended" class="screen" hidden>
+  <div class="top"><span class="pill">Démonstration</span></div>
+  <div class="endbox"><div id="endavatar" class="avatar">18</div><div id="endwho" class="who">Sapeurs-Pompiers</div><div id="endtext" class="state">Appel terminé</div>
+    <button id="again" class="again" type="button">Rappeler</button><button id="home" class="ghost" type="button">Retour au clavier</button></div>
+</section>
+<div id="backdrop" class="backdrop" hidden></div>
+<section id="settings" class="sheet" hidden>
+  <h2>Réglages <button id="close" class="icon" type="button" aria-label="Fermer">✕</button></h2>
+  <label for="name">Prénom ou pseudonyme (facultatif, fictif)</label>
+  <input id="name" maxlength="40" autocomplete="off" placeholder="Ex. Camille">
+  <label for="key">Clé d’accès (fournie par l’équipe · mémorisée sur ce téléphone)</label>
+  <input id="key" autocomplete="off" placeholder="clé d’accès">
+  <button id="installbtn2" class="inst" type="button" hidden>Installer l’application</button>
+  <p id="installhint" class="hint" hidden>Sur iPhone : Partager, puis « Sur l’écran d’accueil » pour installer l’application.</p>
+  <p class="hint">Vous parlez à une plateforme de régulation de démonstration : une assistance IA répond, un opérateur peut reprendre l’appel. Aucune donnée n’est transmise à de vrais secours.</p>
+</section>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const status = (text, cls) => { const el = $('status'); el.textContent = text; el.className = 'status ' + cls; };
-  const say = (cls, text, meta) => { const d = document.createElement('div'); d.className = 'turn ' + cls; d.textContent = text;
-    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
-    $('transcript').appendChild(d); d.scrollIntoView({block: 'end'}); return d; };
-  $('site').textContent = location.host;
-  let line = null, since = 0, polling = null, recorder = null, chunks = [], sentAt = null, player = null, queue = [], playing = false, ended = false;
-  // The access key is remembered on this phone; without one, the browser's own login to the console (Basic) is used.
+  const ICONS = {
+    call: 'M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z',
+    backspace: 'M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z',
+    mic: 'M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z',
+    micoff: 'M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z',
+    subtitles: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z',
+    dialpad: 'M12 19c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm-6 8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
+    settings: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z'};
+  const icon = (el, name) => { el.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`; };
+  for (const el of document.querySelectorAll('[data-icon]')) icon(el, el.dataset.icon);
+  const SERVICES = {'15': 'SAMU', '17': 'Police secours', '18': 'Sapeurs-Pompiers', '112': 'Urgences · numéro européen'};
+  const KEYS = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+  const DTMF = {'1': [697, 1209], '2': [697, 1336], '3': [697, 1477], '4': [770, 1209], '5': [770, 1336], '6': [770, 1477], '7': [852, 1209], '8': [852, 1336], '9': [852, 1477], '*': [941, 1209], '0': [941, 1336], '#': [941, 1477]};
   const saved = k => { try { return localStorage.getItem('appel-' + k) || ''; } catch (e) { return ''; } };
   const keep = (k, v) => { try { localStorage.setItem('appel-' + k, v); } catch (e) {} };
-  $('key').value = saved('key'); $('name').value = $('name').value || saved('name');
-  $('key').onchange = () => keep('key', $('key').value.trim());  // kept as soon as it is typed: installing re-opens the page
-  $('name').onchange = () => keep('name', $('name').value.trim());
+  const show = id => { for (const s of ['dial', 'incall', 'ended']) $(s).hidden = s !== id; };
+  const label = n => SERVICES[n] || (n ? 'Plateforme de démonstration' : '');
+  const vibrate = pattern => { if (navigator.vibrate) try { navigator.vibrate(pattern); } catch (e) {} };
+
+  // --- Sounds: DTMF on the keys, the French ringback tone (440 Hz, 1.5 s on, 3.5 s off) while the line rings. One AudioContext, created on a tap.
+  let actx = null;
+  const audio = () => { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume().catch(() => {}); return actx; };
+  function tone(freqs, ms, gain) {
+    try {
+      const c = audio(), g = c.createGain(), t = c.currentTime, end = t + ms / 1000; g.connect(c.destination);
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.015); g.gain.setValueAtTime(gain, end - 0.03); g.gain.linearRampToValueAtTime(0, end);
+      for (const f of freqs) { const o = c.createOscillator(); o.frequency.value = f; o.connect(g); o.start(t); o.stop(end + 0.02); }
+    } catch (e) {}
+  }
+  const beep = k => { if (DTMF[k]) tone(DTMF[k], 90, 0.08); vibrate(8); };
+  let ringTimer = null;
+  function ringback(on) { clearInterval(ringTimer); ringTimer = null; if (!on) return; tone([440], 1500, 0.06); ringTimer = setInterval(() => tone([440], 1500, 0.06), 5000); }
+
+  // --- Dialer: preset to 18. The number only labels the call for the console; every number reaches the same demonstration.
+  let dialed = '18';
+  function keypad(el, onKey) {
+    for (const [k, letters] of KEYS) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'key'; b.innerHTML = `<b>${k}</b><small>${letters}</small>`;
+      b.addEventListener('pointerdown', e => { e.preventDefault(); beep(k); onKey(k); }); el.appendChild(b);
+    }
+  }
+  function render(message) { $('number').textContent = dialed; $('service').textContent = message || label(dialed); $('service').classList.toggle('err', !!message); $('back').disabled = !dialed; $('call').disabled = !dialed || !!line; }
+  keypad($('keypad'), k => { if (dialed.length < 12) { dialed += k; render(); } });
+  keypad($('keypad2'), () => {});
+  $('back').addEventListener('click', () => { dialed = dialed.slice(0, -1); render(); });
+  $('back').addEventListener('contextmenu', e => { e.preventDefault(); dialed = ''; render(); });  // long press clears
+
+  // --- Settings: a name, the access key (kept on this phone, sent as a Bearer token; without it the console's own login applies).
+  $('key').value = saved('key'); $('name').value = saved('name');
+  $('key').addEventListener('change', () => keep('key', $('key').value.trim()));
+  $('name').addEventListener('change', () => keep('name', $('name').value.trim()));
   const auth = () => { const k = $('key').value.trim(); return k ? {'Authorization': 'Bearer ' + k} : {}; };
   const headers = () => ({...auth(), 'X-Line-Token': line.token});
+  const sheet = open => { $('settings').hidden = !open; $('backdrop').hidden = !open; };
+  $('gear').addEventListener('click', () => sheet(true)); $('close').addEventListener('click', () => sheet(false)); $('backdrop').addEventListener('click', () => sheet(false));
 
-  // Installable: Chrome on Android offers « Installer » (the banner below); iOS Safari needs Partager → Sur l’écran d’accueil.
+  // --- Installable: Chrome on Android fires beforeinstallprompt (banner + button in the settings); iOS Safari needs Partager → Sur l’écran d’accueil.
   let installEvent = null;
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
-  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; if (!standalone && !saved('install-later')) $('install').hidden = false; });
-  window.addEventListener('appinstalled', () => { $('install').hidden = true; installEvent = null; });
-  if (ios && !standalone && !saved('install-later')) { $('installtext').textContent = 'Ajoutez cette page à l’écran d’accueil : Partager, puis « Sur l’écran d’accueil ».'; $('installbtn').hidden = true; $('install').hidden = false; }
-  $('installbtn').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) {} installEvent = null; $('install').hidden = true; };
-  $('installlater').onclick = () => { keep('install-later', '1'); $('install').hidden = true; };
+  function offerInstall() {
+    const fresh = !standalone && !saved('install-later');
+    if (ios && !installEvent) $('installtext').textContent = 'Ajouter à l’écran d’accueil : Partager, puis « Sur l’écran d’accueil »';
+    $('install').hidden = !(fresh && (installEvent || ios)); $('installbtn').hidden = !installEvent;
+    $('installbtn2').hidden = !installEvent || standalone; $('installhint').hidden = !(ios && !standalone);
+  }
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; offerInstall(); });
+  window.addEventListener('appinstalled', () => { installEvent = null; $('install').hidden = true; $('installbtn2').hidden = true; });
+  async function install() { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) {} installEvent = null; $('install').hidden = true; $('installbtn2').hidden = true; }
+  $('installbtn').addEventListener('click', install); $('installbtn2').addEventListener('click', install);
+  $('installlater').addEventListener('click', () => { keep('install-later', '1'); $('install').hidden = true; });
+  offerInstall();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/appel/sw.js', {scope: '/appel'}).catch(() => {});
 
-  // Audio out: replies are played one after the other; the first tap on « Appeler » unlocks playback.
-  function unlock() {
+  // --- The call
+  let line = null, since = 0, polling = null, ended = false, live = false, startedAt = null, timerId = null, sentAt = null;
+  let player = null, queue = [], playing = false, aiTalking = false, quietUntil = 0, muted = false, captionsOn = true, vad = null, recorder = null, micError = '';
+  function unlock() {  // the first tap unlocks playback of the replies (silence, as WAV)
     player = player || new Audio();
     const pcm = new ArrayBuffer(44 + 4800), v = new DataView(pcm), str = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
     str(0, 'RIFF'); v.setUint32(4, pcm.byteLength - 8, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
     v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, 4800, true);
     player.src = URL.createObjectURL(new Blob([pcm], {type: 'audio/wav'})); player.play().catch(() => {});
   }
-  async function playNext() {
-    if (playing || !queue.length || ended) return;
-    playing = true; const e = queue.shift();
+  const fmt = ms => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  const tick = () => { if (startedAt && !ended) $('substate').textContent = fmt(Date.now() - startedAt); };
+  function caption(cls, text, meta) {
+    const d = document.createElement('div'); d.className = 'cap ' + cls;
+    if (meta) { const m = document.createElement('small'); m.textContent = meta; d.appendChild(m); }
+    d.appendChild(document.createTextNode(text)); const box = $('captions'); box.appendChild(d); while (box.children.length > 3) box.removeChild(box.firstChild);
+  }
+  const listening = (mode, text) => { $('listen').className = 'listen ' + mode; $('listentext').textContent = text; };
+  const idle = () => listening(muted ? 'off' : 'on', muted ? 'Micro coupé' : 'Je vous écoute');
+  function meter(db, floor, gated) { const level = gated ? 0 : Math.max(0, Math.min(1, (db - floor) / 30)); $('listen').firstElementChild.style.transform = `scale(${(1 + level * 1.8).toFixed(2)})`; }
+
+  async function getMic() {
+    try { return await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}, video: false}); }
+    catch (e) { micError = e.name === 'NotAllowedError' ? 'Micro refusé : autorisez le microphone pour ce site' : 'Micro indisponible'; return null; }
+  }
+  async function startCall() {
+    if (!dialed || line) return;
+    $('call').disabled = true; audio(); unlock();
+    const mic = await getMic();
     try {
-      const r = await fetch(`/api/line/${line.id}/audio/${e.idx}`, {headers: headers()});
-      const blob = await r.blob(); const url = URL.createObjectURL(blob);
-      await new Promise(resolve => { player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
-    } catch (err) { /* the text is on screen anyway */ }
-    playing = false; playNext();
+      const r = await fetch('/api/line', {method: 'POST', headers: {...auth(), 'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim(), dialed})});
+      if (r.status === 401) throw Error($('key').value.trim() ? 'Clé d’accès refusée · Réglages' : 'Clé d’accès requise · Réglages');
+      if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ')');
+      line = await r.json(); since = 0; ended = false; live = false; startedAt = null; queue = []; playing = false; aiTalking = false; muted = false;
+      $('mute').classList.remove('on'); icon($('mute').firstElementChild, 'mic'); $('captions').innerHTML = ''; $('captions').hidden = !captionsOn; $('keypad2').hidden = true; $('keys').classList.remove('on');
+      $('avatar').textContent = $('endavatar').textContent = dialed.length <= 3 ? dialed : '☎'; $('who').textContent = $('endwho').textContent = label(dialed);
+      $('num').textContent = dialed; $('substate').textContent = 'Appel en cours…'; $('avatar').classList.add('ring'); $('talk').hidden = true;
+      show('incall'); ringback(true); vibrate(20);
+      if (mic) { try { startVad(mic); } catch (e) { mic.getTracks().forEach(t => t.stop()); $('talk').hidden = false; listening('wait', 'Maintenez le bouton pour parler'); } }
+      else { $('talk').hidden = false; listening('off', micError); }
+      poll();
+    } catch (err) { if (mic) mic.getTracks().forEach(t => t.stop()); line = null; render(err.message); }
   }
 
+  // Hands-free: a small voice activity detector on the microphone. An utterance starts when the level rises above the noise floor,
+  // ends after 0.9 s of silence, and leaves as a 16 kHz WAV. The microphone is gated while the line rings, while the operator
+  // speaks (no echo of the reply) and while muted. The noise floor falls at once, rises slowly, and is frozen while you speak.
+  function startVad(stream) {
+    const c = audio(), src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), sink = c.createGain();
+    sink.gain.value = 0; src.connect(proc); proc.connect(sink); sink.connect(c.destination);
+    const frameMs = 4096 / c.sampleRate * 1000, END = Math.ceil(1400 / frameMs), MAX = Math.floor(25000 / frameMs), MINV = Math.ceil(350 / frameMs), PRE = Math.ceil(300 / frameMs);
+    const v = vad = {stream, src, proc, sink, rate: c.sampleRate, floor: null, speaking: false, frames: [], pre: [], silent: 0, voiced: 0, onset: 0};
+    proc.onaudioprocess = e => {
+      if (ended || vad !== v) return;
+      const x = e.inputBuffer.getChannelData(0); let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i];
+      const db = 20 * Math.log10(Math.sqrt(s / x.length) + 1e-9);
+      if (v.floor === null) v.floor = db; else if (!v.speaking) v.floor = db < v.floor ? db : Math.min(db, v.floor + 0.3);
+      const thr = Math.max(v.floor + 9, -56), gated = !live || muted || aiTalking || Date.now() < quietUntil;
+      meter(db, v.floor, gated);
+      if (gated) { v.speaking = false; v.frames = []; v.pre = []; v.onset = 0; return; }
+      const copy = new Float32Array(x);
+      if (!v.speaking) {
+        v.pre.push(copy); if (v.pre.length > PRE) v.pre.shift();
+        if (db > thr) { if (++v.onset >= 2) { v.speaking = true; v.frames = v.pre; v.pre = []; v.silent = 0; v.voiced = v.onset; listening('talk', 'Vous parlez…'); } } else v.onset = 0;
+        return;
+      }
+      v.frames.push(copy);
+      if (db > thr) { v.silent = 0; v.voiced++; } else v.silent++;
+      if (v.silent >= END || v.frames.length >= MAX) {
+        const frames = v.frames.slice(0, v.frames.length - Math.max(0, v.silent - 3)), voiced = v.voiced;
+        v.speaking = false; v.frames = []; v.onset = 0;
+        if (voiced >= MINV) send(wav(frames, v.rate), 'speech.wav', frames.length * frameMs); else idle();
+      }
+    };
+    listening('wait', 'Appel en cours…');
+  }
+  function stopVad() { if (!vad) return; const v = vad; vad = null; try { v.proc.onaudioprocess = null; v.proc.disconnect(); v.src.disconnect(); v.sink.disconnect(); } catch (e) {} v.stream.getTracks().forEach(t => t.stop()); }
+  function wav(frames, rate) {  // mono 16 kHz PCM, averaged over each step (a cheap anti-alias)
+    const n = frames.reduce((a, f) => a + f.length, 0), all = new Float32Array(n); let o = 0; for (const f of frames) { all.set(f, o); o += f.length; }
+    const target = 16000, ratio = rate / target, len = Math.floor(n / ratio), out = new Int16Array(len), span = Math.max(1, Math.round(ratio));
+    for (let i = 0; i < len; i++) { const j = Math.floor(i * ratio); let acc = 0, cnt = 0; for (let k = 0; k < span && j + k < n; k++) { acc += all[j + k]; cnt++; } const smp = Math.max(-1, Math.min(1, acc / cnt)); out[i] = smp < 0 ? smp * 32768 : smp * 32767; }
+    const buf = new ArrayBuffer(44 + len * 2), v = new DataView(buf), str = (off, s) => [...s].forEach((ch, i) => v.setUint8(off + i, ch.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, target, true); v.setUint32(28, target * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, len * 2, true);
+    new Int16Array(buf, 44).set(out); return new Blob([buf], {type: 'audio/wav'});
+  }
+  async function send(blob, filename, durationMs) {
+    if (!line || ended) return;
+    if (blob.size < 2000 || durationMs < 350) { idle(); return; }
+    listening('wait', 'La plateforme vous écoute…');
+    try {
+      sentAt = performance.now();
+      const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': filename}, body: blob});
+      if (!r.ok) { sentAt = null; listening('off', 'Envoi impossible (' + r.status + ')'); setTimeout(() => { if (!ended) idle(); }, 2500); }
+    } catch (e) { sentAt = null; listening('off', 'Réseau indisponible'); setTimeout(() => { if (!ended) idle(); }, 2500); }
+  }
+
+  // Replies: played one after the other; while one plays the microphone is gated, then released shortly after.
+  async function playNext() {
+    if (playing || !queue.length || ended) return;
+    playing = true; aiTalking = true; const e = queue.shift();
+    listening('wait', (e.speaker === 'operator' ? 'L’opérateur' : 'L’assistance') + ' vous parle…');
+    try {
+      const r = await fetch(`/api/line/${line.id}/audio/${e.idx}`, {headers: headers()});
+      const blob = await r.blob(), url = URL.createObjectURL(blob);
+      await new Promise(resolve => { player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); }; player.src = url; player.play().catch(resolve); });
+    } catch (err) { /* the caption is on screen anyway */ }
+    playing = false; aiTalking = false; quietUntil = Date.now() + 500;
+    if (!ended) { if (queue.length) playNext(); else if (vad) idle(); else if (!$('talk').hidden) listening('wait', 'Maintenez le bouton pour parler'); }
+  }
   async function poll() {
     if (!line || ended) return;
     try {
       const r = await fetch(`/api/line/${line.id}/events?since=${since}`, {headers: headers()});
-      if (r.status === 403 || r.status === 404) { finish('Ligne fermée.'); return; }
+      if (r.status === 403 || r.status === 404) { finish('Ligne fermée'); return; }
       const d = await r.json();
-      if (d.status === 'live' && !$('live').classList.contains('seen')) { $('live').classList.add('seen'); status('En ligne · un opérateur ou l’assistance vous écoute', 'live'); }
+      if (d.status === 'live' && !live) {
+        live = true; ringback(false); $('avatar').classList.remove('ring'); startedAt = Date.now(); timerId = setInterval(tick, 500); tick(); vibrate(60);
+        if (vad) idle(); else if (!$('talk').hidden && !micError) listening('wait', 'Maintenez le bouton pour parler');
+      }
       for (const e of d.events || []) {
         since = Math.max(since, e.idx + 1);
         if (e.type === 'reply') {
           const rtt = sentAt ? Math.round(performance.now() - sentAt) : null; sentAt = null;
-          say(e.speaker === 'operator' ? 'op' : 'ai', e.text || '(réponse vocale)', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
-          if (rtt) { $('rtt').textContent = `Dernier aller-retour : ${(rtt / 1000).toFixed(1)} s (votre phrase envoyée → réponse reçue)`;
-            fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {}); }
+          caption(e.speaker === 'operator' ? 'op' : 'ai', e.text || '…', (e.speaker === 'operator' ? 'Opérateur' : 'Assistance IA') + (rtt ? ` · réponse en ${(rtt / 1000).toFixed(1)} s` : ''));
+          if (rtt) fetch(`/api/line/${line.id}/latency`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: JSON.stringify({rtt_ms: rtt, handler: e.speaker === 'operator' ? 'operator' : 'ai'})}).catch(() => {});
           queue.push(e); playNext();
-        } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel.'); return; }
+        } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel'); return; }
       }
     } catch (err) { /* network hiccup: next poll */ }
     polling = setTimeout(poll, 700);
   }
-
-  async function startCall() {
-    $('call').disabled = true;
-    try {
-      unlock();
-      keep('key', $('key').value.trim()); keep('name', $('name').value.trim());
-      const r = await fetch('/api/line', {method: 'POST', headers: {...auth(), 'Content-Type': 'application/json'}, body: JSON.stringify({name: $('name').value.trim()})});
-      if (r.status === 401) throw Error($('key').value.trim() ? 'Clé d’accès refusée : vérifiez la clé fournie par l’équipe.' : 'Accès refusé : saisissez la clé d’accès fournie par l’équipe.');
-      if (!r.ok) throw Error('La plateforme ne répond pas (' + r.status + ').');
-      line = await r.json(); since = 0; ended = false;
-      $('setup').hidden = true; $('live').hidden = false; $('hang').hidden = false;
-      status('Appel en cours · en attente de la plateforme', 'live');
-      say('sys', 'Appel établi. Maintenez « Maintenir pour parler » pour vous exprimer.');
-      poll();
-    } catch (err) { status(err.message, 'off'); $('call').disabled = false; }
+  function finish(reason) {
+    if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); ringback(false); stopVad(); talkStop();
+    if (player) try { player.pause(); } catch (e) {} queue = []; playing = false; aiTalking = false;
+    $('endtext').textContent = reason + (startedAt ? ' · ' + fmt(Date.now() - startedAt) : ''); show('ended'); vibrate([40, 60, 40]);
+    line = null; render();
+  }
+  async function hangUp() {
+    if (!line || ended) return;
+    const id = line.id, h = headers();
+    try { await fetch(`/api/line/${id}/end`, {method: 'POST', headers: {...h, 'Content-Type': 'application/json'}, body: '{}'}); } catch (err) {}
+    finish('Appel terminé');
   }
 
-  // Push-to-talk: hold to record, release to send. One recording = one utterance for the console.
+  // Fallback when hands-free is not possible: hold to record (MediaRecorder), release to send.
   async function talkStart(ev) {
     ev.preventDefault();
     if (!line || ended || recorder) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true}, video: false});
       const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-      if (!mime) { stream.getTracks().forEach(t => t.stop()); throw Error('Enregistrement non pris en charge par ce navigateur.'); }
-      chunks = []; recorder = new MediaRecorder(stream, {mimeType: mime}); recorder.mime = mime; recorder.startedAt = performance.now();
+      if (!mime) { stream.getTracks().forEach(t => t.stop()); throw Error('Enregistrement non pris en charge par ce navigateur'); }
+      const chunks = []; recorder = new MediaRecorder(stream, {mimeType: mime}); recorder.startedAt = performance.now();
       recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); send(new Blob(chunks, {type: mime}), mime, performance.now() - recorder.startedAt); recorder = null; };
-      recorder.start(); $('talk').classList.add('on'); $('talk').textContent = 'Je vous écoute… relâchez pour envoyer'; status('Vous parlez', 'talk');
+      recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); const ext = mime.includes('mp4') ? '.mp4' : mime.includes('ogg') ? '.ogg' : '.webm';
+        send(new Blob(chunks, {type: mime}), 'speech' + ext, performance.now() - recorder.startedAt); recorder = null; };
+      recorder.start(); $('talk').classList.add('on'); $('talk').textContent = 'Je vous écoute… relâchez pour envoyer'; listening('talk', 'Vous parlez…');
       recorder.timer = setTimeout(() => { if (recorder && recorder.state === 'recording') recorder.stop(); }, 30000);
-    } catch (err) {
-      status(err.name === 'NotAllowedError' ? 'Micro refusé : autorisez le microphone pour ce site.' : err.message, 'off');
-    }
+    } catch (err) { listening('off', err.name === 'NotAllowedError' ? 'Micro refusé : autorisez le microphone pour ce site' : err.message); }
   }
   function talkStop(ev) {
     if (ev) ev.preventDefault();
     if (recorder && recorder.state === 'recording') { clearTimeout(recorder.timer); recorder.stop(); }
-    $('talk').classList.remove('on'); $('talk').textContent = 'Maintenir pour parler'; if (line && !ended) status('En ligne', 'live');
-  }
-  async function send(blob, mime, durationMs) {
-    if (!line || ended) return;
-    if (blob.size < 2000 || durationMs < 400) { say('sys', 'Phrase trop courte : maintenez le bouton pendant que vous parlez.'); return; }
-    const ext = mime.includes('mp4') ? '.mp4' : mime.includes('ogg') ? '.ogg' : '.webm';
-    const bubble = say('me', `Vous · ${(durationMs / 1000).toFixed(1)} s`, 'envoi…');
-    try {
-      sentAt = performance.now();
-      const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': 'speech' + ext}, body: blob});
-      bubble.querySelector('.meta').textContent = r.ok ? 'envoyé · la plateforme écoute' : 'échec de l’envoi (' + r.status + ')';
-      if (!r.ok) sentAt = null;
-    } catch (err) { bubble.querySelector('.meta').textContent = 'réseau indisponible'; sentAt = null; }
-  }
-  function finish(reason) {
-    if (ended) return; ended = true; clearTimeout(polling); talkStop();
-    $('live').hidden = true; $('hang').hidden = true; status('Appel terminé', 'off'); say('sys', reason);
-    const again = document.createElement('button'); again.className = 'call'; again.textContent = 'Nouvel appel'; again.onclick = () => location.reload(); $('transcript').appendChild(again);
-  }
-  async function hangUp() {
-    if (!line) return;
-    try { await fetch(`/api/line/${line.id}/end`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); } catch (err) {}
-    finish('Vous avez raccroché.');
+    $('talk').classList.remove('on'); $('talk').textContent = 'Maintenir pour parler';
   }
 
-  $('call').onclick = startCall;
+  $('call').addEventListener('click', startCall);
+  $('again').addEventListener('click', () => { show('dial'); startCall(); });
+  $('home').addEventListener('click', () => show('dial'));
+  $('hang').addEventListener('click', hangUp);
+  $('mute').addEventListener('click', () => { muted = !muted; $('mute').classList.toggle('on', muted); icon($('mute').firstElementChild, muted ? 'micoff' : 'mic'); if (vad && live && !aiTalking) idle(); });
+  $('subs').addEventListener('click', () => { captionsOn = !captionsOn; $('subs').classList.toggle('on', captionsOn); $('captions').hidden = !captionsOn || !$('keypad2').hidden; });
+  $('keys').addEventListener('click', () => { const open = $('keypad2').hidden; $('keypad2').hidden = !open; $('keys').classList.toggle('on', open); $('captions').hidden = open || !captionsOn; });
   const talk = $('talk');
   talk.addEventListener('pointerdown', talkStart); talk.addEventListener('pointerup', talkStop); talk.addEventListener('pointercancel', talkStop); talk.addEventListener('pointerleave', e => { if (recorder) talkStop(e); });
   talk.addEventListener('contextmenu', e => e.preventDefault());
-  $('hang').onclick = hangUp;
   window.addEventListener('pagehide', () => { if (line && !ended) fetch(`/api/line/${line.id}/end`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}', keepalive: true}).catch(() => {}); });
+  render();
 })();
 </script>
 </body>

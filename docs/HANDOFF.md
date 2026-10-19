@@ -158,7 +158,9 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   `GET /api/phone` describes the contract. `tools/phone_client.html` is a standalone test client (any host, WebView, Capacitor).
   `/appel` is installable (PWA): `/appel/manifest.webmanifest`, `/appel/sw.js` (shell cache, never `/api/`), icons drawn in
   code (`app_icon`), all served without authentication (`PUBLIC_APP_PATHS`); the page keeps the access key in localStorage
-  and shows an install banner (`beforeinstallprompt`, iOS hint).
+  and shows an install banner (`beforeinstallprompt`, iOS hint). The page looks like a phone (dialer preset to 18, call
+  screen, timer, captions): hands-free with a small VAD (`startVad`, ScriptProcessorNode, 16 kHz WAV, half-duplex while a
+  reply plays), hold-to-talk fallback. `POST /api/line` accepts `dialed` (digits), shown on the console's call row.
 - Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
   `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
   off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration

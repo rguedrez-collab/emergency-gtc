@@ -16,7 +16,7 @@ Send the key as `Authorization: Bearer <key>` or `X-Api-Key: <key>`. Keys never 
 ## The flow
 
 ```
-POST /api/line  {"name": "Camille"}                          -> {"id": "…", "token": "…", "poll_ms": 700}
+POST /api/line  {"name": "Camille", "dialed": "18"}          -> {"id": "…", "token": "…", "dialed": "18", "poll_ms": 700}
 GET  /api/line/{id}/events?since=0   (X-Line-Token)           -> {"status": "ringing|live|ended", "events": [...], "now": …}
 POST /api/line/{id}/speech           (X-Line-Token, X-Filename: speech.webm, body = audio bytes)
 GET  /api/line/{id}/audio/{idx}      (X-Line-Token)           -> audio/wav 24 kHz mono (a reply, by event index)
@@ -24,6 +24,9 @@ POST /api/line/{id}/latency          (X-Line-Token) {"rtt_ms": 2300, "handler": 
 POST /api/line/{id}/end              (X-Line-Token)
 GET  /api/phone                                               -> this contract, as JSON
 ```
+
+`dialed` is optional: the number the person dialed (digits only, e.g. `15`, `17`, `18`, `112`). It is only a label the
+console shows on the call (« ligne mobile · 18 Sapeurs-Pompiers »); every number reaches the same demonstration platform.
 
 Events (`type`): `speech` (what the phone sent, with `size`), `claimed` (the console took the line; `status` becomes `live`),
 `reply` (`speaker`: `assistant` or `operator`, `text`, `size`; fetch the audio by `idx`), `end` (`by`: `phone` or `console`).
@@ -38,9 +41,15 @@ Accepted audio for `speech`: one utterance, 30 s at most, 15 MB at most, contain
 
 `/appel` is an installable web app (manifest, service worker, icons served by the gateway, all public): open
 `https://<console-host>/appel` on the phone. Chrome on Android shows a banner « Installer » (or the browser's own
-« Ajouter à l'écran d'accueil »); iOS Safari: Partager → Sur l'écran d'accueil. The app opens full screen, asks for
-the access key once (remembered on the phone) and then places calls like any other client of this API. Without a key it
-falls back to the console's own login.
+« Ajouter à l'écran d'accueil »); iOS Safari: Partager → Sur l'écran d'accueil. The app opens full screen; the access key
+goes in Réglages (gear icon) once and is remembered on the phone. Without a key it falls back to the console's own login.
+
+The page is shaped like a phone: a dialer preset to `18` (Sapeurs-Pompiers; `15`, `17`, `112` are labelled too, any
+number reaches the demonstration), DTMF keys, ringback tone while the console has not picked the line up, then a call
+screen with a timer. Talking is hands-free: a voice activity detector on the microphone cuts utterances on 0.9 s of
+silence and sends them as 16 kHz WAV; the microphone is gated while a reply is playing (no echo), while ringing and while
+muted. Live captions show the operator's words and the reply delay; « Muet », « Sous-titres » and « Clavier » behave as
+on a phone; the red button hangs up. If hands-free is impossible (no Web Audio), a hold-to-talk button appears instead.
 
 ## Minimal clients
 
