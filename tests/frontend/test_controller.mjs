@@ -700,7 +700,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   const posts=[];let events=[{idx:0,type:'speech',filename:'speech.webm'}];
   context.fetch=async(url,init)=>{const u=String(url);
     if(init?.method==='POST'){posts.push({url:u,headers:init.headers||{},body:init.body});return {ok:true,status:200,json:async()=>({})};}
-    if(u==='/api/line/pending')return {ok:true,json:async()=>({lines:[{id:'abc123',name:'Camille',status:'ringing',created:0}]})};
+    if(u==='/api/line/pending')return {ok:true,json:async()=>({lines:[{id:'abc123',name:'Camille',dialed:'18',status:'ringing',created:0}]})};
     if(u.startsWith('/api/line/abc123/events')){const e=events;events=[];return {ok:true,json:async()=>({status:'live',events:e})};}
     if(u==='/api/line/abc123/audio/0')return {ok:true,blob:async()=>({text:'Allô, il y a eu un accident devant chez moi, quelqu’un est blessé.'})};
     return {ok:true,json:async()=>({sites:[]})};};
@@ -708,7 +708,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.tts=async(call,text,speaker='assistant')=>{call.lastTts={ms:700,speaker};return {text,speaker,size:10};};
   app.transcribe=async(call,blob)=>{call.lastStt={ms:300};return blob.text;};app.play=async()=>{};
   await app.pollLines();const c=app.state.calls.find(x=>x.lineId==='abc123');
-  assert.ok(c,'the ringing line became a call');assert.equal(c.sc.cat,'Appel entrant · ligne mobile');assert.equal(c.phone,'ligne mobile · Camille');assert.equal(c.location,'ligne');
+  assert.ok(c,'the ringing line became a call');assert.equal(c.sc.cat,'Appel entrant · ligne mobile');assert.equal(c.phone,'ligne mobile · 18 Sapeurs-Pompiers · Camille','the number dialed on the phone labels the call');assert.equal(c.location,'ligne');
   assert.ok(c.alerted,'a waiting person goes straight to « À traiter »');assert.ok(posts.some(p=>p.url==='/api/line/abc123/claim'&&p.body.includes(c.id)));
   assert.equal(app.decorate(c).category,'Appel entrant · ligne mobile','named from the start, not « Nouvel appel · évaluation en cours »');
   await idle(c);const greeting=posts.find(p=>p.url==='/api/line/abc123/reply');
