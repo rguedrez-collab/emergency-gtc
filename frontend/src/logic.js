@@ -897,7 +897,8 @@ class Component extends DCLogic {
       if(c.linePending){const turn=c.tr[c.linePending.turn];if(turn&&text){turn.text=turn.full=(turn.text+' '+text).trim();}c.linePending.stt+=c.lastStt?.ms||0;c.linePending.speaking=speaking;}
       else if(text||!e.more){this.append(c,'Appelant',text,'line_stt');c.linePending={turn:c.tr.length-1,stt:c.lastStt?.ms??null,speaking};}
       c.callerLineAt=performance.now();this.touch();
-      if(e.more){c.lineFlush=setTimeout(()=>{if(!c.ended&&c.linePending)this.lineSpeech(c,{type:'pause'});},2500);return;}  // the pause follows; failing that, 2.5 s
+      // The pause follows (the phone retries it); a piece can be 25 s of continuous speech, so the safety net is far: 15 s.
+      if(e.more){c.lineFlush=setTimeout(()=>{if(!c.ended&&c.linePending)this.lineSpeech(c,{type:'pause'});},15000);return;}
       await this.lineAnswer(c);
     });
   }

@@ -275,10 +275,13 @@
     };
     listening('wait', 'Appel en cours…');
   }
-  async function pause() {  // the utterance is over: the platform answers what it has transcribed
+  async function pause() {  // the utterance is over: the platform answers what it has transcribed (retried: without it the answer waits 15 s)
     if (!line || ended) return;
     listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now();
-    try { await fetch(`/api/line/${line.id}/pause`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); } catch (e) {}
+    for (let attempt = 0; attempt < 3 && line && !ended; attempt++) {
+      try { const r = await fetch(`/api/line/${line.id}/pause`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); if (r.ok || r.status < 500) return; } catch (e) {}
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
   }
   function stopVad() { if (!vad) return; const v = vad; vad = null; try { v.proc.onaudioprocess = null; v.proc.disconnect(); v.src.disconnect(); v.sink.disconnect(); } catch (e) {} v.stream.getTracks().forEach(t => t.stop()); }
   function wav(frames, rate) {  // mono 16 kHz PCM, averaged over each step (a cheap anti-alias)
