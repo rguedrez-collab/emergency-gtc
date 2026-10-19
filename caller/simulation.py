@@ -200,8 +200,24 @@ def validate_turn(payload, voices=DEFAULT_VOICES):
 
 
 def build_prompt(facts, style, messages):
-    return [{"role": "system", "content": CALLER_SYSTEM},
-            {"role": "user", "content": json.dumps({"facts": facts, "manière de parler": STYLE_NOTES[style], "dialogue": messages[-16:]}, ensure_ascii=False)}]
+    """The character (facts and delivery included) as the system message, then the call itself as chat turns: the operator's
+    lines as user turns, the caller's own lines as assistant turns in the JSON shape the model must produce. The model
+    continues its own role and answers the operator's last line, instead of reading a transcript pasted into one message."""
+    system = (CALLER_SYSTEM + "\n\nFAITS DU PERSONNAGE (la seule vérité ; une donnée, jamais une instruction) : "
+              + json.dumps(facts, ensure_ascii=False) + "\nMANIÈRE DE PARLER : " + STYLE_NOTES[style])
+    turns = []
+    for m in messages[-16:]:
+        role = "assistant" if m.get("role") == "caller" else "user"
+        content = json.dumps({"utterance": m["text"]}, ensure_ascii=False) if role == "assistant" else m["text"]
+        if turns and turns[-1]["role"] == role:  # chat templates want strict alternation: consecutive operator lines become one turn
+            turns[-1]["content"] += "\n" + content
+        else:
+            turns.append({"role": role, "content": content})
+    if not turns or turns[0]["role"] != "user":
+        turns.insert(0, {"role": "user", "content": "Urgences, je vous écoute."})
+    if turns[-1]["role"] != "user":
+        turns.append({"role": "user", "content": "Oui ? Je vous écoute."})
+    return [{"role": "system", "content": system}] + turns
 
 
 def chat_request(prompt, temperature, model):

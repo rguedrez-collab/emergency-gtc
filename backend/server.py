@@ -854,7 +854,8 @@ OUTDOOR_CUES = re.compile(r"\b(canal|rivière|fleuve|lac|étang|plage|mer|parc|j
 NEGATIVE = re.compile(r"^\s*(?:non|nan|rien|aucune?|pas de|y a pas|il n'y a pas|je (?:ne )?sais pas|je (?:ne )?connais pas|aucune idée|personne)\b", re.I)
 PLEA = re.compile(r"dépêchez|\bvite\b|aidez|s'il vous pla[iî]t|secours|venez", re.I)  # a plea is not an answer
 SETTLED_BY_ANSWER = ("state", "danger", "people", "access", "age", "history", "name", "evacuate")  # a short answer closes these; never the address
-STRONG = re.compile(r"ne respire plus|plus de respiration|y a plus rien|arrêt cardiaque|respire pas du tout|ne respire pas", re.I)
+STRONG = re.compile(r"ne respire plus|plus de respiration|y a plus rien|arrêt cardiaque|respire pas du tout|ne respire pas"
+                    r"|(?:la |sa )?poitrine (?:ne )?(?:bouge|se soulève) (?:pas|plus)|(?:ne )?vois rien bouger|rien ne bouge|pas de souffle", re.I)  # what a caller says after « regardez sa poitrine »
 CALL_US = re.compile(r"(?:appelez|appeler|prévenez|contactez|joignez|alertez)\s+(?:vous[- ]même\s+)?(?:le|les|la|l[’'])?\s*(?:secours|samu|smur|pompiers|police|urgences|15|18|112)\b|composez le|faites le (?:15|18|112)\b", re.I)
 GROUP_CUES = re.compile(r"\b(accident|voitures?|explos\w*|incendie|feu|fumée|effondr\w*|inond\w*|bagarre|foule|manifestation|plusieurs|des gens|des personnes|passagers?|élèves|enfants|"
                         r"dans le (?:bus|car|train|tram|métro)|(?:bus|car|camion|train|tram) (?:a|s'est|est|vient))\b", re.I)
@@ -907,6 +908,10 @@ def intake_state(messages):
         step = next((x for x in OBSERVE_STEPS if not times_asked[x]), None)
         if step and (step == "breathing" or UNSURE_BREATHING.search(last_caller)):
             next_item = step
+    # Someone unresponsive and nothing said about breathing yet: one observation before any administrative question.
+    if critical and not STRONG.search(callers) and "location" in known and not re.search(r"respir", callers, re.I) \
+            and not times_asked["breathing"] and next_item not in ("location", "location_again", "state", "danger", "response_check", "evacuate", "others_inside"):
+        next_item = "breathing"
     # The person just stopped breathing or responding: no administrative question this turn, the model stays on the situation.
     if STRONG.search(last_caller):
         next_item = "handoff"
@@ -1545,12 +1550,16 @@ def analyze(payload):
     if state["next"] in ("location", "location_again") and (not ADDRESS_ASK.search(reply) or ROOM_ASK.search(reply)):
         reply, reply_source = QUESTIONS[state["next"]], "checklist"
     reply = trim_opener(reply, previous)
-    # Help validated by the operator is announced once, plainly, when the model did not do it.
-    if dispatched and not announced and not ANNOUNCED.search(reply):
-        reply = "Les secours sont prévenus, ils arrivent. " + reply
+    prefix = []
     # Critical situation: the safety instruction is said once, before anything else.
     if state["critical"] and not SAFETY_HINT.search(reply) and not any(SAFETY_HINT.search(p) for p in previous):
-        reply = SAFETY_LINE + " " + reply
+        prefix.append(SAFETY_LINE)
+    # Help validated by the operator is announced once, plainly, when the model did not do it.
+    if dispatched and not announced and not ANNOUNCED.search(reply):
+        prefix.append("Les secours sont prévenus, ils arrivent.")
+    if prefix:  # an acknowledgement after a prefix is a stitch (« …ne la déplacez pas. Je comprends. Vous êtes… »): the prefix replaces it
+        rest = OPENERS.sub("", reply, count=1).strip()
+        reply = " ".join(prefix + [(rest[:1].upper() + rest[1:]) if rest else reply])
     if verdicts and f5_config()["scan_response"]:
         reply, verdict = guard_text(reply, "response")
         verdicts.append(verdict)

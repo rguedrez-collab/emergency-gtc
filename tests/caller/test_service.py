@@ -44,8 +44,9 @@ class TurnTests(unittest.TestCase):
             self.assertIsInstance(result["timings"][key], int); self.assertGreaterEqual(result["timings"][key], 0)
         llm, tts = calls
         self.assertEqual(llm[0], "http://llm.invalid/v1/chat/completions")
-        self.assertEqual((llm[1]["model"], llm[1]["messages"][0]["content"], llm[1]["response_format"]), ("org/site-llm", simulation.CALLER_SYSTEM, {"type": "json_object"}))
-        self.assertIn(simulation.STYLE_NOTES["rushed"], llm[1]["messages"][1]["content"])
+        self.assertEqual((llm[1]["model"], llm[1]["response_format"]), ("org/site-llm", {"type": "json_object"}))
+        self.assertTrue(llm[1]["messages"][0]["content"].startswith(simulation.CALLER_SYSTEM), "the character prompt opens the system message")
+        self.assertIn(simulation.STYLE_NOTES["rushed"], llm[1]["messages"][0]["content"], "the delivery profile and the facts live in the system message")
         self.assertEqual(tts[0], "http://tts.invalid/v1/audio/speech")
         self.assertEqual(tts[1], {"input": result["text"], "model": "org/site-tts", "response_format": "wav", "language": "fr", "voice": "fr_male_fearful", "speed": 1.16},
                          "a rushed male caller speaks with the fearful variant")
@@ -86,7 +87,13 @@ class TurnTests(unittest.TestCase):
         def complete(prompt, temperature):
             prompts.append((prompt, temperature))
             return next(lines)
-        text, retries = simulation.generate(simulation.build_prompt({"incident": "Ma mère est tombée"}, "urgent", messages), complete, messages=messages)
+        prompt = simulation.build_prompt({"incident": "Ma mère est tombée"}, "urgent", messages)
+        # The caller's character is the system message; the call is chat turns (operator = user, caller = assistant as JSON), alternating, ending on the operator.
+        self.assertEqual(prompt[0]["role"], "system"); self.assertIn('"incident": "Ma mère est tombée"', prompt[0]["content"])
+        roles = [m["role"] for m in prompt[1:]]; self.assertEqual(roles[0], "user"); self.assertEqual(roles[-1], "user")
+        self.assertTrue(all(a != b for a, b in zip(roles, roles[1:])), roles)
+        self.assertTrue(all(json.loads(m["content"])["utterance"] for m in prompt[1:] if m["role"] == "assistant"))
+        text, retries = simulation.generate(prompt, complete, messages=messages)
         self.assertEqual((text, retries), ("Non, non, rien de ça !", 1))
         self.assertTrue(prompts[1][0][-1]["content"].startswith(simulation.REPEAT_NUDGE)); self.assertEqual(prompts[1][1], simulation.TEMPERATURES[1])
         self.assertIn("Il y a un danger autour, du feu, du gaz ?", prompts[1][0][-1]["content"], "the nudge quotes the operator's question")

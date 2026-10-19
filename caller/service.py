@@ -106,9 +106,11 @@ FAKE_LINES = ["Ça fait {elapsed}, à peu près. Je suis vraiment inquiet.", "Je
               "Vous m'entendez toujours ? S'il vous plaît, restez avec moi."]
 
 
-def fake_complete(prompt, temperature, cfg, turn=[0]):
-    body = json.loads(prompt[1]["content"])
-    facts, dialogue = body["facts"], body.get("dialogue", [])
+def fake_complete(prompt, temperature, cfg, facts=None, dialogue=None, turn=[0]):
+    if facts is None:  # called with the prompt alone: the character's facts sit in the system message
+        head = prompt[0]["content"]
+        facts = json.loads(head[head.index("FAITS DU PERSONNAGE") + len("FAITS DU PERSONNAGE"):].split(" : ", 1)[1].split("\nMANIÈRE DE PARLER")[0])
+    dialogue = dialogue if dialogue is not None else [{"role": "assistant", "text": m["content"]} for m in prompt[1:] if m["role"] == "user"]
     asked = next((m["text"] for m in reversed(dialogue) if m["role"] in ("assistant", "operator")), "").lower()
     turn[0] += 1
     line = next((answer for pattern, answer in FAKE_ANSWERS if re.search(pattern, asked)), FAKE_LINES[turn[0] % len(FAKE_LINES)])
@@ -127,7 +129,7 @@ def turn(payload, cfg):
     data = simulation.validate_turn(payload, cfg["voices"])
     start = time.monotonic()
     prompt = simulation.build_prompt(data["facts"], data["style"], data["messages"])
-    completer = (lambda p, t: fake_complete(p, t, cfg)) if cfg["fake"] else (lambda p, t: complete(p, t, cfg))
+    completer = (lambda p, t: fake_complete(p, t, cfg, data["facts"], data["messages"])) if cfg["fake"] else (lambda p, t: complete(p, t, cfg))
     text, retries = simulation.generate(prompt, completer, messages=data["messages"])
     llm_done = time.monotonic()
     audio = fake_speak(text, data["voice"], data["style"], cfg) if cfg["fake"] else speak(text, data["voice"], data["style"], cfg, data.get("emotion", True))

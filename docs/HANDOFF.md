@@ -172,6 +172,15 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   Nemotron through the platform's gateway, so it is unset while Gemma is the default and the guardrail chip is hidden;
   putting the variable back (and the Nemotron router) reverts in one rollout. Replay before switching:
   `ORANGE_GEMMA_URL=… ORANGE_LLM_MODEL=… replay_local.py` (private tools).
+  Prompts: the AI operator receives the system prompt plus one user message holding the whole dialogue (`test_dialogue`,
+  the opening and the last 59 turns within 14k characters) and the checklist (`recueil`), and answers in JSON; that
+  shape keeps the F5 scan on one message. The simulated caller (`caller/simulation.py` `build_prompt`) receives its
+  character, facts and delivery as the system message and the call as real chat turns (operator = user, its own lines =
+  assistant in the same JSON shape), strictly alternating; it answers the operator's last line instead of reading a
+  transcript, which removed the fact-dumping and off-question answers seen with Nemotron.
+  Steering added for unresponsive people: one breathing observation (`breathing`) right after the address, before floor,
+  age or name; « sa poitrine ne bouge pas » counts as a strong escalation; a safety or dispatch prefix replaces a stock
+  opener instead of being stitched in front of it.
   Spoken addresses: the intake's `location` rule accepts the transcription's plurals (« aux quatre rues … ») and a town
   after « à/au/dans/sur » (capitalised); `ADDRESS`/`STREET_WORD` accept plurals and `digits_from_words` singularises
   after the house number, so the geocoder sees « 4 rue … ». An unintelligible piece (gateway 422) is ignored by

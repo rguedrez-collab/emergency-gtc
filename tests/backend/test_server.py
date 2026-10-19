@@ -168,6 +168,12 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(server.intake_state(inside)["next"], "others_inside")
         self.assertEqual(server.trim_opener("D'accord. Vous êtes à quelle adresse ?", ["Je comprends. Dites-moi."]), "Vous êtes à quelle adresse ?")
         self.assertEqual(server.trim_opener("D'accord. Vous êtes à quelle adresse ?", ["Il y a combien de personnes ?"]), "D'accord. Vous êtes à quelle adresse ?")
+        # Someone who does not respond: once the address is known, one breathing observation comes before floor, age or name.
+        down = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Il faut venir vite. Mon collègue vient de tomber dans le couloir et ne me répond pas."},
+                {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "12 rue des Lilas à Paris."}]
+        self.assertEqual(server.intake_state(down)["next"], "breathing")
+        seen = down + [{"role": "assistant", "text": server.QUESTIONS["breathing"]}, {"role": "caller", "text": "Oui, elle se soulève un peu, c'est lent."}]
+        self.assertNotIn(server.intake_state(seen)["next"], ("breathing",), "asked once")
         early = server.intake_state(messages[:4])  # « une situation critique » says nothing about what happened (asked once already, it comes back after
         self.assertEqual((early["missing"], early["next"]), (["incident", "access", "name"], "access"))  # the others) and describes no victim: no state/age question yet
         # An item asked twice without an answer is dropped: the call moves on instead of nagging. A road accident makes
@@ -179,7 +185,9 @@ class ExtractionTests(unittest.TestCase):
         self.assertNotEqual(server.intake_state(nagging)["next"], "danger")
         self.assertEqual(server.intake_state(nagging)["next"], "state")
         self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois, il est inconscient, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "evacuate", "everything is known but nobody said they are out of the fire")
-        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois dehors, il est inconscient, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "handoff")
+        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois dehors, il est inconscient, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "breathing", "out of the fire, everything known, but the person is unconscious: look at the breathing before anything else")
+        self.assertEqual(server.intake_state([{"role": "caller", "text": "Il y a le feu au 8 cours Gambetta à Lyon, nous sommes trois dehors, il est inconscient mais il respire, porte 12, il a 70 ans, il est cardiaque, je m'appelle Nora"}])["next"], "handoff")
+        self.assertTrue(server.STRONG.search("Je regarde... je ne vois rien bouger, sa poitrine bouge pas."), "the answer to « regardez sa poitrine » escalates")
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
         said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"
@@ -380,7 +388,7 @@ class ExtractionTests(unittest.TestCase):
         facts = {"incident": "Fumée dans l'escalier"}
         with patch.object(server, "request_model", return_value=self.completion({"utterance": "Euh… vite, il y a de la fumée !"})) as request:
             server.caller_turn({"facts": facts, "style": "restrained", "messages": self.messages})
-        self.assertIn(server.STYLE_NOTES["restrained"], request.call_args.args[1]["messages"][1]["content"])
+        self.assertIn(server.STYLE_NOTES["restrained"], request.call_args.args[1]["messages"][0]["content"])  # the delivery lives in the system message now
         with self.assertRaises(ValueError):
             server.caller_turn({"facts": facts, "style": "shouting", "messages": self.messages})
 
