@@ -166,6 +166,11 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   sound, ○ answer; the gateway relays the phone's latency report as a `latency` line event, attached to the turn in
   `pollLineEvents`), a headline (`firstSound`: end of speech → first sound on the phone, median) and a table with the
   numbers of every turn (`numbersTable`); one bar per call (median first sound) with the numbers listed under it.
+  Second LLM: the platform's Dynamo can serve another OpenAI-compatible model next to Nemotron (done for Gemma 4 26B-A4B
+  NVFP4 with the vLLM backend, one Blackwell GPU, ~1 s per 100-token JSON completion). The gateway targets whichever
+  endpoint `ORANGE_GEMMA_URL` / `ORANGE_LLM_MODEL` name; the guardrail path (`ORANGE_LLM_URL`, the F5 tee proxy) keeps
+  its own upstream, so a model switch there is the platform team's change. Replay before switching:
+  `ORANGE_GEMMA_URL=… ORANGE_LLM_MODEL=… replay_local.py` (private tools).
   Spoken addresses: the intake's `location` rule accepts the transcription's plurals (« aux quatre rues … ») and a town
   after « à/au/dans/sur » (capitalised); `ADDRESS`/`STREET_WORD` accept plurals and `digits_from_words` singularises
   after the house number, so the geocoder sees « 4 rue … ». An unintelligible piece (gateway 422) is ignored by
