@@ -799,9 +799,10 @@ def same_line(a, b):
 # being trusted to remember. Caller words cover an item; AI questions mark it as asked; critical signals reorder.
 INTAKE_ITEMS = ("location", "incident", "evacuate", "state", "danger", "people", "access", "landmark", "age", "history", "name", "callback")
 # A fire or smoke: getting everyone out comes right after the address; « people » then means « anyone still inside ».
-FIRE_CUES = re.compile(r"\b(feu|flammes?|fumée|incendie|brûle|ça brûle|ça crame)\b", re.I)
+FIRE_CUES = re.compile(r"\b(feu|flammes?|fumée|incend\w*|brûl\w*|ça crame|en feu|prend feu)\b", re.I)  # incend\w*: the transcription writes « incendé »
 OUT_CUES = re.compile(r"\b(sortie?s?|dehors|à l'extérieur|sur le palier|dans la rue|en bas|évacué\w*|on est tous là|tout le monde est sorti)\b", re.I)
-OTHERS_INSIDE = re.compile(r"encore (?:à l'intérieur|dedans|chez (?:eux|elle|lui)|là-haut|en haut|dans l'appartement|dans l'immeuble)|(?:n'est|sont|est) pas sortie?s?|coincée?s? (?:à l'intérieur|dedans|en haut)", re.I)
+OTHERS_INSIDE = re.compile(r"encore (?:à l'intérieur|dedans|chez (?:eux|elle|lui)|là-haut|en haut|dans l'appartement|dans l'immeuble)|(?:n'est|sont|est) pas sortie?s?|coincée?s? (?:à l'intérieur|dedans|en haut)"
+                           r"|(?:sont|est|être|encore|restée?s?) (?:coincé|bloqué|piégé|prisonni)\w*|(?:ne peuvent|ne peut|peuvent|peut) (?:pas|plus) sortir", re.I)
 INSIDE_OUTSIDE = re.compile(r"(?:tout le monde|personne|il n'y a personne|y a personne)\s+(?:n'est |est |n'est pas )?(?:sorti\w*|dehors|à l'intérieur|dedans|resté\w*)|il reste (?:quelqu'un|personne|mon|ma|mes|des|un|une)|encore (?:dedans|à l'intérieur|chez)|personne d'autre|seule? (?:dedans|à l'intérieur|chez)"
                             r"|(?:nous sommes|on est)\s+(?:\w+\s+){0,2}?(?:tous\s+)?(?:dehors|sortie?s|à l'extérieur|en bas|sur le palier)", re.I)
 NO_ANSWER = re.compile(r"(?:me |nous |lui |leur )?(?:répond|réagit) (?:pas|plus)", re.I)
@@ -809,13 +810,13 @@ KNOCKING = re.compile(r"\b(?:je |j')?(?:frappe|frappais|tape|tapais|cogne|cognai
 OPENERS = re.compile(r"^\s*(?:d['’]accord|je comprends|je vous entends|très bien|entendu|bien|parfait|compris|ok)\s*[.,!;:…]\s*", re.I)  # « Je vous écoute » is the greeting, not a tic
 INTAKE_RULES = {
     "incident": r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûl\w*|noy\w*|coinc\w*|"
-                r"bloqu\w*|accouch\w*|intox\w*|évanou\w*|perdu connaissance|agress\w*|frapp\w*|menac\w*|arme|couteau|vol\w*|cambriol\w*|feu|flamme|fumée|incendie|explos\w*|gaz|"
+                r"incend\w*|crame|bloqu\w*|accouch\w*|intox\w*|évanou\w*|perdu connaissance|agress\w*|frapp\w*|menac\w*|arme|couteau|vol\w*|cambriol\w*|feu|flamme|fumée|incendie|explos\w*|gaz|"
                 r"accident|percut\w*|renvers\w*|heurt\w*|effondr\w*|inond\w*|fuite|disparu\w*|suicid\w*|overdose|allerg\w*|piq\w*|mord\w*|électrocut\w*|câble|étincelle)",
     # Spoken addresses as the transcription renders them: « aux quatre rues Gaston Roland » (plural), a town after « à » (« à Saint-Cloud »).
     "location": r"\b(rues?|avenues?|boulevards?|bd|places?|chemins?|routes?|impasses?|allées?|quais?|cours|squares?|résidence|lieu-dit|autoroute|nationale|gare|station|métro|arrêt de)\b|\b\d{5}\b"
                 r"|(?-i:\b(?:à|À|au|aux|sur|dans|vers|près de)\s+[A-ZÀ-Ý][\wÀ-ÿ’'-]{2,})",  # a town, not « à la PlayStation »
     "state": r"\b(respire|respirer|respiration|souffle|conscien\w*|inconscien\w*|évanoui\w*|réagit|répond (?:pas|plus)|bouge|pouls|réveille)\b",
-    "danger": r"\b(feu|flammes?|fumée|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
+    "danger": r"\b(feu|flammes?|fumée|incend\w*|gaz|explosion|noyade|électri\w*|arme|couteau|menace|menaçant|frappe|violen\w*|circulation|effondr\w*)\b|\bsaign\w*|\bsang\b",
     "people": r"\b(seule?|combien|deux|trois|quatre|cinq|plusieurs|nous sommes|on est|enfants?|bébé|voisins?)\b",
     "evacuate": OUT_CUES.pattern,
     "access": r"\b(étage|porte|code|digicode|interphone|entrée|escalier|ascenseur|bâtiment|batiment|appartement|appart|hall|parking|accès)\b",
@@ -847,7 +848,7 @@ CRITICAL = re.compile(r"ne respire (?:pas|plus)|plus de respiration|respire (?:p
                       r"beaucoup de sang|saigne (?:beaucoup|énormément|abondamment)|se vide de son sang|ne se réveille pas|arrêt cardiaque|s'étouffe|étouffe|"
                       r"coincée?|bloquée? (?:sous|dans)|en feu|les flammes|fumée partout", re.I)
 # What makes the danger and the number-of-people questions relevant; the callback number is the line's own.
-DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|brûl\w*|gaz|explos\w*|électri\w*|câble|étincelle|canal|rivière|noy\w*|accident|voitures?|moto|camion|carrefour|circulation|"
+DANGER_CUES = re.compile(r"\b(feu|flammes?|fumée|incend\w*|brûl\w*|gaz|explos\w*|électri\w*|câble|étincelle|canal|rivière|noy\w*|accident|voitures?|moto|camion|carrefour|circulation|"
                          r"autoroute|arme|couteau|tirs?|tiré|agress\w*|menac\w*|frapp\w*|violen\w*|bagarre|effondr\w*|inond\w*|coincée?|bloquée?)\b", re.I)
 VICTIM_CUES = re.compile(r"\b(tomb\w*|chut\w*|bless\w*|malaise|saign\w*|sang|inconscien\w*|respir\w*|étouff\w*|douleur|mal (?:à|au|aux)|crise|convuls\w*|brûlée?s?|noy\w*|évanou\w*|"
                          r"perdu connaissance|agress\w*|frappée?s?|accident|percut\w*|renvers\w*|heurt\w*|électrocut\w*|intox\w*|overdose|allerg\w*|piq\w*|mord\w*|coincée?|victimes?|"
@@ -861,7 +862,7 @@ SETTLED_BY_ANSWER = ("state", "danger", "people", "access", "age", "history", "n
 STRONG = re.compile(r"ne respire plus|plus de respiration|y a plus rien|arrêt cardiaque|respire pas du tout|ne respire pas"
                     r"|(?:la |sa )?poitrine (?:ne )?(?:bouge|se soulève) (?:pas|plus)|(?:ne )?vois rien bouger|rien ne bouge|pas de souffle", re.I)  # what a caller says after « regardez sa poitrine »
 CALL_US = re.compile(r"(?:appelez|appeler|prévenez|contactez|joignez|alertez)\s+(?:vous[- ]même\s+)?(?:le|les|la|l[’'])?\s*(?:secours|samu|smur|pompiers|police|urgences|15|18|112)\b|composez le|faites le (?:15|18|112)\b", re.I)
-GROUP_CUES = re.compile(r"\b(accident|voitures?|explos\w*|incendie|feu|fumée|effondr\w*|inond\w*|bagarre|foule|manifestation|plusieurs|des gens|des personnes|passagers?|élèves|enfants|"
+GROUP_CUES = re.compile(r"\b(accident|voitures?|explos\w*|incend\w*|feu|fumée|effondr\w*|inond\w*|bagarre|foule|manifestation|plusieurs|des gens|des personnes|passagers?|élèves|enfants|"
                         r"dans le (?:bus|car|train|tram|métro)|(?:bus|car|camion|train|tram) (?:a|s'est|est|vient))\b", re.I)
 ADDRESS_ASK = re.compile(r"adresse|quelle rue|nom de la rue|numéro et le nom", re.I)  # the address question, really asked (« quelle ville » alone is not)
 ROOM_ASK = re.compile(r"où (?:se trouve|est|êtes-vous|vous trouvez|est-elle|est-il)[^?]{0,40}(?:salle de bain|couloir|cuisine|chambre|pièce|logement|bâtiment|immeuble|étage|maison)", re.I)
@@ -869,8 +870,9 @@ ROOM_ASK = re.compile(r"où (?:se trouve|est|êtes-vous|vous trouvez|est-elle|es
 UNSURE_BREATHING = re.compile(r"(?:sais|sait|vois|voit|arrive)\s+pas\s+(?:\w+\s+){0,3}si\s+(?:\w+\s+){0,3}respire|pas sûre? qu['’](?:elle|il) respire|si (?:elle|il) respire (?:encore|vraiment)", re.I)
 OBSERVE_STEPS = ("breathing", "response_check")
 ECHO = re.compile(r"vous avez (?:mentionné|dit|indiqué|parlé|évoqué)|vous m'avez dit|comme vous l'avez dit|vous venez de (?:dire|me dire)", re.I)
-SAFETY_HINT = re.compile(r"haut-parleur|ne la déplacez|ne le déplacez|restez (?:près|à côté|auprès)|faites ouvrir|ouvrir l'entrée|ouvrir la porte", re.I)
+SAFETY_HINT = re.compile(r"haut-parleur|ne la déplacez|ne le déplacez|restez (?:près|à côté|auprès)|faites ouvrir|ouvrir l'entrée|ouvrir la porte|n'y retournez pas|retournez pas|à l'écart des fumées", re.I)
 SAFETY_LINE = "Restez près de la personne, mettez le téléphone en haut-parleur et ne la déplacez pas."
+FIRE_SAFETY_LINE = "Sortez si vous pouvez le faire sans danger, n'y retournez pas et restez à l'écart des fumées."  # a person down in a fire: not « restez près d'elle »
 STOP_WORDS = {"le", "la", "les", "de", "des", "du", "un", "une", "et", "ou", "à", "au", "aux", "en", "que", "qui", "ne", "pas", "est", "vous", "je", "me", "moi",
               "il", "elle", "se", "sa", "son", "ses", "ce", "cette", "dans", "sur", "pour", "par", "avec", "si", "y", "a", "dites", "pouvez", "peux", "suis", "là",
               "nous", "on", "votre", "vos", "mon", "ma", "mes", "plus", "très", "tout", "bien", "merci", "oui", "non", "euh"}
@@ -890,8 +892,8 @@ def intake_state(messages):
             settled.update(k for k in SETTLED_BY_ANSWER if re.search(ASKED_RULES[k], m["text"], re.I))
     known = [k for k in INTAKE_ITEMS if k in settled or re.search(INTAKE_RULES[k], callers, re.I)]
     # In a fire « people » means « anyone still inside »: « avec les voisins » does not answer it, only words about inside or outside do.
-    if FIRE_CUES.search(callers) and "people" in known and "people" not in settled and not INSIDE_OUTSIDE.search(callers):
-        known.remove("people")
+    if FIRE_CUES.search(callers) and "people" in known and "people" not in settled and not (INSIDE_OUTSIDE.search(callers) or OTHERS_INSIDE.search(callers)):
+        known.remove("people")  # « mes voisins sont coincés » answers it; « avec les voisins » does not
     asked = [k for k in INTAKE_ITEMS if times_asked[k]]
     fire = bool(FIRE_CUES.search(callers))
     # In a fire « il ne répond pas » is usually a neighbour behind a door: a victim needs a physical cue (fallen, hurt, unconscious…).
@@ -1270,7 +1272,7 @@ TOOLS = {
 }
 TOOL_RULES = {  # the caller's words that make a dispatch proposal obvious, whatever the model says
     "dispatch_ambulance": r"bless|saign|\bsang\b|inconscien|ne respire|respire (?:pas|plus|mal|difficilement)|malaise|chute|tomb|douleur|brûl|étouffe|convuls|évanoui|ne répond (?:pas|plus)|ne bouge (?:pas|plus)|écras|noy|intoxi|\bsouffle\b",
-    "dispatch_fire": r"\b(feu|flammes?|fumée|incendie|gaz|explosion|inondation|effondr\w*|coincée?|bloquée?)\b",
+    "dispatch_fire": r"\b(feu|flammes?|fumée|incend\w*|gaz|explosion|inondation|effondr\w*|coincée?s?|bloquée?s?)\b",
     "dispatch_police": r"\b(arme|couteau|pistolet|fusil|menace|menaçant|violen\w*|agress\w*|frappe|frappé|cambriol\w*|voleur|bagarre|accident de la route|percut\w*|voitures?|scooter|camion|délit de fuite)\b",
 }
 ADDRESS = re.compile(r"\b(?:(?:\d{1,4}|un|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingt|trente)\s*(?:bis|ter)?\s*,?\s*)?"
@@ -1563,7 +1565,7 @@ def analyze(payload):
     prefix = []
     # Critical situation: the safety instruction is said once, before anything else.
     if state["critical"] and not SAFETY_HINT.search(reply) and not any(SAFETY_HINT.search(p) for p in previous):
-        prefix.append(SAFETY_LINE)
+        prefix.append(FIRE_SAFETY_LINE if state.get("fire") else SAFETY_LINE)
     # Help validated by the operator is announced once, plainly, when the model did not do it.
     if dispatched and not announced and not ANNOUNCED.search(reply):
         prefix.append("Les secours sont prévenus, ils arrivent.")

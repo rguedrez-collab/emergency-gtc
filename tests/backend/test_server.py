@@ -196,6 +196,17 @@ class ExtractionTests(unittest.TestCase):
         outside = neighbour + [{"role": "assistant", "text": server.QUESTIONS["evacuate"]}, {"role": "caller", "text": "Oui, je suis en bas dans la rue avec les autres voisins."}]
         self.assertEqual(server.intake_state(outside)["next"], "people", "« avec les voisins » does not say whether anyone is still inside")
         self.assertNotIn("people", server.intake_state(outside + [{"role": "assistant", "text": server.QUESTIONS["people_fire"]}, {"role": "caller", "text": "Non, il n'y a personne à l'intérieur, tout le monde est sorti."}])["missing"])
+        # The transcription of a live call: « incendé » for « incendie », neighbours « coincés » with no other word.
+        live = [{"role": "assistant", "text": "Je vous écoute. Dites-moi ce qui se passe."}, {"role": "caller", "text": "Un incendé s'est déclaré dans mon immeuble."}]
+        self.assertEqual((server.intake_state(live)["fire"], server.intake_state(live)["next"]), (True, "location"))
+        live += [{"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "Onze rue Gabriel Bertillon Longémeaux"}]
+        self.assertEqual(server.intake_state(live)["next"], "evacuate")
+        live += [{"role": "assistant", "text": server.QUESTIONS["evacuate"]}, {"role": "caller", "text": "Oui, je suis dehors."},
+                 {"role": "assistant", "text": server.QUESTIONS["people_fire"]}, {"role": "caller", "text": "Non, je pense que mes voisins sont coincés."}]
+        st = server.intake_state(live)
+        self.assertEqual((st["next"], st["critical"]), ("others_inside", False), "trapped neighbours: do not go back in, no « restez près de la personne »")
+        live += [{"role": "assistant", "text": server.QUESTIONS["others_inside"]}, {"role": "caller", "text": "Au troisième, je m'appelle Raba."}]
+        self.assertNotIn(server.intake_state(live)["next"], ("people", "others_inside"), "trapped neighbours already answered who is still inside")
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
         said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"
