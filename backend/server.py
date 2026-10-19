@@ -802,6 +802,8 @@ INTAKE_ITEMS = ("location", "incident", "evacuate", "state", "danger", "people",
 FIRE_CUES = re.compile(r"\b(feu|flammes?|fumée|incendie|brûle|ça brûle|ça crame)\b", re.I)
 OUT_CUES = re.compile(r"\b(sortie?s?|dehors|à l'extérieur|sur le palier|dans la rue|en bas|évacué\w*|on est tous là|tout le monde est sorti)\b", re.I)
 OTHERS_INSIDE = re.compile(r"encore (?:à l'intérieur|dedans|chez (?:eux|elle|lui)|là-haut|en haut|dans l'appartement|dans l'immeuble)|(?:n'est|sont|est) pas sortie?s?|coincée?s? (?:à l'intérieur|dedans|en haut)", re.I)
+INSIDE_OUTSIDE = re.compile(r"(?:tout le monde|personne|il n'y a personne|y a personne)\s+(?:n'est |est |n'est pas )?(?:sorti\w*|dehors|à l'intérieur|dedans|resté\w*)|il reste (?:quelqu'un|personne|mon|ma|mes|des|un|une)|encore (?:dedans|à l'intérieur|chez)|personne d'autre|seule? (?:dedans|à l'intérieur|chez)"
+                            r"|(?:nous sommes|on est)\s+(?:\w+\s+){0,2}?(?:tous\s+)?(?:dehors|sortie?s|à l'extérieur|en bas|sur le palier)", re.I)
 NO_ANSWER = re.compile(r"(?:me |nous |lui |leur )?(?:répond|réagit) (?:pas|plus)", re.I)
 KNOCKING = re.compile(r"\b(?:je |j')?(?:frappe|frappais|tape|tapais|cogne|cognais)\w*\s*(?:(?:à|a|sur|contre)\s*)?(?:la |sa |leur |à la )?porte\b|\bquand je (?:frappe|tape|cogne)\b", re.I)  # knocking on a door is not violence
 OPENERS = re.compile(r"^\s*(?:d['’]accord|je comprends|je vous entends|très bien|entendu|bien|parfait|compris|ok)\s*[.,!;:…]\s*", re.I)  # « Je vous écoute » is the greeting, not a tic
@@ -887,6 +889,9 @@ def intake_state(messages):
         if m["role"] == "assistant" and answer and (NEGATIVE.match(answer) or (len(answer.split()) <= 6 and not PLEA.search(answer))):
             settled.update(k for k in SETTLED_BY_ANSWER if re.search(ASKED_RULES[k], m["text"], re.I))
     known = [k for k in INTAKE_ITEMS if k in settled or re.search(INTAKE_RULES[k], callers, re.I)]
+    # In a fire « people » means « anyone still inside »: « avec les voisins » does not answer it, only words about inside or outside do.
+    if FIRE_CUES.search(callers) and "people" in known and "people" not in settled and not INSIDE_OUTSIDE.search(callers):
+        known.remove("people")
     asked = [k for k in INTAKE_ITEMS if times_asked[k]]
     fire = bool(FIRE_CUES.search(callers))
     # In a fire « il ne répond pas » is usually a neighbour behind a door: a victim needs a physical cue (fallen, hurt, unconscious…).

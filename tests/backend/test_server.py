@@ -193,6 +193,9 @@ class ExtractionTests(unittest.TestCase):
                      {"role": "assistant", "text": "Vous êtes à quelle adresse ? Dans quelle ville ?"}, {"role": "caller", "text": "Onze rue Gabriel Bertillon à Longjumeau."}]
         st = server.intake_state(neighbour)
         self.assertEqual((st["critical"], st["fire"], st["next"]), (False, True, "evacuate"))
+        outside = neighbour + [{"role": "assistant", "text": server.QUESTIONS["evacuate"]}, {"role": "caller", "text": "Oui, je suis en bas dans la rue avec les autres voisins."}]
+        self.assertEqual(server.intake_state(outside)["next"], "people", "« avec les voisins » does not say whether anyone is still inside")
+        self.assertNotIn("people", server.intake_state(outside + [{"role": "assistant", "text": server.QUESTIONS["people_fire"]}, {"role": "caller", "text": "Non, il n'y a personne à l'intérieur, tout le monde est sorti."}])["missing"])
 
     def test_near_repeat_or_recap_is_rewritten_then_replaced_by_the_checklist(self):
         said = "Je suis là, je vous écoute. Pouvez-vous me dire si la personne est allongée ou assise, et si vous voyez des objets autour d'elle ?"
