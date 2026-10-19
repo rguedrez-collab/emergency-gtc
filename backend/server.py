@@ -558,8 +558,9 @@ def phone_api():
             "auth": {"phone_key": bool(phone_keys()), "how": "Authorization: Bearer <clé> (ou X-Api-Key), sinon l'identifiant/mot de passe de la console"},
             "cors": cors_origins() or None,
             "line": {"create": "POST /api/line {\"name\": \"…\", \"dialed\": \"18\"} -> {id, token, poll_ms} (dialed : le numéro composé, 15/17/18/112, simple étiquette pour la console)",
-                     "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max)",
-                     "events": "GET /api/line/{id}/events?since=N · X-Line-Token -> {status, events:[{idx, type: speech|claimed|reply|end, speaker, text, size}]}",
+                     "speech": "POST /api/line/{id}/speech · X-Line-Token · X-Filename: speech.webm|.ogg|.mp4|.m4a|.wav|.mp3 · corps = l'audio (une phrase, 30 s max) · X-Continue: 1 = un morceau, la suite arrive",
+                     "pause": "POST /api/line/{id}/pause · X-Line-Token : fin de la prise de parole après des morceaux X-Continue (la plateforme répond alors)",
+                     "events": "GET /api/line/{id}/events?since=N&wait=5 · X-Line-Token -> {status, events:[{idx, type: speech|pause|claimed|reply|end, speaker, text, size, more}]} · wait = attente longue (s, 8 max)",
                      "audio": "GET /api/line/{id}/audio/{idx} · X-Line-Token -> audio/wav 24 kHz mono (la réponse parlée)",
                      "end": "POST /api/line/{id}/end · X-Line-Token", "latency": "POST /api/line/{id}/latency {rtt_ms, handler: ai|operator}"},
             "notes": ["La ligne est prise par la console ouverte dans un navigateur : sans console en session, l'appel reste « ringing ».",
@@ -1713,8 +1714,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(404 if token is None else 403, {"error": "ligne inconnue"})
             return
         if len(parts) == 2 and parts[1] == "events":
-            since = (parse_qs(urlsplit(self.path).query).get("since") or ["0"])[0]
-            self.reply(200, line_public(line, int(since) if since.isdigit() else 0))
+            query = parse_qs(urlsplit(self.path).query)
+            since = (query.get("since") or ["0"])[0]
+            since = int(since) if since.isdigit() else 0
+            wait = (query.get("wait") or ["0"])[0]
+            try:  # long polling: hold the request (8 s at most) until the line has something new, so both sides react at once
+                deadline = time.monotonic() + min(max(float(wait), 0.0), 8.0)
+            except ValueError:
+                deadline = time.monotonic()
+            while len(line["events"]) <= since and time.monotonic() < deadline:
+                time.sleep(0.04)
+            self.reply(200, line_public(line, since))
         elif len(parts) == 3 and parts[1] == "audio" and parts[2].isdigit():
             event = next((e for e in line["events"] if e["idx"] == int(parts[2])), None)
             if event is None or event.get("audio") is None:
@@ -1756,7 +1766,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if ext not in (".wav", ".webm", ".ogg", ".mp3", ".m4a", ".mp4") or len(body) < 100:
                     raise ValueError("unsupported or empty audio")
                 mime = {".wav": "audio/wav", ".webm": "audio/webm", ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": "audio/mp4"}[ext]
-                event = line_event(line, "speech", audio=body, mime=mime, filename="speech" + ext)
+                more = self.headers.get("X-Continue") == "1"  # a piece of an utterance that may go on (hands-free phone): transcribed now, answered on « pause »
+                event = line_event(line, "speech", audio=body, mime=mime, filename="speech" + ext, **({"more": True} if more else {}))
+                self.reply(200, {"idx": event["idx"], "status": line["status"]})
+            elif action == "pause":
+                event = line_event(line, "pause")
                 self.reply(200, {"idx": event["idx"], "status": line["status"]})
             elif action == "reply":
                 if not body.startswith(b"RIFF"):

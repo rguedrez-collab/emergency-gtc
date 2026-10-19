@@ -161,6 +161,10 @@ caller sites (caller/service.py, one per location, next to its LLM + TTS; CALLER
   and shows an install banner (`beforeinstallprompt`, iOS hint). The page looks like a phone (dialer preset to 18, call
   screen, timer, captions): hands-free with a small VAD (`startVad`, ScriptProcessorNode, 16 kHz WAV, half-duplex while a
   reply plays), hold-to-talk fallback. `POST /api/line` accepts `dialed` (digits), shown on the console's call row.
+  Latency: the phone sends pieces after 0.8 s of silence (`X-Continue: 1`, event `more`) and a `pause` after 1.4 s; the
+  console (`lineSpeech`/`lineAnswer`) transcribes pieces as they come into one growing caller line and analyses once,
+  on the pause (fallback 2.5 s). `GET …/events?wait=5` long-polls (gateway holds up to 8 s); console and phone re-arm
+  immediately after a held request.
 - Guardrail toggle: the « Garde-fou » chip in the bar is a button (`#orange-guardrail-toggle`, `toggleGuardrail` →
   `POST /api/guardrail {"enabled": bool}`). The gateway keeps `GUARDRAIL_SWITCH` in memory (resets on restart): while
   off, `llm_url()` sends the AI's turns to the model directly and the out-of-band scans are skipped; the configuration

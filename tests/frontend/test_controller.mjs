@@ -702,7 +702,7 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
     if(init?.method==='POST'){posts.push({url:u,headers:init.headers||{},body:init.body});return {ok:true,status:200,json:async()=>({})};}
     if(u==='/api/line/pending')return {ok:true,json:async()=>({lines:[{id:'abc123',name:'Camille',dialed:'18',status:'ringing',created:0}]})};
     if(u.startsWith('/api/line/abc123/events')){const e=events;events=[];return {ok:true,json:async()=>({status:'live',events:e})};}
-    if(u==='/api/line/abc123/audio/0')return {ok:true,blob:async()=>({text:'Allô, il y a eu un accident devant chez moi, quelqu’un est blessé.'})};
+    if(u.startsWith('/api/line/abc123/audio/'))return {ok:true,blob:async()=>({text:{0:'Allô, il y a eu un accident devant chez moi, quelqu’un est blessé.',5:'Ma mère est tombée dans la salle de bains',6:'elle ne répond plus, elle respire mal.'}[u.split('/').pop()]})};
     return {ok:true,json:async()=>({sites:[]})};};
   app.api=async()=>({json:async()=>({...result,reply:'Je vous écoute. Où êtes-vous exactement ?',signals:['quelqu’un est blessé'],ms:1600})});
   app.tts=async(call,text,speaker='assistant')=>{call.lastTts={ms:700,speaker};return {text,speaker,size:10};};
@@ -723,6 +723,14 @@ const texts=el=>typeof el==='string'?[el]:Array.isArray(el)?el.flatMap(texts):el
   app.state.view='call';app.state.selId=c.id;assert.ok(!(app.callControls()?.children||[]).some(b=>b.props.id==='orange-caller-mic'));
   assert.ok(texts(app.callList(app.consoleModel())).join(' ').includes('ligne mobile · réponse'),'the card shows how long the caller waited');
   app.state.view='floor';app.state.selId=null;
+  // A hands-free phone sends an utterance in pieces (more:true) and a « pause » when it is over: one caller line, one answer.
+  const answersBefore=posts.filter(p=>p.url==='/api/line/abc123/reply').length,turnsBefore=c.tr.length;
+  events=[{idx:5,type:'speech',more:true,filename:'speech.wav'},{idx:6,type:'speech',more:true,filename:'speech.wav'},{idx:7,type:'pause'}];
+  app.pollLineEvents();await tick(20);await idle(c);await tick(20);await idle(c);await tick(20);await idle(c);
+  const heard=c.tr.slice(turnsBefore).filter(t=>t.source==='line_stt');
+  assert.equal(heard.length,1,'the pieces make one caller line');assert.equal(heard[0].text,'Ma mère est tombée dans la salle de bains elle ne répond plus, elle respire mal.');
+  assert.equal(posts.filter(p=>p.url==='/api/line/abc123/reply').length,answersBefore+1,'answered once, after the pause');
+  assert.equal(c.latency.at(-1).stt_ms,600,'the transcription time of both pieces is accounted');assert.ok(!c.linePending,'nothing left pending');
   // The operator takes the call: their answer goes to the phone too, and their turn is recorded without waiting for the caller.
   app.takeOverCall(c);await app.submitText(c,'Je suis là, restez avec moi.','Vous');await idle(c);
   const op=posts.filter(p=>p.url==='/api/line/abc123/reply').at(-1);assert.equal(op.headers['X-Speaker'],'operator');

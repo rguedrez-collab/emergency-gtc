@@ -788,7 +788,7 @@ class Component extends DCLogic {
   download() {
     const data={mode:'demonstration',exported_at:new Date().toISOString(),dispatch_connected:false,session:this.state.session,
       caller_sites:(this.state.callers||[]).map(s=>s.name),latency:this.state.latency,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,lineQueue,linePolling,opSample,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,opSample,...c})=>c)};
     const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
     const a=document.createElement('a');a.href=url;a.download='orange-session-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -802,7 +802,7 @@ class Component extends DCLogic {
   // Serializable state only: no abort controllers, prefetched audio, queued speech or transient busy flags.
   snapshot() {
     return {owner:this.ownerId(),takeover:!!this.takeover,startedAt:this.started,session:this.state.session,seq:this.seq,scIdx:this.scIdx,
-      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,lineQueue,linePolling,opSample,...c})=>c)};
+      calls:this.state.calls.map(({controllers,prefetch,queued,lastSpeech,busy,lastTts,lastStt,lineQueue,linePolling,linePending,lineFlush,opSample,...c})=>c)};
   }
   persist(final=false) {
     if(this.disposed||this.restoring||this.readOnly||this.state.session.status==='idle'&&!this.state.calls.length)return;
@@ -867,29 +867,43 @@ class Component extends DCLogic {
   pollLineEvents() {
     if(this.disposed||this.readOnly||typeof fetch!=='function')return;
     for(const c of this.state.calls.filter(c=>c.lineId&&!c.ended&&!c.linePolling)){
-      c.linePolling=true;
+      c.linePolling=true;const t0=typeof performance!=='undefined'?performance.now():0;let again=false;
       (async()=>{try{
-        const r=await this.lineFetch('/api/line/'+c.lineId+'/events?since='+(c.lineSeen||0));if(!r.ok)return;const d=await r.json();
+        // The gateway holds the request (wait=5 s) until something happens on the line: the phone's speech reaches the console at once.
+        const r=await this.lineFetch('/api/line/'+c.lineId+'/events?since='+(c.lineSeen||0)+'&wait=5');if(!r.ok)return;const d=await r.json();
+        again=(d.events||[]).length>0||(t0>0&&performance.now()-t0>300);  // held or fruitful: ask again right away (not a tight loop on an old gateway)
         for(const e of d.events||[]){c.lineSeen=Math.max(c.lineSeen||0,e.idx+1);
-          if(e.type==='speech')this.lineSpeech(c,e);
+          if(e.type==='speech'||e.type==='pause')this.lineSpeech(c,e);
           else if(e.type==='end'&&e.by!=='console'&&!c.ended){this.append(c,'Système','L’appelant a raccroché.','line_end');this.endCall(c,'Appel terminé · à revoir');}
         }
-      }catch(e){}finally{c.linePolling=false;}})();
+      }catch(e){}finally{c.linePolling=false;if(again&&!c.ended&&!this.disposed)setTimeout(()=>this.pollLineEvents(),0);}})();
     }
   }
   // One recording from the phone: fetched, played to the operator when the call is open, transcribed, then answered
   // by the AI (or left to the operator who took the call; the AI only suggests).
+  // A hands-free phone sends an utterance in pieces (speech events with more:true, cut on short pauses) and a « pause » event
+  // when it is over: each piece is transcribed as it arrives (one caller line that grows), the AI answers once, on the pause.
+  // A plain speech event (an app, the hold-to-talk button) is one utterance: transcribed and answered at once.
   lineSpeech(c,e) {
     if(c.ended)return;
     if(c.busy){(c.lineQueue=c.lineQueue||[]).push(e);return;}
+    if(e.type==='pause'){clearTimeout(c.lineFlush);if(!c.linePending)return;return this.run(c,()=>this.lineAnswer(c));}
     return this.run(c,async()=>{
       const r=await this.lineFetch('/api/line/'+c.lineId+'/audio/'+e.idx);if(!r.ok)throw Error('Enregistrement de l’appelant indisponible.');
       const blob=await r.blob();if(c.ended)return;
       const speaking=this.play(c,blob,c.revision,'caller','');
-      const text=await this.transcribe(c,blob,e.filename||'speech.webm');if(c.ended)return;
-      this.append(c,'Appelant',text,'line_stt');c.callerLineAt=performance.now();
-      await this.analyzeCall(c,speaking,{location:'ligne',requested:'ligne',fallback:false,handler:c.takenOver?'operator':'ai',stt_ms:c.lastStt?.ms??null});
+      const text=((await this.transcribe(c,blob,e.filename||'speech.webm'))||'').trim();if(c.ended)return;
+      clearTimeout(c.lineFlush);
+      if(c.linePending){const turn=c.tr[c.linePending.turn];if(turn&&text){turn.text=turn.full=(turn.text+' '+text).trim();}c.linePending.stt+=c.lastStt?.ms||0;c.linePending.speaking=speaking;}
+      else if(text||!e.more){this.append(c,'Appelant',text,'line_stt');c.linePending={turn:c.tr.length-1,stt:c.lastStt?.ms??null,speaking};}
+      c.callerLineAt=performance.now();this.touch();
+      if(e.more){c.lineFlush=setTimeout(()=>{if(!c.ended&&c.linePending)this.lineSpeech(c,{type:'pause'});},2500);return;}  // the pause follows; failing that, 2.5 s
+      await this.lineAnswer(c);
     });
+  }
+  async lineAnswer(c) {
+    const p=c.linePending||{};c.linePending=null;
+    await this.analyzeCall(c,p.speaking||Promise.resolve(),{location:'ligne',requested:'ligne',fallback:false,handler:c.takenOver?'operator':'ai',stt_ms:p.stt??null});
   }
   deliver(c,blob,text,speaker) {
     if(!c.lineId||typeof fetch!=='function')return Promise.resolve();

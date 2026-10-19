@@ -238,37 +238,47 @@
     } catch (err) { if (mic) mic.getTracks().forEach(t => t.stop()); line = null; render(err.message); }
   }
 
-  // Hands-free: a small voice activity detector on the microphone. An utterance starts when the level rises above the noise floor,
-  // ends after 0.9 s of silence, and leaves as a 16 kHz WAV. The microphone is gated while the line rings, while the operator
-  // speaks (no echo of the reply) and while muted. The noise floor falls at once, rises slowly, and is frozen while you speak.
+  // Hands-free: a small voice activity detector on the microphone. Speech starts when the level rises above the noise floor.
+  // After 0.8 s of silence the piece spoken so far leaves as a 16 kHz WAV (X-Continue: the platform transcribes it while you
+  // may go on); after 1.4 s of silence a « pause » tells the platform the utterance is over, and it answers. The microphone is
+  // gated while the line rings, while the operator speaks (no echo of the reply) and while muted. The noise floor falls at
+  // once, rises slowly, and is frozen while you speak.
   function startVad(stream) {
     const c = audio(), src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), sink = c.createGain();
     sink.gain.value = 0; src.connect(proc); proc.connect(sink); sink.connect(c.destination);
-    const frameMs = 4096 / c.sampleRate * 1000, END = Math.ceil(1400 / frameMs), MAX = Math.floor(25000 / frameMs), MINV = Math.ceil(350 / frameMs), PRE = Math.ceil(300 / frameMs);
-    const v = vad = {stream, src, proc, sink, rate: c.sampleRate, floor: null, speaking: false, frames: [], pre: [], silent: 0, voiced: 0, onset: 0};
+    const frameMs = 4096 / c.sampleRate * 1000, CHUNK = Math.ceil(800 / frameMs), END = Math.ceil(1400 / frameMs), MAX = Math.floor(25000 / frameMs), MINV = Math.ceil(350 / frameMs), PRE = Math.ceil(300 / frameMs);
+    const v = vad = {stream, src, proc, sink, rate: c.sampleRate, floor: null, state: 'idle', frames: [], pre: [], silent: 0, voiced: 0, onset: 0, pieces: 0};
+    const piece = () => {  // what was said so far leaves now (trailing silence trimmed to ~250 ms); the utterance may go on
+      const frames = v.frames.slice(0, v.frames.length - Math.max(0, v.silent - 3)), voiced = v.voiced;
+      v.frames = []; v.voiced = 0; v.onset = 0;
+      if (voiced >= MINV) { v.pieces++; send(wav(frames, v.rate), 'speech.wav', frames.length * frameMs, true); }
+    };
+    const over = () => { const had = v.pieces > 0; v.state = 'idle'; v.pieces = 0; v.silent = 0; v.frames = []; v.pre = []; v.onset = 0; if (had) pause(); else idle(); };
     proc.onaudioprocess = e => {
       if (ended || vad !== v) return;
       const x = e.inputBuffer.getChannelData(0); let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i];
       const db = 20 * Math.log10(Math.sqrt(s / x.length) + 1e-9);
-      if (v.floor === null) v.floor = db; else if (!v.speaking) v.floor = db < v.floor ? db : Math.min(db, v.floor + 0.3);
-      const thr = Math.max(v.floor + 9, -56), gated = !live || muted || aiTalking || Date.now() < quietUntil;
+      if (v.floor === null) v.floor = db; else if (v.state !== 'speaking') v.floor = db < v.floor ? db : Math.min(db, v.floor + 0.3);
+      const thr = Math.max(v.floor + 9, -56), gated = !live || muted || aiTalking || Date.now() < quietUntil, loud = db > thr;
       meter(db, v.floor, gated);
-      if (gated) { v.speaking = false; v.frames = []; v.pre = []; v.onset = 0; return; }
+      if (gated) { if (v.state === 'speaking') piece(); if (v.state !== 'idle') over(); return; }
       const copy = new Float32Array(x);
-      if (!v.speaking) {
+      if (v.state !== 'speaking') {  // idle, or the tail of silence after a piece
         v.pre.push(copy); if (v.pre.length > PRE) v.pre.shift();
-        if (db > thr) { if (++v.onset >= 2) { v.speaking = true; v.frames = v.pre; v.pre = []; v.silent = 0; v.voiced = v.onset; listening('talk', 'Vous parlez…'); } } else v.onset = 0;
+        if (loud) { if (++v.onset >= 2) { v.state = 'speaking'; v.frames = v.pre; v.pre = []; v.silent = 0; v.voiced = v.onset; listening('talk', 'Vous parlez…'); } }
+        else { v.onset = 0; if (v.state === 'tail' && ++v.silent >= END) over(); }
         return;
       }
       v.frames.push(copy);
-      if (db > thr) { v.silent = 0; v.voiced++; } else v.silent++;
-      if (v.silent >= END || v.frames.length >= MAX) {
-        const frames = v.frames.slice(0, v.frames.length - Math.max(0, v.silent - 3)), voiced = v.voiced;
-        v.speaking = false; v.frames = []; v.onset = 0;
-        if (voiced >= MINV) send(wav(frames, v.rate), 'speech.wav', frames.length * frameMs); else idle();
-      }
+      if (loud) { v.silent = 0; v.voiced++; } else v.silent++;
+      if (v.silent >= CHUNK || v.frames.length >= MAX) { const silent = v.silent, cut = v.silent < CHUNK; piece(); v.state = cut ? 'speaking' : 'tail'; v.silent = silent; }
     };
     listening('wait', 'Appel en cours…');
+  }
+  async function pause() {  // the utterance is over: the platform answers what it has transcribed
+    if (!line || ended) return;
+    listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now();
+    try { await fetch(`/api/line/${line.id}/pause`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'}, body: '{}'}); } catch (e) {}
   }
   function stopVad() { if (!vad) return; const v = vad; vad = null; try { v.proc.onaudioprocess = null; v.proc.disconnect(); v.src.disconnect(); v.sink.disconnect(); } catch (e) {} v.stream.getTracks().forEach(t => t.stop()); }
   function wav(frames, rate) {  // mono 16 kHz PCM, averaged over each step (a cheap anti-alias)
@@ -280,13 +290,12 @@
     v.setUint32(24, target, true); v.setUint32(28, target * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, len * 2, true);
     new Int16Array(buf, 44).set(out); return new Blob([buf], {type: 'audio/wav'});
   }
-  async function send(blob, filename, durationMs) {
+  async function send(blob, filename, durationMs, more) {
     if (!line || ended) return;
-    if (blob.size < 2000 || durationMs < 350) { idle(); return; }
-    listening('wait', 'La plateforme vous écoute…');
+    if (blob.size < 2000 || durationMs < 350) { if (!more) idle(); return; }
+    if (!more) { listening('wait', 'La plateforme vous écoute…'); sentAt = performance.now(); }
     try {
-      sentAt = performance.now();
-      const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': filename}, body: blob});
+      const r = await fetch(`/api/line/${line.id}/speech`, {method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream', 'X-Filename': filename, ...(more ? {'X-Continue': '1'} : {})}, body: blob});
       if (!r.ok) { sentAt = null; listening('off', 'Envoi impossible (' + r.status + ')'); setTimeout(() => { if (!ended) idle(); }, 2500); }
     } catch (e) { sentAt = null; listening('off', 'Réseau indisponible'); setTimeout(() => { if (!ended) idle(); }, 2500); }
   }
@@ -304,12 +313,15 @@
     playing = false; aiTalking = false; quietUntil = Date.now() + 500;
     if (!ended) { if (queue.length) playNext(); else if (vad) idle(); else if (!$('talk').hidden) listening('wait', 'Maintenez le bouton pour parler'); }
   }
-  async function poll() {
+  async function poll() {  // the gateway holds the request up to 5 s until something happens on the line: replies arrive at once
     if (!line || ended) return;
+    let delay = 400;
     try {
-      const r = await fetch(`/api/line/${line.id}/events?since=${since}`, {headers: headers()});
+      const t0 = performance.now();
+      const r = await fetch(`/api/line/${line.id}/events?since=${since}&wait=5`, {headers: headers()});
       if (r.status === 403 || r.status === 404) { finish('Ligne fermée'); return; }
       const d = await r.json();
+      if ((d.events || []).length || performance.now() - t0 > 300) delay = 0;
       if (d.status === 'live' && !live) {
         live = true; ringback(false); $('avatar').classList.remove('ring'); startedAt = Date.now(); timerId = setInterval(tick, 500); tick(); vibrate(60);
         if (vad) idle(); else if (!$('talk').hidden && !micError) listening('wait', 'Maintenez le bouton pour parler');
@@ -323,8 +335,8 @@
           queue.push(e); playNext();
         } else if (e.type === 'end' && e.by !== 'phone') { finish('La plateforme a mis fin à l’appel'); return; }
       }
-    } catch (err) { /* network hiccup: next poll */ }
-    polling = setTimeout(poll, 700);
+    } catch (err) { delay = 1500; /* network hiccup: next poll */ }
+    polling = setTimeout(poll, delay);
   }
   function finish(reason) {
     if (ended) return; ended = true; clearTimeout(polling); clearInterval(timerId); ringback(false); stopVad(); talkStop();

@@ -17,8 +17,9 @@ Send the key as `Authorization: Bearer <key>` or `X-Api-Key: <key>`. Keys never 
 
 ```
 POST /api/line  {"name": "Camille", "dialed": "18"}          -> {"id": "…", "token": "…", "dialed": "18", "poll_ms": 700}
-GET  /api/line/{id}/events?since=0   (X-Line-Token)           -> {"status": "ringing|live|ended", "events": [...], "now": …}
-POST /api/line/{id}/speech           (X-Line-Token, X-Filename: speech.webm, body = audio bytes)
+GET  /api/line/{id}/events?since=0&wait=5 (X-Line-Token)      -> {"status": "ringing|live|ended", "events": [...], "now": …}
+POST /api/line/{id}/speech           (X-Line-Token, X-Filename: speech.webm, body = audio bytes; X-Continue: 1 = a piece, more follows)
+POST /api/line/{id}/pause            (X-Line-Token)             end of an utterance sent in pieces: the platform answers now
 GET  /api/line/{id}/audio/{idx}      (X-Line-Token)           -> audio/wav 24 kHz mono (a reply, by event index)
 POST /api/line/{id}/latency          (X-Line-Token) {"rtt_ms": 2300, "handler": "ai"|"operator"}   (optional telemetry)
 POST /api/line/{id}/end              (X-Line-Token)
@@ -30,8 +31,15 @@ console shows on the call (« ligne mobile · 18 Sapeurs-Pompiers »); every num
 
 Events (`type`): `speech` (what the phone sent, with `size`), `claimed` (the console took the line; `status` becomes `live`),
 `reply` (`speaker`: `assistant` or `operator`, `text`, `size`; fetch the audio by `idx`), `end` (`by`: `phone` or `console`).
-Poll `events` every `poll_ms` with `since` = last `idx` + 1. A line that nobody picks up stays `ringing` and is dropped
-after 30 minutes without activity.
+Poll `events` with `since` = last `idx` + 1. With `wait=5` the gateway holds the request up to 5 s (8 at most) until
+something new happens on the line, so replies arrive without a polling delay: ask again as soon as it returns. Without
+`wait` it answers at once (poll every `poll_ms`). A line that nobody picks up stays `ringing` and is dropped after
+30 minutes without activity.
+
+**Streaming an utterance.** A client that cuts speech on short pauses (the phone page does, after 0.8 s of silence)
+can send each piece with `X-Continue: 1`: the console transcribes pieces as they arrive and only answers when it
+receives `pause` (the phone page sends it after 1.4 s of silence) or, failing that, 2.5 s after the last piece. A
+plain `speech` without `X-Continue` is one whole utterance, answered at once.
 
 Accepted audio for `speech`: one utterance, 30 s at most, 15 MB at most, container by `X-Filename` extension:
 `.webm` / `.ogg` (Opus), `.mp4` / `.m4a` (AAC), `.wav`, `.mp3`. Android `MediaRecorder` with `OutputFormat.MPEG_4` +
